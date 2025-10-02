@@ -1,0 +1,280 @@
+from rest_framework import serializers
+from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.utils import timezone
+from datetime import timedelta
+from django.core.mail import send_mail
+from django.conf import settings
+from rest_framework_simplejwt.tokens import AccessToken
+from jwt import InvalidTokenError
+import re
+from rest_framework.serializers import ValidationError
+from .models import User, PasswordReset
+
+
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user registration
+    """
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+    password_confirm = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = User
+        fields = ('email', 'username', 'userType', 'password', 'password_confirm', 'first_name', 'last_name')
+        extra_kwargs = {
+            'email': {'required': True},
+            'username': {'required': True},
+            'userType': {'required': True},
+            'first_name': {'required': True},
+            'last_name': {'required': False},
+            'password': {'write_only': True},
+            'password_confirm': {'write_only': True},
+        }
+    
+    def validate_username(self, value):
+        if not re.match(r'^[a-zA-Z0-9]+$', value):
+            raise ValidationError('Username can only contain alphanumeric characters.')
+        return value
+    
+    def validate_first_name(self, value):
+        if not re.match(r'^[a-zA-Z\s]+$', value):
+            raise ValidationError('First name can only contain alphabets and spaces.')
+        return value
+    
+    def validate_last_name(self, value):
+        if value and not re.match(r'^[a-zA-Z\s]+$', value):
+            raise ValidationError('Last name can only contain alphabets and spaces.')
+        return value
+    
+    def validate(self, attrs):
+        password = attrs['password']
+        password_confirm = attrs['password_confirm']
+        
+        if password != password_confirm:
+            raise ValidationError("Passwords don't match.")
+        
+        if len(password) < 8:
+            raise ValidationError({'password': 'Password must be at least 8 characters long.'})
+        
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
+            raise ValidationError({'password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        
+        validate_password(password)
+        
+        return attrs
+    
+    def create(self, validated_data):
+        validated_data.pop('password_confirm')
+        user = User.objects.create_user(**validated_data)
+        return user
+
+
+class UserLoginSerializer(serializers.Serializer):
+    """
+    Serializer for user login
+    """
+    email = serializers.EmailField()
+    password = serializers.CharField()
+    
+    def validate(self, attrs):
+        email = attrs.get('email')
+        password = attrs.get('password')
+        
+        if email and password:
+            user = authenticate(username=email, password=password)
+            if not user:
+                raise serializers.ValidationError('Invalid credentials.')
+            if not user.is_active:
+                raise serializers.ValidationError('User account is disabled.')
+            attrs['user'] = user
+        else:
+            raise serializers.ValidationError('Must include email and password.')
+        
+        return attrs
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user profile
+    """
+    full_name = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'username', 'userType', 'first_name', 'last_name', 'full_name', 
+                 'profile_completed', 'created_at')
+        read_only_fields = ('id', 'email', 'userType', 'created_at')
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating user profile
+    """
+    class Meta:
+        model = User
+        fields = ('first_name', 'last_name', 'username')
+
+    def update(self, instance, validated_data):
+        # Update fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        # Check profile completeness
+        required_fields = ['first_name', 'last_name', 'username']
+        if all(getattr(instance, field) for field in required_fields):
+            instance.profile_completed = True
+
+        instance.save()
+        return instance
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """
+    Serializer for changing password
+    """
+    old_password = serializers.CharField()
+    new_password = serializers.CharField(validators=[validate_password])
+    new_password_confirm = serializers.CharField()
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError("New passwords don't match.")
+
+        password = attrs['new_password']
+        
+        if len(password) < 8:
+            raise ValidationError({'new_password': 'Password must be at least 8 characters long.'})
+        
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
+            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        
+        validate_password(password)
+        
+        return attrs
+    
+    def validate_old_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Old password is incorrect.')
+        return value
+
+
+class UserListSerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing users (admin view)
+    """
+    full_name = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'username', 'userType', 'full_name', 
+                 'profile_completed', 'created_at')
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        try:
+            user = User.objects.get(email=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError('No user found with this email.')
+        self.context['user'] = user
+        return value
+
+    def create(self, validated_data):
+        user = self.context['user']
+        # Generate short-lived JWT token specifically for password reset
+        reset_token = AccessToken.for_user(user)
+        reset_token['purpose'] = 'password_reset'
+        reset_token.set_exp(lifetime=timedelta(minutes=10))
+        token_str = str(reset_token)
+        expires_at = timezone.now() + timedelta(minutes=10)
+
+        # Store record
+        PasswordReset.objects.create(
+            user=user,
+            email=user.email,
+            reset_token=token_str,
+            expires_at=expires_at,
+        )
+
+        reset_url = f"{settings.PASSWORD_RESET_URL}?token={token_str}"
+        subject = 'Reset your password'
+        message = (
+            f"Click the link to reset your password: {reset_url}\n"
+            f"This link expires in 10 minutes."
+        )
+        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+    
+         # Remove fail_silently=True and the try-except to expose errors
+        sent_count = send_mail(subject, message, from_email, [user.email], fail_silently=False)
+
+        return {
+            'email': user.email,
+            'expires_at': expires_at,
+        }
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    reset_token = serializers.CharField()
+    new_password = serializers.CharField(validators=[validate_password])
+    new_password_confirm = serializers.CharField()
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError("New passwords don't match.")
+
+        password = attrs['new_password']
+        
+        if len(password) < 8:
+            raise ValidationError({'new_password': 'Password must be at least 8 characters long.'})
+        
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
+            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        
+        validate_password(password)
+
+        token_str = attrs['reset_token']
+
+        # Verify JWT token
+        try:
+            access = AccessToken(token_str)
+        except Exception:
+            raise serializers.ValidationError('Invalid or malformed reset token.')
+
+        # Ensure token purpose
+        if access.payload.get('purpose') != 'password_reset':
+            raise serializers.ValidationError('Invalid reset token purpose.')
+
+        user_id = access.payload.get('user_id')
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            raise serializers.ValidationError('Invalid reset token.')
+
+        try:
+            reset = PasswordReset.objects.filter(
+                user=user,
+                reset_token=token_str,
+            ).latest('created_at')
+        except PasswordReset.DoesNotExist:
+            raise serializers.ValidationError('Invalid or expired reset token.')
+
+        if reset.used_at is not None:
+            raise serializers.ValidationError('This reset token has already been used.')
+        if reset.is_expired:
+            raise serializers.ValidationError('The token has expired. Please request a new reset.')
+
+        self.context['user'] = user
+        self.context['reset'] = reset
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.context['user']
+        reset = self.context['reset']
+        user.set_password(self.validated_data['new_password'])
+        user.save(update_fields=['password'])
+        reset.mark_used()
+        return user
