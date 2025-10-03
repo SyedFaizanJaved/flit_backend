@@ -105,7 +105,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'Flit_Backend.wsgi.application'
+WSGI_APPLICATION = 'flit_backend.wsgi.application'
 
 
 # Database
