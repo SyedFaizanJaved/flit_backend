@@ -44,13 +44,11 @@ class JobListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing jobs
     """
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_logo = serializers.CharField(source='company.logo.url', read_only=True)
-    
+    company_name = serializers.CharField(source='company.company_name', read_only=True)    
     class Meta:
         model = Job
         fields = (
-            'id', 'title', 'company_name', 'company_logo', 'location', 'workStyle',
+            'id', 'title', 'company_name', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
             'salary_currency', 'status', 'created_at', 'skills'
         )

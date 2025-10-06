@@ -1,151 +1,138 @@
-from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.core.exceptions import ObjectDoesNotExist
 from .models import Company
 from .serializers import CompanySerializer, CompanyListSerializer, CompanyUpdateSerializer
 
 
-class CompanyListView(generics.ListCreateAPIView):
+class CompanyViewSet(viewsets.ViewSet):
     """
-    Company list and create view
+    ViewSet for Company management
     """
-    queryset = Company.objects.filter(is_active=True)
-    serializer_class = CompanyListSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['industry', 'size', 'is_verified']
     search_fields = ['company_name', 'industry', 'description']
     ordering_fields = ['created_at', 'company_name']
     ordering = ['-created_at']
-    
-    def get_serializer_class(self):
-        if self.request.method == 'POST':
-            return CompanySerializer
-        return CompanyListSerializer
 
+    def list(self, request):
+        queryset = Company.objects.filter(is_active=True)
+        for backend in self.filter_backends:
+            queryset = backend().filter_queryset(request, queryset, self)
+        serializer = CompanyListSerializer(queryset, many=True)
+        return Response(serializer.data)
 
-class CompanyDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Company detail view
-    """
-    queryset = Company.objects.filter(is_active=True)
-    serializer_class = CompanySerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
-            return CompanyUpdateSerializer
-        return CompanySerializer
+    def create(self, request):
+        serializer = CompanySerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    def retrieve(self, request, pk=None):
+        try:
+            company = Company.objects.get(pk=pk, is_active=True)
+            serializer = CompanySerializer(company)
+            return Response(serializer.data)
+        except Company.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
-class CompanyUpdateView(generics.UpdateAPIView):
-    """
-    Company update view
-    """
-    serializer_class = CompanyUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        # Only allow users to update companies they created
-        return Company.objects.filter(created_by=self.request.user, is_active=True)
+    def partial_update(self, request, pk=None):
+        try:
+            company = Company.objects.get(pk=pk, created_by=request.user, is_active=True)
+            serializer = CompanyUpdateSerializer(company, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Company.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=False, methods=['get'], url_path='my-companies')
+    def my_companies(self, request):
+        queryset = Company.objects.filter(created_by=request.user, is_active=True)
+        serializer = CompanySerializer(queryset, many=True)
+        return Response(serializer.data)
 
-class MyCompaniesView(generics.ListAPIView):
-    """
-    User's companies view
-    """
-    serializer_class = CompanySerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        return Company.objects.filter(created_by=self.request.user, is_active=True)
-
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def company_dashboard(request, company_id):
-    """
-    Company dashboard data
-    """
-    try:
-        company = Company.objects.get(id=company_id, created_by=request.user)
-        data = {
-            'company': CompanySerializer(company).data,
-            'jobs_count': company.jobs.count(),
-            'projects_count': company.projects.count(),
-            'applications_count': company.job_applications.count() + company.project_applications.count(),
-            'hires_count': company.total_hires,
-        }
-        
-        # Add recent jobs
-        recent_jobs = company.jobs.all()[:5]
-        data['recent_jobs'] = [
-            {
-                'id': job.id,
-                'title': job.title,
-                'status': job.status,
-                'applications_count': job.applications.count(),
-                'created_at': job.created_at
+    @action(detail=True, methods=['get'], url_path='dashboard')
+    def dashboard(self, request, pk=None):
+        try:
+            company = Company.objects.get(id=pk, created_by=request.user)
+            data = {
+                'company': CompanySerializer(company).data,
+                'jobs_count': getattr(company, 'jobs', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'jobs') else 0,
+                'projects_count': getattr(company, 'projects', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'projects') else 0,
+                'applications_count': 0,
+                'hires_count': 0,  
             }
-            for job in recent_jobs
-        ]
-        
-        # Add recent projects
-        recent_projects = company.projects.all()[:5]
-        data['recent_projects'] = [
-            {
-                'id': project.id,
-                'title': project.title,
-                'status': project.status,
-                'applications_count': project.applications.count(),
-                'created_at': project.created_at
-            }
-            for project in recent_projects
-        ]
-        
-        return Response(data, status=status.HTTP_200_OK)
-    except Company.DoesNotExist:
-        return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Add recent jobs (if jobs model exists)
+            if hasattr(company, 'jobs'):
+                recent_jobs = company.jobs.all()[:5]
+                data['recent_jobs'] = [
+                    {
+                        'id': job.id,
+                        'title': getattr(job, 'title', ''),
+                        'status': getattr(job, 'status', ''),
+                        'applications_count': getattr(job, 'applications', type('obj', (object,), {'count': lambda: 0})()).count(),
+                        'created_at': getattr(job, 'created_at', None)
+                    }
+                    for job in recent_jobs
+                ]
+            else:
+                data['recent_jobs'] = []
+            
+            # Add recent projects (similarly)
+            if hasattr(company, 'projects'):
+                recent_projects = company.projects.all()[:5]
+                data['recent_projects'] = [
+                    {
+                        'id': project.id,
+                        'title': getattr(project, 'title', ''),
+                        'status': getattr(project, 'status', ''),
+                        'applications_count': getattr(project, 'applications', type('obj', (object,), {'count': lambda: 0})()).count(),
+                        'created_at': getattr(project, 'created_at', None)
+                    }
+                    for project in recent_projects
+                ]
+            else:
+                data['recent_projects'] = []
+            
+            return Response(data, status=status.HTTP_200_OK)
+        except Company.DoesNotExist:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def verify_company(request, company_id):
-    """
-    Verify company (admin only)
-    """
-    if not request.user.is_staff:
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    try:
-        company = Company.objects.get(id=company_id)
-        company.is_verified = True
-        company.save()
+    @action(detail=True, methods=['post'], url_path='verify')
+    def verify(self, request, pk=None):
+        if not request.user.is_staff:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
-        return Response({
-            'message': 'Company verified successfully',
-            'company': CompanySerializer(company).data
-        }, status=status.HTTP_200_OK)
-    except Company.DoesNotExist:
-        return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            company = Company.objects.get(id=pk)
+            company.is_verified = True
+            company.save()
+            
+            return Response({
+                'message': 'Company verified successfully',
+                'company': CompanySerializer(company).data
+            }, status=status.HTTP_200_OK)
+        except Company.DoesNotExist:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def deactivate_company(request, company_id):
-    """
-    Deactivate company
-    """
-    try:
-        company = Company.objects.get(id=company_id, created_by=request.user)
-        company.is_active = False
-        company.save()
-        
-        return Response({
-            'message': 'Company deactivated successfully',
-            'company': CompanySerializer(company).data
-        }, status=status.HTTP_200_OK)
-    except Company.DoesNotExist:
-        return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+    @action(detail=True, methods=['post'], url_path='deactivate')
+    def deactivate(self, request, pk=None):
+        try:
+            company = Company.objects.get(id=pk, created_by=request.user)
+            company.is_active = False
+            company.save()
+            
+            return Response({
+                'message': 'Company deactivated successfully',
+                'company': CompanySerializer(company).data
+            }, status=status.HTTP_200_OK)
+        except Company.DoesNotExist:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
