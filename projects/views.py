@@ -17,9 +17,10 @@ class ProjectListView(generics.ListCreateAPIView):
     queryset = Project.objects.filter(status='active')
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['category', 'complexity', 'paymentType', 'work_style', 'company']
+    filterset_fields = ['category', 'paymentType', 'company']
+    # filterset_fields = ['category', 'complexity', 'paymentType', 'work_style', 'company']
     search_fields = ['title', 'description', 'company__company_name']
-    ordering_fields = ['created_at', 'budget_min', 'budget_max']
+    # ordering_fields = ['created_at', 'budget_min', 'budget_max']
     ordering = ['-created_at']
     
     def get_serializer_class(self):

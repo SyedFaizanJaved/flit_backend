@@ -24,8 +24,8 @@ class JobAdmin(admin.ModelAdmin):
     Job admin
     """
     list_display = ('title', 'company', 'workStyle', 'category', 'experienceLevel', 'employmentType', 'status', 'created_at')
-    list_filter = ('workStyle', 'category', 'experienceLevel', 'employmentType', 'status', 'is_urgent', 'created_at')
-    search_fields = ('title', 'description', 'company__company_name', 'location')
+    list_filter = ('workStyle', 'category', 'experienceLevel', 'employmentType', 'status', 'created_at')
+    search_fields = ('title', 'description', 'company__company_name')
     readonly_fields = ('created_at', 'updated_at', 'slug', 'views_count', 'applications_count', 'shortlisted_count', 'hired_count')
     inlines = [JobSkillInline, JobLanguageInline]
     
@@ -34,27 +34,19 @@ class JobAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'company', 'employer')
         }),
         ('Job Details', {
-            'fields': ('location', 'workStyle', 'category', 'skills', 'experienceLevel', 'employmentType', 'hasTemporaryOption', 'temporaryDuration')
+            'fields': ('workStyle', 'category', 'skills', 'experienceLevel', 'employmentType', 'hasTemporaryOption')
         }),
         ('Salary Information', {
-            'fields': ('salaryRangeMin', 'salaryRangeMax', 'salary_currency', 'salary_period', 'is_salary_negotiable')
+            'fields': ('salaryRangeMin', 'salaryRangeMax')
         }),
         ('Benefits', {
             'fields': ('benefits',)
         }),
         ('Application Process', {
-            'fields': ('applicationDeadline', 'start_date', 'is_urgent')
+            'fields': ('applicationDeadline',)
         }),
-        ('Status & Matching', {
-            'fields': ('status', 'skill_match_threshold', 'experience_weight', 'education_weight', 'location_weight')
-        }),
-        ('Tags & SEO', {
-            'fields': ('tags', 'slug'),
-            'classes': ('collapse',)
-        }),
-        ('Statistics', {
-            'fields': ('views_count', 'applications_count', 'shortlisted_count', 'hired_count'),
-            'classes': ('collapse',)
+        ('Status', {
+            'fields': ('status',)
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

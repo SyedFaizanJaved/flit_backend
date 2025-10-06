@@ -58,7 +58,7 @@ class Project(models.Model):
     
     # Basic Information
     title = models.CharField(max_length=200)
-    description = models.TextField(max_length=2000,blank=True, null=True)
+    description = models.TextField(max_length=2000)
     company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='projects')
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_projects')
     
@@ -88,7 +88,7 @@ class Project(models.Model):
     # Timeline
     duration_days = models.PositiveIntegerField(blank=True, null=True)
     start_date = models.DateField(blank=True, null=True)
-    deadline = models.DateField(blank=True, null=True)
+    deadline = models.DateField()
     is_timeline_flexible = models.BooleanField(default=False)
     
     # Requirements

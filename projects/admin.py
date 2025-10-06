@@ -24,9 +24,9 @@ class ProjectAdmin(admin.ModelAdmin):
     Project admin
     """
     list_display = ('title', 'company', 'category', 'complexity', 'paymentType', 'paymentAmount', 'status', 'created_at')
-    list_filter = ('category', 'complexity', 'paymentType', 'work_style', 'collaboration', 'status', 'is_urgent', 'created_at')
+    list_filter = ('category', 'complexity', 'paymentType', 'status', 'created_at')  # Removed non-existent: work_style, collaboration, is_urgent
     search_fields = ('title', 'description', 'company__company_name')
-    readonly_fields = ('created_at', 'updated_at', 'slug', 'views_count', 'applications_count', 'shortlisted_count', 'hired_count')
+    readonly_fields = ('created_at', 'updated_at', 'slug')  # Removed non-existent: views_count, applications_count, shortlisted_count, hired_count
     inlines = [ProjectSkillInline, ProjectMilestoneInline]
     
     fieldsets = (
@@ -36,33 +36,10 @@ class ProjectAdmin(admin.ModelAdmin):
         ('Project Details', {
             'fields': ('category', 'skills', 'paymentType', 'paymentAmount', 'estimatedHours', 'complexity')
         }),
-        ('Budget & Timeline', {
-            'fields': ('budget_min', 'budget_max', 'budget_currency', 'is_budget_negotiable', 'duration_days', 'start_date', 'deadline', 'is_timeline_flexible')
-        }),
-        ('Requirements', {
-            'fields': ('experience_min_years', 'experience_max_years', 'education_level', 'education_fields', 'deliverables', 'tools', 'technologies')
-        }),
-        ('Work Arrangement', {
-            'fields': ('work_style', 'collaboration')
-        }),
-        ('Application Process', {
-            'fields': ('application_deadline', 'max_applicants', 'is_urgent')
-        }),
-        ('Status & Matching', {
-            'fields': ('status', 'skill_match_threshold', 'experience_weight', 'education_weight', 'portfolio_weight')
-        }),
-        ('Tags & SEO', {
-            'fields': ('tags', 'slug'),
-            'classes': ('collapse',)
-        }),
-        ('Statistics', {
-            'fields': ('views_count', 'applications_count', 'shortlisted_count', 'hired_count'),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
+        # ('Tags & SEO', {  # Commented out: tags doesn't exist in model
+        #     'fields': ('tags', 'slug'),
+        #     'classes': ('collapse',)
+        # }),
     )
     
     def get_queryset(self, request):
