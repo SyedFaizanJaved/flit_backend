@@ -27,7 +27,6 @@ class JobSerializer(serializers.ModelSerializer):
     Serializer for job postings
     """
     # Only expose flat skills list; keep languages nested
-    # required_languages = JobLanguageSerializer(many=True, read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     
     class Meta:
@@ -38,11 +37,6 @@ class JobSerializer(serializers.ModelSerializer):
             'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption',
             'status', 'created_at', 'updated_at'
         )
-        # read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
-    
-    # def create(self, validated_data):
-    #     validated_data['employer'] = self.context['request'].user
-    #     return super().create(validated_data)
 
 
 class JobListSerializer(serializers.ModelSerializer):
@@ -68,14 +62,13 @@ class JobCreateSerializer(serializers.ModelSerializer):
         write_only=True, 
         min_length=1  # Ensure at least one skill
     )
-    # Accept alias 'required_skills' from client; treat it the same as 'skills'
+
     required_skills = serializers.ListField(
         child=serializers.CharField(), 
         write_only=True, 
         required=False,
         min_length=0
     )
-    # languages = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
     
     class Meta:
         model = Job
@@ -90,6 +83,7 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'description': {'required': True},
             'company': {'required': True},
             'workStyle': {'required': True},
+            'required_skills': {'required': True},
             'category': {'required': True},
             'experienceLevel': {'required': True},
             'employmentType': {'required': True},
@@ -118,10 +112,6 @@ class JobCreateSerializer(serializers.ModelSerializer):
         for skill in skills:
             JobSkill.objects.create(job=job, name=skill)
         
-        # Create job languages
-        # for language in languages:
-        #     JobLanguage.objects.create(job=job, name=language)
-        
         return job
 
     def to_representation(self, instance):
@@ -134,10 +124,13 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating jobs
     """
+
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+
     class Meta:
         model = Job
         fields = (
-            'title', 'description', 'workStyle', 'category',
+            'title', 'description','company_name', 'workStyle', 'category','skills',
             'experienceLevel', 'employmentType', 'hasTemporaryOption', 
             'salaryRangeMin', 'salaryRangeMax', 
             'benefits', 'applicationDeadline', 'status'
@@ -146,7 +139,9 @@ class JobUpdateSerializer(serializers.ModelSerializer):
             'title': {'required': True},
             'description': {'required': True},
             'workStyle': {'required': True},
+            'company_name': {'required': True},
             'category': {'required': True},
+            'skills': {'required': True},
             'experienceLevel': {'required': True},
             'employmentType': {'required': True},
             'salaryRangeMin': {'required': True, 'min_value': 0},

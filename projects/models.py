@@ -1,6 +1,12 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
+from datetime import timedelta
+
+
+def get_default_deadline():
+    return timezone.now().date() + timedelta(days=30)
 
 
 class Project(models.Model):
@@ -58,7 +64,7 @@ class Project(models.Model):
     
     # Basic Information
     title = models.CharField(max_length=200)
-    description = models.TextField(max_length=2000)
+    description = models.TextField(max_length=2000, default='')
     company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='projects')
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_projects')
     
@@ -88,7 +94,7 @@ class Project(models.Model):
     # Timeline
     duration_days = models.PositiveIntegerField(blank=True, null=True)
     start_date = models.DateField(blank=True, null=True)
-    deadline = models.DateField()
+    deadline = models.DateField(default=get_default_deadline)
     is_timeline_flexible = models.BooleanField(default=False)
     
     # Requirements
@@ -124,7 +130,7 @@ class Project(models.Model):
     tags = models.JSONField(default=list)  # List of tags
     
     # SEO
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
     
     # Statistics
     views_count = models.PositiveIntegerField(default=0)
@@ -182,7 +188,7 @@ class ProjectMilestone(models.Model):
     """
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='milestones')
     title = models.CharField(max_length=200)
-    description = models.TextField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True, default='')
     due_date = models.DateField()
     payment_amount = models.PositiveIntegerField()
     

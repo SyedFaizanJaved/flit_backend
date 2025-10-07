@@ -68,7 +68,7 @@ class Job(models.Model):
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_jobs')
     
     # Job Details (matching JobPostingFields)
-    # location = models.CharField(max_length=200, blank=True, null=True)
+    location = models.CharField(max_length=200, blank=True, null=True)
     workStyle = models.CharField(max_length=20, choices=WORK_STYLE_CHOICES, default='remote')
     category = models.CharField(max_length=100, choices=[
         ('engineering', 'Engineering'),
@@ -82,14 +82,14 @@ class Job(models.Model):
     experienceLevel = models.CharField(max_length=20, choices=EXPERIENCE_LEVEL_CHOICES)
     employmentType = models.CharField(max_length=20, choices=JOB_TYPE_CHOICES)
     hasTemporaryOption = models.BooleanField(default=False)
-    # temporaryDuration = models.CharField(max_length=100, blank=True, null=True)
+    temporaryDuration = models.CharField(max_length=100, blank=True, null=True)
     
     # Salary Information
     salaryRangeMin = models.PositiveIntegerField(blank=True, null=True)
     salaryRangeMax = models.PositiveIntegerField(blank=True, null=True)
-    # salary_currency = models.CharField(max_length=3, default='USD')
-    # salary_period = models.CharField(max_length=20, choices=SALARY_PERIOD_CHOICES, default='yearly')
-    # is_salary_negotiable = models.BooleanField(default=True)
+    salary_currency = models.CharField(max_length=3, default='USD')
+    salary_period = models.CharField(max_length=20, choices=SALARY_PERIOD_CHOICES, default='yearly')
+    is_salary_negotiable = models.BooleanField(default=True)
     
     # Benefits and Perks
     benefits = models.JSONField(default=list)  # List of benefits
@@ -97,23 +97,23 @@ class Job(models.Model):
  
     # Application Process
     applicationDeadline = models.DateTimeField(blank=True, null=True)
-    # start_date = models.DateField(blank=True, null=True)
-    # is_urgent = models.BooleanField(default=False)
+    start_date = models.DateField(blank=True, null=True)
+    is_urgent = models.BooleanField(default=False)
     
     # Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     
     # Matching Criteria
-    # skill_match_threshold = models.PositiveIntegerField(default=70, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    # experience_weight = models.PositiveIntegerField(default=30, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    # education_weight = models.PositiveIntegerField(default=20, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    # location_weight = models.PositiveIntegerField(default=10, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    skill_match_threshold = models.PositiveIntegerField(default=70, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    experience_weight = models.PositiveIntegerField(default=30, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    education_weight = models.PositiveIntegerField(default=20, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    location_weight = models.PositiveIntegerField(default=10, validators=[MinValueValidator(0), MaxValueValidator(100)])
     
     # Tags for search
-    # tags = models.JSONField(default=list)  # List of tags
+    tags = models.JSONField(default=list)  
     
     # SEO
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
     
     # Statistics
     views_count = models.PositiveIntegerField(default=0)
