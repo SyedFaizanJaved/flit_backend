@@ -6,6 +6,7 @@ from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import check_password
 from django.conf import settings
 from .models import User
+from companies.models import Company
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserUpdateSerializer, ChangePasswordSerializer, UserListSerializer,
@@ -73,11 +74,17 @@ def user_login(request):
         
         # Issue JWT tokens
         refresh = RefreshToken.for_user(user)
+        # Determine company completion for employer users
+        company_is_completed = False
+        if getattr(user, 'userType', None) == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
+            company_is_completed = Company.objects.filter(created_by=user, is_active=True, is_completed=True).exists()
+
         return Response({
             'user': UserProfileSerializer(user).data,
             'access': str(refresh.access_token),
             'refresh': str(refresh),
-            'message': 'Login successful'
+            'message': 'Login successful',
+            'company_is_completed': company_is_completed,
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

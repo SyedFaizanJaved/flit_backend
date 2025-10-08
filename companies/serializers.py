@@ -15,6 +15,8 @@ class CompanySerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
+        # Ensure completion flag is explicitly set to True on creation
+        validated_data['is_completed'] = True
         return super().create(validated_data)
 
 
