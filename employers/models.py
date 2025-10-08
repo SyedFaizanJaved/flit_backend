@@ -9,6 +9,9 @@ class Employer(models.Model):
     """
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employer_profile')
     
+    # Company Relation
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='employers', blank=True, null=True)
+    
     # Basic Information
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
@@ -18,21 +21,6 @@ class Employer(models.Model):
     profile_picture = models.ImageField(upload_to='employers/profile_pictures/', blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
     
-    # Company Information (from EmployerProfileFields)
-    companyName = models.CharField(max_length=200, blank=True, null=True)
-    industry = models.CharField(max_length=100, blank=True, null=True)
-    description = models.TextField(blank=True, null=True)
-    website = models.URLField(blank=True, null=True)
-    location = models.CharField(max_length=200, blank=True, null=True)
-    size = models.CharField(max_length=20, blank=True, null=True, choices=[
-        ('startup', 'Startup'),
-        ('small', 'Small'),
-        ('medium', 'Medium'),
-        ('large', 'Large'),
-        ('enterprise', 'Enterprise'),
-    ])
-    values = models.JSONField(default=list)  # List of company values
-    logoImage = models.ImageField(upload_to='employers/company_logos/', blank=True, null=True)
     
     # Profile Completion Status
     basic_info_completed = models.BooleanField(default=False)
@@ -65,7 +53,7 @@ class Employer(models.Model):
     
     @property
     def is_profile_complete(self):
-        return self.basic_info_completed and self.company_info_completed
+        return self.basic_info_completed and bool(self.company_id)
 
 
 class EmployerPreference(models.Model):

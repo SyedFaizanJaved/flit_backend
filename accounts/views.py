@@ -6,6 +6,7 @@ from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import check_password
 from django.conf import settings
 from .models import User
+from companies.models import Company
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserUpdateSerializer, ChangePasswordSerializer, UserListSerializer,
@@ -32,6 +33,34 @@ class UserRegistrationView(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class BaseRoleRegistrationView(generics.CreateAPIView):
+    """
+    Generic registration view that forces a specific userType.
+    Subclasses must set `fixed_user_type` to one of the allowed roles.
+    """
+    queryset = User.objects.all()
+    serializer_class = UserRegistrationSerializer
+    permission_classes = [permissions.AllowAny]
+    fixed_user_type = None
+
+    def get_serializer(self, *args, **kwargs):
+        data = kwargs.get('data')
+        if isinstance(data, dict) and self.fixed_user_type:
+            # Override/ensure the role set by the endpoint
+            data = {**data, 'userType': self.fixed_user_type}
+            kwargs['data'] = data
+        return super().get_serializer(*args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response({
+            'user': UserProfileSerializer(user).data,
+            'message': 'User registered successfully'
+        }, status=status.HTTP_201_CREATED)
+
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def user_login(request):
@@ -45,11 +74,17 @@ def user_login(request):
         
         # Issue JWT tokens
         refresh = RefreshToken.for_user(user)
+        # Determine company completion for employer users
+        company_is_completed = False
+        if getattr(user, 'userType', None) == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
+            company_is_completed = Company.objects.filter(created_by=user, is_active=True, is_completed=True).exists()
+
         return Response({
             'user': UserProfileSerializer(user).data,
             'access': str(refresh.access_token),
             'refresh': str(refresh),
-            'message': 'Login successful'
+            'message': 'Login successful',
+            'company_is_completed': company_is_completed,
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

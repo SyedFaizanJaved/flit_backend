@@ -26,6 +26,8 @@ class CompanySerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
+        # Ensure completion flag is explicitly set to True on creation
+        validated_data['is_completed'] = True
         return super().create(validated_data)
 
 
@@ -35,8 +37,8 @@ class CompanyListSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Company
-        fields = ('id', 'company_name', 'industry', 'description', 'size', 'logo', 'location', 'website', 'values',
-                  'is_active', 'created_at')
+        fields = ('id', 'company_name', 'industry', 'size',  'full_address', 'website', 
+                 'is_verified', 'is_active', 'created_at')
 
 
 class CompanyUpdateSerializer(serializers.ModelSerializer):

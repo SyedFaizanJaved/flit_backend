@@ -67,6 +67,35 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data.pop('password_confirm')
         user = User.objects.create_user(**validated_data)
+
+        # Create related profile based on role using safe defaults
+        user_role = user.userType
+        try:
+            if user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
+                # Lazy import to avoid circular deps at import time
+                from candidates.models import Candidate
+                full_name = f"{user.first_name} {user.last_name}".strip() or user.get_short_name()
+                # Title is required at model level (blank not allowed). Use a safe default.
+                Candidate.objects.get_or_create(
+                    user=user,
+                    defaults={
+                        'full_name': full_name or user.email.split('@')[0],
+                        'title': 'Candidate',
+                    }
+                )
+            elif user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
+                from employers.models import Employer
+                Employer.objects.get_or_create(
+                    user=user,
+                    defaults={
+                        'first_name': user.first_name or user.get_short_name(),
+                        'last_name': user.last_name or '',
+                    }
+                )
+        except Exception:
+            # Do not block user creation if profile creation fails
+            pass
+
         return user
 
 

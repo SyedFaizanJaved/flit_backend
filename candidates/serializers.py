@@ -11,9 +11,12 @@ class CandidateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Candidate
-        fields = '__all__'
-        read_only_fields = ('user', 'created_at', 'updated_at')
-    
+        fields = ("id", "full_name", "is_profile_complete","title", "bio","work_style","availability_type",
+            "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
+            "intro_video_description", "privacy_completed","created_at","updated_at","user",
+        )
+        read_only_fields = ("user", "created_at", "updated_at")
+
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
