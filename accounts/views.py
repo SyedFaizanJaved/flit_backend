@@ -32,6 +32,34 @@ class UserRegistrationView(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class BaseRoleRegistrationView(generics.CreateAPIView):
+    """
+    Generic registration view that forces a specific userType.
+    Subclasses must set `fixed_user_type` to one of the allowed roles.
+    """
+    queryset = User.objects.all()
+    serializer_class = UserRegistrationSerializer
+    permission_classes = [permissions.AllowAny]
+    fixed_user_type = None
+
+    def get_serializer(self, *args, **kwargs):
+        data = kwargs.get('data')
+        if isinstance(data, dict) and self.fixed_user_type:
+            # Override/ensure the role set by the endpoint
+            data = {**data, 'userType': self.fixed_user_type}
+            kwargs['data'] = data
+        return super().get_serializer(*args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response({
+            'user': UserProfileSerializer(user).data,
+            'message': 'User registered successfully'
+        }, status=status.HTTP_201_CREATED)
+
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def user_login(request):

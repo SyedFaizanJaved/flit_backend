@@ -8,6 +8,8 @@ class EmployerSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     is_profile_complete = serializers.ReadOnlyField()
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
     
     class Meta:
         model = Employer
@@ -25,11 +27,16 @@ class EmployerListSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     is_profile_complete = serializers.ReadOnlyField()
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
     
     class Meta:
         model = Employer
-        fields = ('id', 'full_name', 'companyName', 'industry', 'location', 'size', 
-                 'is_profile_complete', 'created_at')
+        fields = (
+            'id', 'full_name',
+            'company_id', 'company_name',
+            'is_profile_complete', 'created_at'
+        )
 
 
 class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
@@ -38,15 +45,17 @@ class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Employer
-        fields = ('first_name', 'last_name', 'phone', 'position', 'department', 
-                 'profile_picture', 'bio', 'companyName', 'industry', 'description', 
-                 'website', 'location', 'size', 'values', 'logoImage')
+        fields = (
+            'first_name', 'last_name', 'phone', 'position', 'department',
+            'profile_picture', 'bio',
+            'company',
+        )
     
     def update(self, instance, validated_data):
         # Update profile completion status
         if 'first_name' in validated_data and 'last_name' in validated_data:
             instance.basic_info_completed = True
-        if 'companyName' in validated_data and 'industry' in validated_data:
+        if 'company' in validated_data and validated_data.get('company'):
             instance.company_info_completed = True
         
         return super().update(instance, validated_data)

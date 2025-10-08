@@ -8,6 +8,7 @@ from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
     ProjectSkillSerializer, ProjectMilestoneSerializer
 )
+from accounts.permissions import IsEmployer
 
 
 class ProjectListView(generics.ListCreateAPIView):
@@ -27,6 +28,12 @@ class ProjectListView(generics.ListCreateAPIView):
             return ProjectCreateSerializer
         return ProjectListSerializer
 
+    def get_permissions(self):
+        # Only employers can create; everyone authenticated can list
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated(), IsEmployer()]
+        return [permissions.IsAuthenticated()]
+
 
 class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
@@ -40,6 +47,12 @@ class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ['PUT', 'PATCH']:
             return ProjectUpdateSerializer
         return ProjectSerializer
+
+    def get_permissions(self):
+        # Restrict modifications to employers; retrieval allowed to any authenticated
+        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+            return [permissions.IsAuthenticated(), IsEmployer()]
+        return [permissions.IsAuthenticated()]
 
 
 class MyProjectsView(generics.ListAPIView):
