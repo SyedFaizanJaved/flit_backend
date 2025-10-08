@@ -92,13 +92,48 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     
     def update(self, instance, validated_data):
         # Update profile completion status based on filled fields
-        if 'full_name' in validated_data and 'title' in validated_data:
-            instance.basic_info_completed = True
-        if 'skills' in validated_data:
-            instance.skills_completed = True
-        if 'portfolio_links' in validated_data or 'resume_url' in validated_data:
-            instance.portfolio_completed = True
-        if 'profile_visibility' in validated_data:
-            instance.privacy_completed = True
-        
-        return super().update(instance, validated_data)
+        updated_instance = super().update(instance, validated_data)
+
+        # Basic info complete when name and title are set (and non-empty)
+        if (updated_instance.full_name and updated_instance.title):
+            updated_instance.basic_info_completed = True
+
+        # Work preferences complete when any of key work pref fields are set
+        work_pref_keys = [
+            'work_style', 'availability_type', 'is_available', 'is_remote', 'time_zone', 'location'
+        ]
+        if any(key in validated_data for key in work_pref_keys):
+            updated_instance.work_preferences_completed = True
+
+        # Skills complete when skills array provided and not empty
+        if 'skills' in validated_data and getattr(updated_instance, 'skills', None):
+            updated_instance.skills_completed = True
+
+        # Portfolio complete when links or resume/video provided
+        if (
+            'portfolio_links' in validated_data or
+            ('resume_url' in validated_data and updated_instance.resume_url) or
+            ('video_intro_url' in validated_data and updated_instance.video_intro_url)
+        ):
+            updated_instance.portfolio_completed = True
+
+        # Privacy complete when any visibility field set
+        privacy_keys = [
+            'profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility'
+        ]
+        if any(key in validated_data for key in privacy_keys):
+            updated_instance.privacy_completed = True
+
+        # Persist flag changes
+        updated_instance.save(update_fields=[
+            'basic_info_completed', 'work_preferences_completed', 'skills_completed',
+            'portfolio_completed', 'privacy_completed', 'updated_at'
+        ])
+
+        # Sync to user.profile_completed if candidate profile is complete
+        user = updated_instance.user
+        if updated_instance.is_profile_complete and not getattr(user, 'profile_completed', False):
+            user.profile_completed = True
+            user.save(update_fields=['profile_completed', 'updated_at'])
+
+        return updated_instance

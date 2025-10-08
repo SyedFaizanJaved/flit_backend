@@ -7,6 +7,7 @@ from django.contrib.auth.hashers import check_password
 from django.conf import settings
 from .models import User
 from companies.models import Company
+from candidates.models import Candidate
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserUpdateSerializer, ChangePasswordSerializer, UserListSerializer,
@@ -74,10 +75,18 @@ def user_login(request):
         
         # Issue JWT tokens
         refresh = RefreshToken.for_user(user)
-        # Determine company completion for employer users
+        # Determine profile completion flags by role
         company_is_completed = False
-        if getattr(user, 'userType', None) == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
+        candidate_is_completed = False
+        user_role = getattr(user, 'userType', None)
+        if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
             company_is_completed = Company.objects.filter(created_by=user, is_active=True, is_completed=True).exists()
+        elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
+            try:
+                candidate_profile = user.candidate_profile
+                candidate_is_completed = candidate_profile.is_profile_complete
+            except Candidate.DoesNotExist:
+                candidate_is_completed = False
 
         return Response({
             'user': UserProfileSerializer(user).data,
@@ -85,6 +94,7 @@ def user_login(request):
             'refresh': str(refresh),
             'message': 'Login successful',
             'company_is_completed': company_is_completed,
+            'candidate_is_completed': candidate_is_completed,
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
