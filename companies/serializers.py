@@ -6,12 +6,23 @@ class CompanySerializer(serializers.ModelSerializer):
     """
     Serializer for company
     """
-    full_address = serializers.ReadOnlyField()
-    
     class Meta:
         model = Company
         fields = '__all__'
         read_only_fields = ('created_by', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'company_name': {'required': True},
+            'description': {'required': True},
+            'industry': {'required': True},
+            'size': {'required': True},
+            'values': {'required': True},
+            'location': {'required': True},
+        }
+    
+    def validate_values(self, value):
+        if not value:
+            raise serializers.ValidationError("Company values are required and cannot be empty.")
+        return value
     
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -24,8 +35,6 @@ class CompanyListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing companies
     """
-    full_address = serializers.ReadOnlyField()
-    
     class Meta:
         model = Company
         fields = ('id', 'company_name', 'industry', 'size',  'full_address', 'website', 
@@ -38,9 +47,5 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Company
-        fields = ('company_name', 'description', 'industry', 'size', 'founded', 'website', 
-                 'logo', 'contact_email', 'contact_phone', 'address_street', 
-                 'address_city', 'address_state', 'address_country', 'address_zip_code',
-                 'linkedin_url', 'twitter_url', 'facebook_url', 'instagram_url',
-                 'mission', 'vision', 'values', 'work_style', 'benefits', 'perks',
-                 'work_life_balance')
+        fields = ('company_name', 'description', 'industry', 'size', 'website', 
+                 'logo', 'values', 'location')

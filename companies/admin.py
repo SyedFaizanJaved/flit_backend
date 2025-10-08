@@ -8,7 +8,7 @@ class CompanyAdmin(admin.ModelAdmin):
     Company admin
     """
     list_display = ('company_name', 'industry', 'size', 'is_verified', 'is_active', 'created_at')
-    list_filter = ('industry', 'size', 'is_verified', 'is_active', 'work_style', 'work_life_balance', 'created_at')
+    list_filter = ('industry', 'size', 'is_verified', 'is_active', 'created_at')
     search_fields = ('company_name', 'industry', 'description', 'contact_email')
     readonly_fields = ('created_at', 'updated_at', 'full_address')
     

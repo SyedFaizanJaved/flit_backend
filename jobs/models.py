@@ -110,10 +110,10 @@ class Job(models.Model):
     location_weight = models.PositiveIntegerField(default=10, validators=[MinValueValidator(0), MaxValueValidator(100)])
     
     # Tags for search
-    tags = models.JSONField(default=list)  # List of tags
+    tags = models.JSONField(default=list)  
     
     # SEO
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
     
     # Statistics
     views_count = models.PositiveIntegerField(default=0)
@@ -133,7 +133,7 @@ class Job(models.Model):
         indexes = [
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['company', 'status']),
-            models.Index(fields=['location', 'workStyle']),
+            # models.Index(fields=['location', 'workStyle']),
         ]
     
     def __str__(self):
@@ -188,3 +188,4 @@ class JobLanguage(models.Model):
     
     def __str__(self):
         return f"{self.name} ({self.proficiency}) for {self.job.title}"
+    

@@ -1,17 +1,10 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
 
+router = DefaultRouter()
+router.register(r'', views.CompanyViewSet, basename='company')
+
 urlpatterns = [
-    # Company Management
-    path('', views.CompanyListView.as_view(), name='company-list'),
-    path('<int:pk>/', views.CompanyDetailView.as_view(), name='company-detail'),
-    path('<int:pk>/update/', views.CompanyUpdateView.as_view(), name='company-update'),
-    
-    # My Companies
-    path('my-companies/', views.MyCompaniesView.as_view(), name='my-companies'),
-    
-    # Company Actions
-    path('<int:company_id>/dashboard/', views.company_dashboard, name='company-dashboard'),
-    path('<int:company_id>/verify/', views.verify_company, name='verify-company'),
-    path('<int:company_id>/deactivate/', views.deactivate_company, name='deactivate-company'),
+    path('', include(router.urls)),
 ]

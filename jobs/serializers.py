@@ -27,32 +27,29 @@ class JobSerializer(serializers.ModelSerializer):
     Serializer for job postings
     """
     # Only expose flat skills list; keep languages nested
-    required_languages = JobLanguageSerializer(many=True, read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     
     class Meta:
         model = Job
-        fields = '__all__'
-        read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
-    
-    def create(self, validated_data):
-        validated_data['employer'] = self.context['request'].user
-        return super().create(validated_data)
+        fields = (
+            'id', 'title', 'description', 'company_name', 'workStyle', 'category',
+            'experienceLevel', 'employmentType', 'skills', 'salaryRangeMin',
+            'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption',
+            'status', 'created_at', 'updated_at'
+        )
 
 
 class JobListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing jobs
     """
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_logo = serializers.CharField(source='company.logo.url', read_only=True)
-    
+    company_name = serializers.CharField(source='company.company_name', read_only=True)    
     class Meta:
         model = Job
         fields = (
-            'id', 'title', 'company_name', 'company_logo', 'location', 'workStyle',
+            'id', 'title', 'company_name', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'salary_currency', 'status', 'created_at', 'skills'
+            'status', 'created_at', 'skills'
         )
 
 
@@ -60,20 +57,42 @@ class JobCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating jobs
     """
-    skills = serializers.ListField(child=serializers.CharField(), write_only=True)
-    # Accept alias 'required_skills' from client; treat it the same as 'skills'
-    required_skills = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
-    languages = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
+    skills = serializers.ListField(
+        child=serializers.CharField(), 
+        write_only=True, 
+        min_length=1  # Ensure at least one skill
+    )
+
+    required_skills = serializers.ListField(
+        child=serializers.CharField(), 
+        write_only=True, 
+        required=False,
+        min_length=0
+    )
     
     class Meta:
         model = Job
         fields = (
-            'title', 'description', 'company', 'location', 'workStyle', 'category',
-            'skills', 'required_skills', 'languages', 'experienceLevel', 'employmentType',
-            'hasTemporaryOption', 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
-            'salary_currency', 'salary_period', 'is_salary_negotiable', 'benefits',
-            'applicationDeadline', 'start_date', 'is_urgent', 'tags'
+            'title', 'description', 'company', 'workStyle', 'category',
+            'skills', 'required_skills', 'experienceLevel', 'employmentType',
+            'hasTemporaryOption', 'salaryRangeMin', 'salaryRangeMax',
+            'benefits', 'applicationDeadline'
         )
+        extra_kwargs = {
+            'title': {'required': True},
+            'description': {'required': True},
+            'company': {'required': True},
+            'workStyle': {'required': True},
+            'required_skills': {'required': True},
+            'category': {'required': True},
+            'experienceLevel': {'required': True},
+            'employmentType': {'required': True},
+            'salaryRangeMin': {'required': True, 'min_value': 0},
+            'salaryRangeMax': {'required': True, 'min_value': 0},
+            'benefits': {'required': True},
+            'applicationDeadline': {'required': True},
+            'hasTemporaryOption': {'required': False},
+        }
     
     def create(self, validated_data):
         skills = validated_data.pop('skills', [])
@@ -81,7 +100,7 @@ class JobCreateSerializer(serializers.ModelSerializer):
         alias_required_skills = validated_data.pop('required_skills', [])
         if alias_required_skills:
             skills = list({*skills, *alias_required_skills})
-        languages = validated_data.pop('languages', [])
+        # languages = validated_data.pop('languages', [])
         
         # Ensure employer is set from the authenticated user
         validated_data['employer'] = self.context['request'].user
@@ -92,10 +111,6 @@ class JobCreateSerializer(serializers.ModelSerializer):
         # Create job skills
         for skill in skills:
             JobSkill.objects.create(job=job, name=skill)
-        
-        # Create job languages
-        for language in languages:
-            JobLanguage.objects.create(job=job, name=language)
         
         return job
 
@@ -109,9 +124,29 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating jobs
     """
+
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+
     class Meta:
         model = Job
-        fields = ('title', 'description', 'location', 'workStyle', 'category',
-                 'experienceLevel', 'employmentType', 'hasTemporaryOption', 
-                 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 
-                 'benefits', 'applicationDeadline', 'start_date', 'status')
+        fields = (
+            'title', 'description','company_name', 'workStyle', 'category','skills',
+            'experienceLevel', 'employmentType', 'hasTemporaryOption', 
+            'salaryRangeMin', 'salaryRangeMax', 
+            'benefits', 'applicationDeadline', 'status'
+        )
+        extra_kwargs = {
+            'title': {'required': True},
+            'description': {'required': True},
+            'workStyle': {'required': True},
+            'company_name': {'required': True},
+            'category': {'required': True},
+            'skills': {'required': True},
+            'experienceLevel': {'required': True},
+            'employmentType': {'required': True},
+            'salaryRangeMin': {'required': True, 'min_value': 0},
+            'salaryRangeMax': {'required': True, 'min_value': 0},
+            'benefits': {'required': True},
+            'applicationDeadline': {'required': True},
+            'hasTemporaryOption': {'required': False},
+        }
