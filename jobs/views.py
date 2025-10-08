@@ -8,6 +8,7 @@ from .serializers import (
     JobSerializer, JobListSerializer, JobCreateSerializer, JobUpdateSerializer,
     JobSkillSerializer, JobLanguageSerializer
 )
+from accounts.permissions import IsEmployer
 
 
 class JobListView(generics.ListCreateAPIView):
@@ -27,6 +28,12 @@ class JobListView(generics.ListCreateAPIView):
             return JobCreateSerializer
         return JobListSerializer
 
+    def get_permissions(self):
+        # Only employers can create; everyone authenticated can list
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated(), IsEmployer()]
+        return [permissions.IsAuthenticated()]
+
 
 class JobDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
@@ -40,6 +47,12 @@ class JobDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ['PUT', 'PATCH']:
             return JobUpdateSerializer
         return JobSerializer
+
+    def get_permissions(self):
+        # Restrict modifications to employers; retrieval allowed to any authenticated
+        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+            return [permissions.IsAuthenticated(), IsEmployer()]
+        return [permissions.IsAuthenticated()]
 
 
 class MyJobsView(generics.ListAPIView):

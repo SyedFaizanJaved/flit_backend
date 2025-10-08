@@ -18,13 +18,23 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse
+
+
+def welcome_root(request):
+    return JsonResponse({
+        "status": "ok",
+        "message": "Welcome to FLIT APIs",
+    })
 
 urlpatterns = [
+    path('', welcome_root, name='root'),
     path('admin/', admin.site.urls),
 
     # API routes
     path('api/auth/', include('accounts.urls')),
     path('api/candidates/', include('candidates.urls')),
+    path('api/applications/', include('applications.urls')),
     path('api/employers/', include('employers.urls')),
     path('api/companies/', include('companies.urls')),
     path('api/jobs/', include('jobs.urls')),

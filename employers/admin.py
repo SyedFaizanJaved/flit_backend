@@ -7,17 +7,21 @@ class EmployerAdmin(admin.ModelAdmin):
     """
     Employer admin
     """
-    list_display = ('full_name', 'companyName', 'industry', 'location', 'created_at')
-    list_filter = ('industry', 'is_profile_public', 'created_at')
-    search_fields = ('first_name', 'last_name', 'companyName', 'industry', 'location')
+    list_display = ('full_name', 'company_name', 'created_at')
+    list_filter = ('is_profile_public', 'created_at', 'company__industry')
+    search_fields = ('first_name', 'last_name', 'company__company_name')
     readonly_fields = ('created_at', 'updated_at')
+    
+    def company_name(self, obj):
+        return obj.company.company_name if obj.company else None
+    company_name.short_description = 'Company'
     
     fieldsets = (
         ('Basic Information', {
             'fields': ('user', 'first_name', 'last_name', 'phone', 'position', 'department', 'profile_picture', 'bio')
         }),
         ('Company Information', {
-            'fields': ('companyName', 'industry', 'description', 'website', 'location', 'size', 'values', 'logoImage')
+            'fields': ('company',)
         }),
         ('Profile Status', {
             'fields': ('basic_info_completed', 'company_info_completed', 'is_profile_public')
