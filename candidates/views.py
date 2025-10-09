@@ -106,6 +106,16 @@ class CandidateViewSet(viewsets.ViewSet):
         setattr(candidate, section_fields[section], True)
         candidate.save()
 
+        # Ensure the user's profile_completed flag reflects the candidate profile state
+        try:
+            user = candidate.user
+            if candidate.is_profile_complete != getattr(user, 'profile_completed', False):
+                user.profile_completed = candidate.is_profile_complete
+                user.save(update_fields=['profile_completed'])
+        except Exception:
+            # Do not block the response if user sync fails
+            pass
+
         return Response({
             'message': f'{section} section marked as complete',
             'is_profile_complete': candidate.is_profile_complete
@@ -256,7 +266,15 @@ def complete_profile_section(request, section):
         
         setattr(candidate, section_fields[section], True)
         candidate.save()
-        
+        # Sync to user's profile_completed flag as well
+        try:
+            user = candidate.user
+            if candidate.is_profile_complete != getattr(user, 'profile_completed', False):
+                user.profile_completed = candidate.is_profile_complete
+                user.save(update_fields=['profile_completed'])
+        except Exception:
+            pass
+
         return Response({
             'message': f'{section} section marked as complete',
             'is_profile_complete': candidate.is_profile_complete

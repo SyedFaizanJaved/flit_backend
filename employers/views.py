@@ -101,6 +101,15 @@ class EmployerViewSet(viewsets.ViewSet):
         setattr(employer, section_fields[section], True)
         employer.save()
 
+        # Sync to user's profile_completed flag as well
+        try:
+            user = employer.user
+            if employer.is_profile_complete != getattr(user, 'profile_completed', False):
+                user.profile_completed = employer.is_profile_complete
+                user.save(update_fields=['profile_completed'])
+        except Exception:
+            pass
+
         return Response({
             'message': f'{section} section marked as complete',
             'is_profile_complete': employer.is_profile_complete
