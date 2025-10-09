@@ -86,13 +86,14 @@ class Candidate(models.Model):
     
     @property
     def is_profile_complete(self):
-        return all([
-            self.basic_info_completed,
-            self.work_preferences_completed,
-            self.skills_completed,
-            self.portfolio_completed,
-            self.privacy_completed
-        ])
+        flags = [
+            bool(self.basic_info_completed),
+            bool(self.work_preferences_completed),
+            bool(self.skills_completed),
+            bool(self.portfolio_completed),
+            bool(self.privacy_completed),
+        ]
+        return sum(flags) >= 2
 
 
 class WorkDNA(models.Model):

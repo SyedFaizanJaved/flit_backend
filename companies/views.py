@@ -6,7 +6,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django.core.exceptions import ObjectDoesNotExist
 from .models import Company
 from .serializers import CompanySerializer, CompanyListSerializer, CompanyUpdateSerializer
-
+from employers.models import Employer
 
 class CompanyViewSet(viewsets.ViewSet):
     """
@@ -29,7 +29,35 @@ class CompanyViewSet(viewsets.ViewSet):
     def create(self, request):
         serializer = CompanySerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
+            company = serializer.save()
+
+            # Update employer's profile to link with the created company
+            try:
+                employer = request.user.employer_profile
+                employer.company = company
+                employer.company_info_completed = True
+                employer.save()
+
+                # Update user's profile_completed flag as well
+                if employer.is_profile_complete:
+                    request.user.profile_completed = True
+                    request.user.save(update_fields=['profile_completed'])
+
+            except Employer.DoesNotExist:
+                # If employer profile doesn't exist, create it
+                employer = Employer.objects.create(
+                    user=request.user,
+                    company=company,
+                    company_info_completed=True,
+                    first_name=request.user.first_name,
+                    last_name=request.user.last_name
+                )
+
+                # Update user's profile_completed flag
+                if employer.is_profile_complete:
+                    request.user.profile_completed = True
+                    request.user.save(update_fields=['profile_completed'])
+
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

@@ -9,7 +9,12 @@ class EmployerSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     is_profile_complete = serializers.ReadOnlyField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    
+    def get_company_id(self, obj):
+        """Return company ID only if company exists"""
+        return obj.company.id if obj.company else None
+    
+    company_id = serializers.SerializerMethodField(method_name='get_company_id')
     
     class Meta:
         model = Employer
@@ -28,7 +33,12 @@ class EmployerListSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     is_profile_complete = serializers.ReadOnlyField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    
+    def get_company_id(self, obj):
+        """Return company ID only if company exists"""
+        return obj.company.id if obj.company else None
+    
+    company_id = serializers.SerializerMethodField(method_name='get_company_id')
     
     class Meta:
         model = Employer

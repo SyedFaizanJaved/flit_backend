@@ -58,10 +58,3 @@ class Company(models.Model):
     @property
     def name(self):
         return self.company_name
-
-    def save(self, *args, **kwargs):
-        # Defensive: ensure is_completed is never NULL at DB level
-        if self.is_completed is None:
-            # If a company is being created and flag wasn't provided, assume completed
-            self.is_completed = True
-        super().save(*args, **kwargs)

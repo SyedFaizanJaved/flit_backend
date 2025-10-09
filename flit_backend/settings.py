@@ -68,9 +68,8 @@ LOCAL_APPS = [
     'companies',
     'jobs',
     'projects',
-    'storages',
     'applications',
-  
+    'storages'
 ]
 
 

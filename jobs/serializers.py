@@ -47,7 +47,7 @@ class JobListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
         fields = (
-            'id', 'title', 'company_name', 'workStyle',
+            'id', 'title', 'company_name', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
             'status', 'created_at', 'skills'
         )
@@ -129,24 +129,7 @@ class JobUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Job
-        fields = (
-            'title', 'description','company_name', 'workStyle', 'category','skills',
-            'experienceLevel', 'employmentType', 'hasTemporaryOption', 
-            'salaryRangeMin', 'salaryRangeMax', 
-            'benefits', 'applicationDeadline', 'status'
-        )
-        extra_kwargs = {
-            'title': {'required': True},
-            'description': {'required': True},
-            'workStyle': {'required': True},
-            'company_name': {'required': True},
-            'category': {'required': True},
-            'skills': {'required': True},
-            'experienceLevel': {'required': True},
-            'employmentType': {'required': True},
-            'salaryRangeMin': {'required': True, 'min_value': 0},
-            'salaryRangeMax': {'required': True, 'min_value': 0},
-            'benefits': {'required': True},
-            'applicationDeadline': {'required': True},
-            'hasTemporaryOption': {'required': False},
-        }
+        fields = ('title', 'description', 'location', 'workStyle', 'category',
+                 'experienceLevel', 'employmentType', 'hasTemporaryOption', 
+                 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 
+                 'benefits', 'applicationDeadline', 'start_date', 'status')

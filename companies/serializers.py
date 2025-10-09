@@ -37,8 +37,8 @@ class CompanyListSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Company
-        fields = ('id', 'company_name', 'industry', 'size',  'full_address', 'website', 
-                 'is_verified', 'is_active', 'created_at')
+        fields = ('id', 'company_name', 'industry', 'description', 'size', 'logo', 'location', 'website', 'values',
+                  'is_active', 'created_at')
 
 
 class CompanyUpdateSerializer(serializers.ModelSerializer):
