@@ -75,26 +75,31 @@ def user_login(request):
         
         # Issue JWT tokens
         refresh = RefreshToken.for_user(user)
-        # Determine profile completion flags by role
-        company_is_completed = False
-        candidate_is_completed = False
+        # Determine unified profile completion flag by role
         user_role = getattr(user, 'userType', None)
+        profile_completed = False
         if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
-            company_is_completed = Company.objects.filter(created_by=user, is_active=True, is_completed=True).exists()
+            profile_completed = Company.objects.filter(
+                created_by=user, is_active=True, is_completed=True
+            ).exists()
         elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
             try:
                 candidate_profile = user.candidate_profile
-                candidate_is_completed = candidate_profile.is_profile_complete
+                profile_completed = candidate_profile.is_profile_complete
             except Candidate.DoesNotExist:
-                candidate_is_completed = False
+                profile_completed = False
+
+        # Persist the latest computed state on the user for quick access elsewhere
+        if user.profile_completed != profile_completed:
+            user.profile_completed = profile_completed
+            user.save(update_fields=['profile_completed'])
 
         return Response({
             'user': UserProfileSerializer(user).data,
             'access': str(refresh.access_token),
             'refresh': str(refresh),
             'message': 'Login successful',
-            'company_is_completed': company_is_completed,
-            'candidate_is_completed': candidate_is_completed,
+            'profile_completed': profile_completed,
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
