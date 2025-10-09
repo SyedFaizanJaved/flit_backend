@@ -83,12 +83,13 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Candidate
+        # include privacy_completed so frontend can explicitly mark the privacy section complete
         fields = ('full_name', 'title', 'bio', 'location', 'time_zone', 'is_remote', 
                  'work_style', 'is_available', 'availability_type', 'skills', 'superpowers', 
                  'preferred_roles', 'passion_projects', 'min_salary', 'max_salary', 
                  'salary_currency', 'portfolio_links', 'profile_image', 'resume_url', 
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
-                 'video_visibility', 'contact_visibility', 'salary_visibility')
+                 'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
     def update(self, instance, validated_data):
         # Update profile completion status based on filled fields
@@ -123,6 +124,10 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
         ]
         if any(key in validated_data for key in privacy_keys):
             updated_instance.privacy_completed = True
+
+        # Allow client to explicitly set privacy_completed (frontend may send this flag)
+        if 'privacy_completed' in validated_data:
+            updated_instance.privacy_completed = bool(validated_data.get('privacy_completed'))
 
         # Persist flag changes
         updated_instance.save(update_fields=[
