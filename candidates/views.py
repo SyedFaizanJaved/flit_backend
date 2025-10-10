@@ -38,7 +38,7 @@ class CandidateViewSet(viewsets.ViewSet):
 
         data = {
             'profile': CandidateSerializer(candidate).data,
-            'is_profile_complete': candidate.is_profile_complete,
+            'profile_completed': candidate.is_profile_complete,
             'applications_count': candidate.job_applications.count() + candidate.project_applications.count(),
             'job_applications_count': candidate.job_applications.count(),
             'project_applications_count': candidate.project_applications.count(),
@@ -118,7 +118,7 @@ class CandidateViewSet(viewsets.ViewSet):
 
         return Response({
             'message': f'{section} section marked as complete',
-            'is_profile_complete': candidate.is_profile_complete
+            'profile_completed': candidate.is_profile_complete
         }, status=status.HTTP_200_OK)
 
 
@@ -213,7 +213,7 @@ def candidate_dashboard(request):
         candidate = request.user.candidate_profile
         data = {
             'profile': CandidateSerializer(candidate).data,
-            'is_profile_complete': candidate.is_profile_complete,
+            'profile_completed': candidate.is_profile_complete,
             'applications_count': candidate.job_applications.count() + candidate.project_applications.count(),
             'job_applications_count': candidate.job_applications.count(),
             'project_applications_count': candidate.project_applications.count(),
@@ -253,31 +253,33 @@ def complete_profile_section(request, section):
     """
     try:
         candidate = request.user.candidate_profile
-        section_fields = {
-            'basic_info': 'basic_info_completed',
-            'work_preferences': 'work_preferences_completed',
-            'skills': 'skills_completed',
-            'portfolio': 'portfolio_completed',
-            'privacy': 'privacy_completed',
-        }
-        
-        if section not in section_fields:
-            return Response({'error': 'Invalid section'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        setattr(candidate, section_fields[section], True)
-        candidate.save()
-        # Sync to user's profile_completed flag as well
-        try:
-            user = candidate.user
-            if candidate.is_profile_complete != getattr(user, 'profile_completed', False):
-                user.profile_completed = candidate.is_profile_complete
-                user.save(update_fields=['profile_completed'])
-        except Exception:
-            pass
-
-        return Response({
-            'message': f'{section} section marked as complete',
-            'is_profile_complete': candidate.is_profile_complete
-        }, status=status.HTTP_200_OK)
     except Candidate.DoesNotExist:
         return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    section_fields = {
+        'basic_info': 'basic_info_completed',
+        'work_preferences': 'work_preferences_completed',
+        'skills': 'skills_completed',
+        'portfolio': 'portfolio_completed',
+        'privacy': 'privacy_completed',
+    }
+
+    if section not in section_fields:
+        return Response({'error': 'Invalid section'}, status=status.HTTP_400_BAD_REQUEST)
+
+    setattr(candidate, section_fields[section], True)
+    candidate.save()
+
+    # Sync to user's profile_completed flag as well
+    try:
+        user = candidate.user
+        if candidate.is_profile_complete != getattr(user, 'profile_completed', False):
+            user.profile_completed = candidate.is_profile_complete
+            user.save(update_fields=['profile_completed'])
+    except Exception:
+        pass
+
+    return Response({
+        'message': f'{section} section marked as complete',
+        'profile_completed': candidate.is_profile_complete
+    }, status=status.HTTP_200_OK)

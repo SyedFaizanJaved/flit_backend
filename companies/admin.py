@@ -8,19 +8,17 @@ class CompanyAdmin(admin.ModelAdmin):
     Company admin
     """
     list_display = ('company_name', 'industry', 'size', 'is_verified', 'is_active', 'created_at')
-    list_filter = ('industry', 'size', 'is_verified', 'is_active', 'created_at')
-    search_fields = ('company_name', 'description', 'industry')  
+    list_filter = ('industry', 'size', 'is_verified', 'is_active', 'is_completed', 'created_at')
+    search_fields = ('company_name', 'industry', 'description')
     readonly_fields = ('created_at', 'updated_at', 'full_address')
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('company_name', 'description', 'industry', 'size', 'website', 'logo')
+            'fields': ('company_name', 'description', 'industry', 'size', 'website', 'logo', 'location')
         }),
-        ('Location', {
-            'fields': ('location', 'full_address') 
-        }),
-        ('Values', {
-            'fields': ('values',)
+        ('Company Details', {
+            'fields': ('values',),
+            'classes': ('collapse',)
         }),
         ('Ownership & Status', {
             'fields': ('created_by', 'is_verified', 'is_active', 'is_completed')

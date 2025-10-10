@@ -48,7 +48,7 @@ class EmployerViewSet(viewsets.ViewSet):
 
         data = {
             'profile': EmployerSerializer(employer).data,
-            'is_profile_complete': employer.is_profile_complete,
+            'profile_completed': employer.is_profile_complete,
             'jobs_posted': employer.total_jobs_posted,
             'projects_posted': employer.total_projects_posted,
             'applications_received': employer.total_applications_received,
@@ -112,7 +112,7 @@ class EmployerViewSet(viewsets.ViewSet):
 
         return Response({
             'message': f'{section} section marked as complete',
-            'is_profile_complete': employer.is_profile_complete
+            'profile_completed': employer.is_profile_complete
         }, status=status.HTTP_200_OK)
 
 
