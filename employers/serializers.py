@@ -7,7 +7,7 @@ class EmployerSerializer(serializers.ModelSerializer):
     Serializer for employer profile
     """
     full_name = serializers.ReadOnlyField()
-    is_profile_complete = serializers.ReadOnlyField()
+    profile_completed = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     
     def get_company_id(self, obj):
@@ -20,10 +20,34 @@ class EmployerSerializer(serializers.ModelSerializer):
         model = Employer
         fields = '__all__'
         read_only_fields = ('user', 'created_at', 'updated_at')
-    
+
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+    def get_company(self, obj):
+        # If employer has company FK set, return its id
+        if obj.company_id:
+            return obj.company_id
+
+        # Otherwise try to return the most recently created company by the user
+        try:
+            user = obj.user
+            latest = getattr(user, 'created_companies', None)
+            if latest is not None:
+                latest_company = latest.order_by('-created_at').first()
+                if latest_company:
+                    return latest_company.id
+        except Exception:
+            pass
+
+        return None
+
+    def get_profile_completed(self, obj):
+        try:
+            return bool(getattr(obj, 'is_profile_complete', False))
+        except Exception:
+            return False
 
 
 class EmployerListSerializer(serializers.ModelSerializer):
@@ -31,7 +55,7 @@ class EmployerListSerializer(serializers.ModelSerializer):
     Serializer for listing employers
     """
     full_name = serializers.ReadOnlyField()
-    is_profile_complete = serializers.ReadOnlyField()
+    profile_completed = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     
     def get_company_id(self, obj):
@@ -45,8 +69,14 @@ class EmployerListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'full_name',
             'company_id', 'company_name',
-            'is_profile_complete', 'created_at'
+            'profile_completed', 'created_at'
         )
+
+    def get_profile_completed(self, obj):
+        try:
+            return bool(getattr(obj, 'is_profile_complete', False))
+        except Exception:
+            return False
 
 
 class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
@@ -60,15 +90,26 @@ class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
             'profile_picture', 'bio',
             'company',
         )
-    
+
     def update(self, instance, validated_data):
         # Update profile completion status
         if 'first_name' in validated_data and 'last_name' in validated_data:
             instance.basic_info_completed = True
         if 'company' in validated_data and validated_data.get('company'):
             instance.company_info_completed = True
-        
-        return super().update(instance, validated_data)
+
+        updated = super().update(instance, validated_data)
+
+        # Sync to user.profile_completed if employer profile is now complete
+        try:
+            user = instance.user
+            if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
+                user.profile_completed = True
+                user.save(update_fields=['profile_completed', 'updated_at'])
+        except Exception:
+            pass
+
+        return updated
 
 
 class EmployerPreferenceSerializer(serializers.ModelSerializer):
@@ -89,7 +130,7 @@ class EmployerComplianceSerializer(serializers.ModelSerializer):
         model = EmployerCompliance
         fields = '__all__'
         read_only_fields = ('employer', 'created_at', 'updated_at')
-    
+
     def create(self, validated_data):
         validated_data['employer'] = self.context['request'].user.employer_profile
         return super().create(validated_data)

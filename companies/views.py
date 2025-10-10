@@ -92,6 +92,8 @@ class CompanyViewSet(viewsets.ViewSet):
             company = Company.objects.get(id=pk, created_by=request.user)
             data = {
                 'company': CompanySerializer(company).data,
+                'company_name': company.company_name,
+                'name': company.name,
                 'jobs_count': getattr(company, 'jobs', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'jobs') else 0,
                 'projects_count': getattr(company, 'projects', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'projects') else 0,
                 'applications_count': 0,

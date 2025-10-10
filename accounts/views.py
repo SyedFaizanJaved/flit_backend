@@ -192,14 +192,14 @@ def user_dashboard(request):
     if user.userType == settings.USER_ROLE_CANDIDATE and hasattr(user, 'candidate_profile'):
         candidate = user.candidate_profile
         data['candidate'] = {
-            'is_profile_complete': candidate.is_profile_complete,
+            'profile_completed': candidate.is_profile_complete,
             'applications_count': candidate.applications.count(),
             'references_count': candidate.references.count(),
         }
     elif user.userType == settings.USER_ROLE_EMPLOYER and hasattr(user, 'employer_profile'):
         employer = user.employer_profile
         data['employer'] = {
-            'is_profile_complete': employer.is_profile_complete,
+            'profile_completed': employer.is_profile_complete,
             'jobs_posted': employer.total_jobs_posted,
             'projects_posted': employer.total_projects_posted,
             'applications_received': employer.total_applications_received,

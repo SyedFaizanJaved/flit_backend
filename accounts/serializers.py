@@ -128,12 +128,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
     Serializer for user profile
     """
     full_name = serializers.ReadOnlyField()
+    # If the user has an employer profile, expose the related company id and name
+    company = serializers.IntegerField(source='employer_profile.company.id', read_only=True, allow_null=True)
+    company_name = serializers.CharField(source='employer_profile.company.company_name', read_only=True, allow_null=True)
     
     class Meta:
         model = User
-        fields = ('id', 'email', 'username', 'userType', 'first_name', 'last_name', 'full_name', 
-                 'created_at')
+        fields = (
+            'id', 'email', 'username', 'userType', 'first_name', 'last_name', 'full_name',
+            'created_at', 'company', 'company_name'
+        )
         read_only_fields = ('id', 'email', 'userType', 'created_at')
+    
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):

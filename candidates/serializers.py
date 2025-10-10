@@ -7,19 +7,74 @@ class CandidateSerializer(serializers.ModelSerializer):
     Serializer for candidate profile
     """
     full_name = serializers.ReadOnlyField()
-    is_profile_complete = serializers.ReadOnlyField()
+    profile_completed = serializers.SerializerMethodField()
     
     class Meta:
         model = Candidate
-        fields = ("id", "full_name", "is_profile_complete","title", "bio","work_style","availability_type",
+        fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
             "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
-            "intro_video_description", "privacy_completed","created_at","updated_at","user",
+            "intro_video_description", "privacy_completed","location","created_at","updated_at","user",
         )
         read_only_fields = ("user", "created_at", "updated_at")
 
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
+        instance = super().create(validated_data)
+
+        # Compute component completion flags using the same heuristics as update
+        try:
+            # Basic info
+            if getattr(instance, 'full_name', None) and getattr(instance, 'title', None):
+                instance.basic_info_completed = True
+
+            # Work preferences
+            work_pref_keys = [
+                'work_style', 'availability_type', 'is_available', 'is_remote', 'time_zone', 'location'
+            ]
+            if any(key in validated_data for key in work_pref_keys):
+                instance.work_preferences_completed = True
+
+            # Skills
+            if 'skills' in validated_data and getattr(instance, 'skills', None):
+                instance.skills_completed = True
+
+            # Portfolio
+            if (
+                'portfolio_links' in validated_data or
+                ('resume_url' in validated_data and instance.resume_url) or
+                ('video_intro_url' in validated_data and instance.video_intro_url)
+            ):
+                instance.portfolio_completed = True
+
+            # Privacy: allow explicit flag or infer from visibility fields
+            privacy_keys = ['profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility']
+            if any(key in validated_data for key in privacy_keys):
+                instance.privacy_completed = True
+            if 'privacy_completed' in validated_data:
+                instance.privacy_completed = bool(validated_data.get('privacy_completed'))
+
+            # Persist any flag changes
+            instance.save(update_fields=[
+                'basic_info_completed', 'work_preferences_completed', 'skills_completed',
+                'portfolio_completed', 'privacy_completed', 'updated_at'
+            ])
+
+            # Sync to user
+            user = instance.user
+            if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
+                user.profile_completed = True
+                user.save(update_fields=['profile_completed', 'updated_at'])
+        except Exception:
+            # Don't break creation on sync errors
+            pass
+
+        return instance
+    
+    def get_profile_completed(self, obj):
+        try:
+            return bool(getattr(obj, 'is_profile_complete', False))
+        except Exception:
+            return False
 
 
 class CandidateListSerializer(serializers.ModelSerializer):
@@ -27,12 +82,18 @@ class CandidateListSerializer(serializers.ModelSerializer):
     Serializer for listing candidates
     """
     full_name = serializers.ReadOnlyField()
-    is_profile_complete = serializers.ReadOnlyField()
+    profile_completed = serializers.SerializerMethodField()
     
     class Meta:
         model = Candidate
         fields = ('id', 'full_name', 'title', 'location', 'is_available', 'work_style', 
-                 'skills', 'superpowers', 'is_profile_complete', 'created_at')
+                 'skills', 'superpowers', 'profile_completed', 'created_at')
+    
+    def get_profile_completed(self, obj):
+        try:
+            return bool(getattr(obj, 'is_profile_complete', False))
+        except Exception:
+            return False
 
 
 class WorkDNASerializer(serializers.ModelSerializer):
