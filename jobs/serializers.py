@@ -34,7 +34,7 @@ class JobSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'company_name', 'workStyle', 'category',
             'experienceLevel', 'employmentType', 'skills', 'salaryRangeMin',
-            'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption',
+            'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
             'status', 'created_at', 'updated_at'
         )
 
@@ -75,8 +75,8 @@ class JobCreateSerializer(serializers.ModelSerializer):
         fields = (
             'title', 'description', 'company', 'workStyle', 'category',
             'skills', 'required_skills', 'experienceLevel', 'employmentType',
-            'hasTemporaryOption', 'salaryRangeMin', 'salaryRangeMax',
-            'benefits', 'applicationDeadline'
+            'hasTemporaryOption', 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
+            'benefits', 'applicationDeadline','status'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -92,6 +92,8 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'benefits': {'required': True},
             'applicationDeadline': {'required': True},
             'hasTemporaryOption': {'required': False},
+            'temporaryDuration': {'required': False, 'allow_blank': True},
+            'status': {'required': False},
         }
     
     def create(self, validated_data):
@@ -100,8 +102,6 @@ class JobCreateSerializer(serializers.ModelSerializer):
         alias_required_skills = validated_data.pop('required_skills', [])
         if alias_required_skills:
             skills = list({*skills, *alias_required_skills})
-        # languages = validated_data.pop('languages', [])
-        
         # Ensure employer is set from the authenticated user
         validated_data['employer'] = self.context['request'].user
         # Persist flat skills list into model JSONField
