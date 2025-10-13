@@ -8,12 +8,14 @@ class CandidateSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
+    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     
     class Meta:
         model = Candidate
         fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
             "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
             "intro_video_description", "privacy_completed","location","created_at","updated_at","user",
+            "profile_image","resume_url"
         )
         read_only_fields = ("user", "created_at", "updated_at")
 
@@ -142,6 +144,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating candidate profile sections
     """
+    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     class Meta:
         model = Candidate
         # include privacy_completed so frontend can explicitly mark the privacy section complete
@@ -152,9 +155,21 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
                  'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
+    def validate(self, attrs):
+        if attrs.get('profile_image', None) == "":
+            attrs['profile_image'] = None
+        return attrs
+    
     def update(self, instance, validated_data):
         # Update profile completion status based on filled fields
         updated_instance = super().update(instance, validated_data)
+
+        # If client did not send profile_image in the payload for PUT/PATCH,
+        # clear it by setting to None (so response shows null)
+        if 'profile_image' not in self.initial_data and 'profile_image' not in validated_data:
+            if getattr(updated_instance, 'profile_image', None):
+                updated_instance.profile_image = None
+                updated_instance.save(update_fields=['profile_image'])
 
         # Basic info complete when name and title are set (and non-empty)
         if (updated_instance.full_name and updated_instance.title):

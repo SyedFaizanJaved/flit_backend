@@ -79,7 +79,7 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         model = Project
         fields = (
             'title', 'description', 'company', 'category', 'skills', 'required_skills',
-            'paymentType', 'paymentAmount', 'estimatedHours', 'deadline'
+            'paymentType', 'paymentAmount', 'estimatedHours', 'deadline','status'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -90,6 +90,7 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
             'paymentAmount': {'required': True, 'min_value': 0},
             'estimatedHours': {'required': True},
             'deadline': {'required': True},
+            'status': {'required': False},
         }
     
     def create(self, validated_data):
