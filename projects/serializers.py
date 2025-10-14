@@ -90,7 +90,7 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
             'paymentAmount': {'required': True, 'min_value': 0},
             'estimatedHours': {'required': True},
             'deadline': {'required': True},
-            'status': {'required': False},
+            'status': {'required': False}
         }
     
     def create(self, validated_data):
