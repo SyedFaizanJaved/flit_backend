@@ -16,7 +16,6 @@ from decouple import config
 from datetime import timedelta
 
 
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -39,7 +38,6 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lamb
 DJANGO_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
-
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
@@ -58,6 +56,7 @@ THIRD_PARTY_APPS = [
     'rest_framework',
     'corsheaders',
     'django_filters',
+    'storages'
 ]
 
 
@@ -68,8 +67,7 @@ LOCAL_APPS = [
     'companies',
     'jobs',
     'projects',
-    'applications',
-    'storages'
+    'applications',   
 ]
 
 

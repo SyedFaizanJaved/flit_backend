@@ -182,7 +182,7 @@ class Reference(models.Model):
     worked_together = models.BooleanField(default=False)
     work_duration = models.CharField(max_length=100, blank=True, null=True)
     overall_rating = models.PositiveIntegerField(blank=True, null=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
-    skill_ratings = models.JSONField(default=dict)  # Dict of skill ratings
+    skill_ratings = models.JSONField(default=dict)  
     superpowers = models.JSONField(default=list)  # List of superpowers
     headline = models.CharField(max_length=200, blank=True, null=True)
     testimonial = models.TextField(blank=True, null=True)

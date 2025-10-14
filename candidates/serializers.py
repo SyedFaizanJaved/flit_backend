@@ -85,11 +85,11 @@ class CandidateListSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Candidate
-        fields = ('id', 'full_name', 'title', 'location', 'is_available', 'work_style', 
-                 'skills', 'superpowers', 'profile_completed', 'created_at')
+        fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 
+                 'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at')
     
     def get_profile_completed(self, obj):
         try:

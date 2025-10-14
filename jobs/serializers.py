@@ -73,10 +73,10 @@ class JobCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
         fields = (
-            'title', 'description', 'company', 'workStyle', 'category',
+            'title', 'description', 'company', 'workStyle', 'category', 'status',
             'skills', 'required_skills', 'experienceLevel', 'employmentType',
-            'hasTemporaryOption', 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
-            'benefits', 'applicationDeadline','status'
+            'hasTemporaryOption','temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
+            'benefits', 'applicationDeadline'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -92,8 +92,7 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'benefits': {'required': True},
             'applicationDeadline': {'required': True},
             'hasTemporaryOption': {'required': False},
-            'temporaryDuration': {'required': False, 'allow_blank': True},
-            'status': {'required': False},
+            'status': {'required': False}
         }
     
     def create(self, validated_data):
@@ -130,6 +129,6 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
         fields = ('title', 'description', 'location', 'workStyle', 'category',
-                 'experienceLevel', 'employmentType', 'hasTemporaryOption', 
+                 'experienceLevel', 'employmentType', 'hasTemporaryOption',
                  'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 
                  'benefits', 'applicationDeadline', 'start_date', 'status')
