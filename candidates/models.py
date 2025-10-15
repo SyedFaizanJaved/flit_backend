@@ -58,6 +58,8 @@ class Candidate(models.Model):
     resume_url = models.URLField(blank=True, null=True)
     video_intro_url = models.URLField(blank=True, null=True)
     intro_video_description = models.TextField(blank=True, null=True)
+    # Full raw transcription text returned by ML services
+    video_transcription = models.TextField(blank=True, null=True)
     
     # Privacy Settings
     profile_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='public')

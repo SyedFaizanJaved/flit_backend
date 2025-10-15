@@ -14,7 +14,7 @@ class CandidateSerializer(serializers.ModelSerializer):
         model = Candidate
         fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
             "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
-            "intro_video_description", "privacy_completed","location","created_at","updated_at","user",
+             "video_transcription", "privacy_completed","location","created_at","updated_at","user",
             "profile_image","resume_url"
         )
         read_only_fields = ("user", "created_at", "updated_at")
@@ -153,6 +153,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'preferred_roles', 'passion_projects', 'min_salary', 'max_salary', 
                  'salary_currency', 'portfolio_links', 'profile_image', 'resume_url', 
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
+                 'video_transcription',
                  'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
     def validate(self, attrs):
