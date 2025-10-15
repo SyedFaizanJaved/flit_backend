@@ -1,24 +1,47 @@
-from rest_framework import generics, status, permissions, viewsets
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import Candidate, WorkDNA, Reference, ReferenceRequest
-from .serializers import (
-    CandidateSerializer, CandidateListSerializer, WorkDNASerializer,
-    ReferenceSerializer, ReferenceRequestSerializer, CandidateProfileUpdateSerializer
-)
-from rest_framework.exceptions import PermissionDenied
-from accounts.views import BaseRoleRegistrationView
-from django.core.files.storage import default_storage
-from django.utils.text import get_valid_filename
-from jobs.models import Job
-from projects.models import Project
-from jobs.serializers import JobListSerializer
-from projects.serializers import ProjectListSerializer
-from django.conf import settings
-import requests
+"""
+Candidates views module for FLIT platform.
+Contains all candidate-related API endpoints and business logic.
+"""
+
+# Standard library imports
+import json
+import logging
 import os
+import requests
+
+# Django imports
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.db.models import Case, Q, When
+from django.utils.text import get_valid_filename
+
+# Third-party imports
+from rest_framework import generics, permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.response import Response
+
+# Django filters
+from django_filters.rest_framework import DjangoFilterBackend
+
+# Local imports
+from accounts.views import BaseRoleRegistrationView
+from jobs.models import Job
+from jobs.serializers import JobListSerializer
+from projects.models import Project
+from projects.serializers import ProjectListSerializer
+
+# App imports
+from .models import Candidate, Reference, ReferenceRequest, WorkDNA
+from .serializers import (
+    CandidateListSerializer,
+    CandidateProfileUpdateSerializer,
+    CandidateSerializer,
+    ReferenceRequestSerializer,
+    ReferenceSerializer,
+    WorkDNASerializer,
+)
 
 
 class CandidateRegistrationView(BaseRoleRegistrationView):
@@ -105,9 +128,64 @@ class CandidateViewSet(viewsets.ViewSet):
             data = CandidateSerializer(candidate).data
             return Response(data, status=status.HTTP_200_OK)
 
-        # For PUT and PATCH requests
-        # Handle uploaded files (multipart/form-data) for resume and video
-        data = request.data.copy() if hasattr(request, 'data') else {}
+        try:
+            if hasattr(request, 'data') and hasattr(request.data, 'dict'):
+                # Convert to a plain dict (excludes FILES which we handle via request.FILES)
+                data = request.data.dict()
+            else:
+                data = request.data if hasattr(request, 'data') else {}
+        except Exception:
+            # Fallback to POST data only
+            data = request.POST.copy() if hasattr(request, 'POST') else {}
+
+        # Coerce common types coming from multipart (strings) into proper types expected by serializer/DB
+        try:
+            import json
+            def parse_bool(v):
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, str):
+                    return v.lower() in ['true', '1', 'yes']
+                return bool(v)
+
+            def parse_int(v):
+                try:
+                    return int(v)
+                except Exception:
+                    return None
+
+            def parse_json_list(v):
+                if v is None:
+                    return []
+                if isinstance(v, (list, tuple)):
+                    return list(v)
+                if isinstance(v, str):
+                    try:
+                        parsed = json.loads(v)
+                        return parsed if isinstance(parsed, list) else []
+                    except Exception:
+                        return []
+                return []
+
+            # List/JSON fields
+            for key in ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']:
+                if key in data:
+                    data[key] = parse_json_list(data.get(key))
+
+            # Boolean fields
+            for key in ['is_remote', 'is_available']:
+                if key in data:
+                    data[key] = parse_bool(data.get(key))
+
+            # Numeric fields
+            for key in ['min_salary', 'max_salary']:
+                if key in data and data.get(key) not in [None, '']:
+                    parsed = parse_int(data.get(key))
+                    if parsed is not None:
+                        data[key] = parsed
+        except Exception:
+            # Non-fatal; let serializer handle remaining coercion/validation
+            pass
 
         # Save resume_file if provided and set resume_url
         resume_file = request.FILES.get('resume_file')
@@ -234,6 +312,93 @@ class CandidateViewSet(viewsets.ViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
     
+
+    def _match_candidates_with_ml(self, search_text, seniority_list=None, job_types_list=None):
+        """
+        Match candidates using the external ML service.
+
+        Args:
+            search_text (str): The search text to match candidates against
+            seniority_list (list, optional): List of seniority levels to filter by
+            job_types_list (list, optional): List of job types to filter by
+
+        Returns:
+            tuple: (success (bool), response (dict), sent_payload (dict), queryset (QuerySet))
+        """
+        # Initialize default return values
+        success = False
+        response_data = {}
+        sent_payload = {
+            'search_text': search_text,
+            'seniority_list': seniority_list or [],
+            'job_types_list': job_types_list or []
+        }
+
+        try:
+            # Call the ML service (replace with your actual ML service URL)
+            ml_service_url = 'https://dev-flit-ai.neurooceans.com/match_candidates_for_job'  # Update with your ML service URL
+
+            # Prepare the request payload
+            payload = {
+                'search_text': search_text,
+                'filters': {}
+            }
+
+            if seniority_list:
+                payload['filters']['seniority'] = seniority_list
+            if job_types_list:
+                payload['filters']['job_types'] = job_types_list
+
+            # Make the request to the ML service
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(
+                ml_service_url,
+                data=json.dumps(payload),
+                headers=headers
+            )
+
+            response_data = response.json()
+            success = response.status_code == 200
+
+            # If the request was successful, get the matched candidate IDs
+            matched_candidate_ids = []
+            if success and 'matches' in response_data:
+                matched_candidate_ids = [match.get('candidate_id') for match in response_data['matches']
+                                      if match.get('candidate_id')]
+
+            # Get the queryset of matched candidates
+            queryset = Candidate.objects.filter(profile_visibility="public")
+            if matched_candidate_ids:
+                # Preserve the order of IDs from the ML service
+                preserved = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(matched_candidate_ids)])
+                queryset = queryset.filter(id__in=matched_candidate_ids).order_by(preserved)
+            else:
+                # Fallback to simple text search if no matches from ML service
+                queryset = queryset.filter(
+                    Q(title__icontains=search_text) |
+                    Q(skills__icontains=search_text) |
+                    Q(bio__icontains=search_text) |
+                    Q(experience__description__icontains=search_text)
+                ).distinct()
+
+            return success, response_data, sent_payload, queryset
+
+        except Exception as e:
+            # Log the error and fall back to simple search
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error calling ML service: {str(e)}")
+
+            # Fallback to simple text search
+            queryset = Candidate.objects.filter(
+                profile_visibility="public",
+            ).filter(
+                Q(title__icontains=search_text) |
+                Q(skills__icontains=search_text) |
+                Q(bio__icontains=search_text) |
+                Q(experience__description__icontains=search_text)
+            ).distinct()
+
+            return False, {'error': str(e)}, sent_payload, queryset
 
     @action(detail=False, methods=['get', 'post'], url_path='match', permission_classes=[permissions.AllowAny])
     def match(self, request):
