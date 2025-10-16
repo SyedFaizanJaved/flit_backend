@@ -46,6 +46,17 @@ class JobApplicationListView(generics.ListCreateAPIView):
             return JobApplication.objects.filter(employer=self.request.user)
         return JobApplication.objects.none()
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {"message": "Application submitted successfully", "application": serializer.data},
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
 
 class ProjectApplicationListView(generics.ListCreateAPIView):
     """
@@ -70,6 +81,17 @@ class ProjectApplicationListView(generics.ListCreateAPIView):
         elif self.request.user.userType == "employer":
             return ProjectApplication.objects.filter(employer=self.request.user)
         return ProjectApplication.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {"message": "Application submitted successfully", "application": serializer.data},
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 
 class JobApplicationDetailView(generics.RetrieveUpdateDestroyAPIView):

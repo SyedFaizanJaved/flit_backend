@@ -3,19 +3,18 @@ from .models import Candidate, WorkDNA, Reference, ReferenceRequest
 
 
 class CandidateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for candidate profile
-    """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    viewers_count = serializers.SerializerMethodField()
+    profile_views_display = serializers.SerializerMethodField()
     
     class Meta:
         model = Candidate
         fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
             "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
              "video_transcription", "privacy_completed","location","created_at","updated_at","user",
-            "profile_image","resume_url"
+            "profile_image","resume_url","profile_views","viewers_count","profile_views_display"
         )
         read_only_fields = ("user", "created_at", "updated_at")
 
@@ -77,25 +76,59 @@ class CandidateSerializer(serializers.ModelSerializer):
             return bool(getattr(obj, 'is_profile_complete', False))
         except Exception:
             return False
+    
+    def get_viewers_count(self, obj):
+        try:
+            return len(obj.viewers or [])
+        except Exception:
+            return 0
+
+    def get_profile_views_display(self, obj):
+        try:
+            n = int(getattr(obj, 'profile_views', 0) or 0)
+        except Exception:
+            n = 0
+        if n >= 1000000:
+            v = n / 1000000.0
+            s = ("{:.1f}".format(v)).rstrip('0').rstrip('.')
+            return f"{s}m"
+        if n >= 1000:
+            v = n / 1000.0
+            s = ("{:.1f}".format(v)).rstrip('0').rstrip('.')
+            return f"{s}k"
+        return str(n)
 
 
 class CandidateListSerializer(serializers.ModelSerializer):
-    """
-    Serializer for listing candidates
-    """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
+    profile_views_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Candidate
         fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 
-                 'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at')
+                 'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at', 'profile_views_display')
     
     def get_profile_completed(self, obj):
         try:
             return bool(getattr(obj, 'is_profile_complete', False))
         except Exception:
             return False
+
+    def get_profile_views_display(self, obj):
+        try:
+            n = int(getattr(obj, 'profile_views', 0) or 0)
+        except Exception:
+            n = 0
+        if n >= 1000000:
+            v = n / 1000000.0
+            s = ("{:.1f}".format(v)).rstrip('0').rstrip('.')
+            return f"{s}m"
+        if n >= 1000:
+            v = n / 1000.0
+            s = ("{:.1f}".format(v)).rstrip('0').rstrip('.')
+            return f"{s}k"
+        return str(n)
 
 
 class WorkDNASerializer(serializers.ModelSerializer):
