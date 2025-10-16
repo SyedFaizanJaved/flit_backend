@@ -28,11 +28,12 @@ class JobSerializer(serializers.ModelSerializer):
     """
     # Only expose flat skills list; keep languages nested
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
     
     class Meta:
         model = Job
         fields = (
-            'id', 'title', 'description', 'company_name', 'workStyle', 'category',
+            'id', 'title', 'description', 'company_name', 'company_id', 'workStyle', 'category',
             'experienceLevel', 'employmentType', 'skills', 'salaryRangeMin',
             'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
             'status', 'created_at', 'updated_at'
@@ -43,11 +44,12 @@ class JobListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing jobs
     """
-    company_name = serializers.CharField(source='company.company_name', read_only=True)    
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)    
     class Meta:
         model = Job
         fields = (
-            'id', 'description' , 'title', 'company_name', 'location', 'workStyle',
+            'id', 'description' , 'title', 'company_name', 'company_id', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
             'status', 'created_at', 'skills'
         )
