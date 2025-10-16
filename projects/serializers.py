@@ -28,11 +28,12 @@ class ProjectSerializer(serializers.ModelSerializer):
     """
     required_skills = ProjectSkillSerializer(many=True, read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
     
     class Meta:
         model = Project
         fields = (
-            'id', 'title', 'description', 'company_name', 'category', 'estimatedHours',
+            'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'skills', 'deadline', 'required_skills',
             'status', 'created_at', 'updated_at'
         )
@@ -48,11 +49,12 @@ class ProjectListSerializer(serializers.ModelSerializer):
     Serializer for listing projects
     """
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
     # company_logo = serializers.CharField(source='company.logo.url', read_only=True)
     
     class Meta:
         model = Project
-        fields = ('id', 'title','description', 'company_name', 'category', 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 'created_at', 'skills')
+        fields = ('id', 'title','description', 'company_name', 'company_id', 'category', 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 'created_at', 'skills')
         # fields = ('id', 'title', 'company_name', 'company_logo', 'category', 'complexity',
         #          'paymentType', 'paymentAmount', 'estimatedHours', 'budget_min', 'budget_max',
         #          'budget_currency', 'work_style', 'status', 'created_at')

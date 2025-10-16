@@ -66,6 +66,8 @@ class Candidate(models.Model):
     video_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='public')
     contact_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='limited')
     salary_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='private')
+    profile_views = models.PositiveIntegerField(default=0)
+    viewers = models.JSONField(default=list)
     
     # Profile Completion Status
     basic_info_completed = models.BooleanField(default=False)
@@ -152,6 +154,7 @@ class WorkDNA(models.Model):
     work_environment_preference = models.CharField(max_length=20, choices=WORK_ENVIRONMENT_CHOICES, blank=True, null=True)
     leadership_style = models.CharField(max_length=20, choices=LEADERSHIP_STYLE_CHOICES, blank=True, null=True)
     values = models.JSONField(default=list)  # List of core values
+    extra_answers = models.JSONField(default=dict)  
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
