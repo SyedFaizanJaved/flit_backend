@@ -5,8 +5,10 @@ import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db.models import Case, Q, When, F
+from django.db.models import Case, Q, When, F
 from django.utils.text import get_valid_filename
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.views import APIView
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -18,6 +20,7 @@ from jobs.models import Job
 from jobs.serializers import JobListSerializer
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
+from companies.models import Company
 
 from .models import Candidate, Reference, ReferenceRequest, WorkDNA
 from .serializers import (
@@ -27,6 +30,7 @@ from .serializers import (
     ReferenceRequestSerializer,
     ReferenceSerializer,
     WorkDNASerializer,
+    CompanyWithOpeningsSerializer,
 )
 
 
@@ -46,6 +50,34 @@ class CandidateViewSet(viewsets.ViewSet):
         # Apply filters/search/order if the integration is configured on router level
         serializer = CandidateListSerializer(queryset, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='views')
+    def record_view(self, request, pk=None):
+        try:
+            employer = request.user.employer_profile
+        except Exception:
+            raise PermissionDenied("Only employers can record candidate profile views.")
+        try:
+            candidate = Candidate.objects.get(pk=pk)
+        except Candidate.DoesNotExist:
+            return Response({"error": "Candidate not found"}, status=status.HTTP_404_NOT_FOUND)
+        candidate.refresh_from_db(fields=['profile_views', 'viewers'])
+        viewers_list = list(candidate.viewers or [])
+        already_viewed = employer.id in viewers_list
+        if not already_viewed:
+            Candidate.objects.filter(pk=candidate.pk).update(profile_views=F('profile_views') + 1)
+            candidate.refresh_from_db(fields=['profile_views'])
+            viewers_list.append(employer.id)
+            candidate.viewers = viewers_list
+            candidate.save(update_fields=['viewers', 'updated_at'])
+
+        return Response({
+            'candidate_id': candidate.id,
+            'profile_views': candidate.profile_views,
+            'viewers_count': len(candidate.viewers or []),
+            'already_viewed': already_viewed
+        }, status=status.HTTP_200_OK)
+
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='views')
     def record_view(self, request, pk=None):
@@ -436,6 +468,67 @@ class CandidateViewSet(viewsets.ViewSet):
             ml_resp = {'error': str(e)}
 
         # Additional fallback to simple title search if no results
+        # Prepare payload and sent_payload
+        sent_payload = {
+            'search_text': search_text,
+            'seniority_list': seniority_list or [],
+            'job_types_list': job_types_list or []
+        }
+        payload = {
+            'search_text': search_text,
+            'filters': {}
+        }
+        if seniority_list:
+            payload['filters']['seniority'] = seniority_list
+        if job_types_list:
+            payload['filters']['job_types'] = job_types_list
+
+        success = False
+        ml_resp = {}
+        matched_qs = Candidate.objects.none()
+
+        try:
+            ml_service_url = 'https://dev-flit-ai.neurooceans.com/match_candidates_for_job'
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(
+                ml_service_url, data=json.dumps(payload), headers=headers)
+            ml_resp = response.json()
+            success = response.status_code == 200
+
+            # Extract matched candidate IDs
+            matched_candidate_ids = []
+            if success and 'matches' in ml_resp:
+                matched_candidate_ids = [match.get(
+                    'candidate_id') for match in ml_resp['matches'] if match.get('candidate_id')]
+
+            # Get queryset with preserved order or fallback to full text search
+            base_qs = Candidate.objects.filter(profile_visibility="public")
+            if matched_candidate_ids:
+                preserved = Case(*[When(pk=pk, then=pos)
+                                for pos, pk in enumerate(matched_candidate_ids)])
+                matched_qs = base_qs.filter(
+                    id__in=matched_candidate_ids).order_by(preserved)
+            else:
+                matched_qs = base_qs.filter(
+                    Q(title__icontains=search_text) |
+                    Q(skills__icontains=search_text) |
+                    Q(bio__icontains=search_text) |
+                    Q(experience__description__icontains=search_text)
+                ).distinct()
+
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error calling ML service: {str(e)}")
+            # Fallback to full text search on error
+            matched_qs = Candidate.objects.filter(profile_visibility="public").filter(
+                Q(title__icontains=search_text) |
+                Q(skills__icontains=search_text) |
+                Q(bio__icontains=search_text) |
+                Q(experience__description__icontains=search_text)
+            ).distinct()
+            ml_resp = {'error': str(e)}
+
+        # Additional fallback to simple title search if no results
         if matched_qs.count() == 0:
             matched_qs = Candidate.objects.filter(
                 profile_visibility="public", title__icontains=search_text)
@@ -457,6 +550,35 @@ class CandidateViewSet(viewsets.ViewSet):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='companies/openings')
+    def companies_with_openings(self, request):
+        """
+        Public feed of companies with their jobs and projects for candidates.
+        Query params:
+        - q: search in company_name/industry/location
+        - industry: exact industry filter
+        - jobs_limit (default 5), projects_limit (default 5) forwarded to serializer
+        """
+        q = request.query_params.get('q', '').strip()
+        industry = request.query_params.get('industry')
+
+        companies_qs = Company.objects.filter(is_active=True)
+        if industry:
+            companies_qs = companies_qs.filter(industry__iexact=industry)
+        if q:
+            companies_qs = companies_qs.filter(
+                Q(company_name__icontains=q) | Q(industry__icontains=q) | Q(location__icontains=q)
+            )
+
+        # Return all matching companies (no active-only restriction)
+        companies_qs = companies_qs.distinct().order_by('-created_at')
+
+        serializer = CompanyWithOpeningsSerializer(companies_qs, many=True, context={'request': request})
+        return Response({
+            'count': companies_qs.count(),
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='profile/complete/(?P<section>[^/.]+)', permission_classes=[permissions.IsAuthenticated])
     def complete_profile_section(self, request, section=None):
@@ -543,9 +665,60 @@ class WorkDNAView(APIView):
         except Candidate.DoesNotExist:
             return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    def get(self, request):
+        try:
+            obj = request.user.candidate_profile.work_dna
+        except WorkDNA.DoesNotExist:
+            return Response({}, status=status.HTTP_200_OK)
+
+        serializer = WorkDNASerializer(obj)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Upsert: create if missing, otherwise partial update
+        try:
+            candidate = request.user.candidate_profile
+        except Candidate.DoesNotExist:
+            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
         try:
             obj = candidate.work_dna
         except WorkDNA.DoesNotExist:
+            obj = None
+
+        if obj is None:
+            serializer = WorkDNASerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save(candidate=candidate)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            serializer = WorkDNASerializer(obj, data=request.data, partial=True, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        # Upsert on PATCH as well
+        try:
+            candidate = request.user.candidate_profile
+        except Candidate.DoesNotExist:
+            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            obj = candidate.work_dna
+        except WorkDNA.DoesNotExist:
+            obj = None
+
+        if obj is None:
+            serializer = WorkDNASerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save(candidate=candidate)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            serializer = WorkDNASerializer(obj, data=request.data, partial=True, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
             obj = None
 
         if obj is None:
@@ -567,8 +740,10 @@ class ReferenceListView(generics.ListCreateAPIView):
     serializer_class = ReferenceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+
     def get_queryset(self):
         return Reference.objects.filter(candidate__user=self.request.user)
+
 
     def perform_create(self, serializer):
         candidate = self.request.user.candidate_profile
@@ -582,6 +757,7 @@ class ReferenceDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ReferenceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+
     def get_queryset(self):
         return Reference.objects.filter(candidate__user=self.request.user)
 
@@ -593,8 +769,10 @@ class ReferenceRequestListView(generics.ListCreateAPIView):
     serializer_class = ReferenceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+
     def get_queryset(self):
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
+
 
     def perform_create(self, serializer):
         candidate = self.request.user.candidate_profile
@@ -608,5 +786,7 @@ class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ReferenceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+
     def get_queryset(self):
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
+

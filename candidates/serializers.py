@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from .models import Candidate, WorkDNA, Reference, ReferenceRequest
+from companies.models import Company
+from jobs.serializers import JobListSerializer
+from projects.serializers import ProjectListSerializer
 
 
 class CandidateSerializer(serializers.ModelSerializer):
@@ -252,3 +255,41 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
             user.save(update_fields=['profile_completed', 'updated_at'])
 
         return updated_instance
+
+
+class CompanyWithOpeningsSerializer(serializers.ModelSerializer):
+    """
+    Company serializer with nested active jobs and projects lists.
+    Limits can be controlled via query params: jobs_limit, projects_limit.
+    """
+    jobs = serializers.SerializerMethodField()
+    projects = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Company
+        fields = (
+            'id', 'company_name', 'industry', 'description', 'size', 'logo',
+            'location', 'website', 'values', 'jobs', 'projects'
+        )
+
+    def _get_limits(self):
+        request = self.context.get('request')
+        def parse_int(v, default):
+            try:
+                return int(v)
+            except Exception:
+                return default
+        jobs_limit = 5
+        projects_limit = 5
+        if request is not None:
+            jobs_limit = parse_int(request.query_params.get('jobs_limit', 5), 5)
+            projects_limit = parse_int(request.query_params.get('projects_limit', 5), 5)
+        return jobs_limit, projects_limit
+
+    def get_jobs(self, obj):
+        qs = obj.jobs.all().order_by('-created_at')
+        return JobListSerializer(qs, many=True).data
+
+    def get_projects(self, obj):
+        qs = obj.projects.all().order_by('-created_at')
+        return ProjectListSerializer(qs, many=True).data
