@@ -44,6 +44,31 @@ class CandidateViewSet(viewsets.ViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     permission_classes = [permissions.AllowAny]
+    
+    def retrieve(self, request, pk=None):
+        """
+        Retrieve a specific candidate's public profile.
+        """
+        try:
+            candidate = Candidate.objects.get(pk=pk, profile_visibility="public")
+        except Candidate.DoesNotExist:
+            return Response(
+                {"detail": "Candidate not found or profile is not public"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        # If the viewer is an employer, record the view
+        if hasattr(request.user, 'employer_profile'):
+            employer = request.user.employer_profile
+            viewers_list = list(candidate.viewers or [])
+            if employer.id not in viewers_list:
+                candidate.profile_views = (candidate.profile_views or 0) + 1
+                viewers_list.append(employer.id)
+                candidate.viewers = viewers_list
+                candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
+        
+        serializer = CandidateSerializer(candidate, context={'request': request})
+        return Response(serializer.data)
 
     def list(self, request):
         queryset = Candidate.objects.filter(profile_visibility="public")
