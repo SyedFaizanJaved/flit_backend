@@ -186,13 +186,10 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# CORS_ALLOWED_ORIGINS = ["*"]
 
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-
 # Email settings (force SMTP even in DEBUG)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
