@@ -223,16 +223,42 @@ SIMPLE_JWT = {
 
 # AWS S3 Configuration
 
-AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
-AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
-AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
-AWS_S3_REGION_NAME = config("AWS_REGION")
-AWS_QUERYSTRING_AUTH = False  
+# AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
+# AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
+# AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
+# AWS_S3_REGION_NAME = config("AWS_REGION")
+# AWS_QUERYSTRING_AUTH = False  
 
 
 # Media files (S3 setup)
-DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
-MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
+# DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+# MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
 
 # MEDIA_URL = '/media/'
 # MEDIA_ROOT = BASE_DIR / 'media'
+
+# AWS S3 bucket
+AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")  # Set in env
+AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")  # Set in env
+AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
+AWS_S3_REGION_NAME = config("AWS_REGION")
+AWS_S3_SIGNATURE_NAME = 's3v4'
+AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+AWS_IS_GZIPPED = False
+AWS_S3_VERIFY = True
+AWS_S3_SECURE_URLS = True
+
+
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+        "LOCATION": "media",
+    },
+    "staticfiles": {
+        "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+        "LOCATION": "staticfiles",
+    }
+}
