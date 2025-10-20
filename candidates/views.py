@@ -21,6 +21,7 @@ from jobs.serializers import JobListSerializer
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from companies.models import Company
+from employers.models import Employer
 
 from .models import Candidate, Reference, ReferenceRequest, WorkDNA
 from .serializers import (
@@ -595,7 +596,21 @@ class CandidateViewSet(viewsets.ViewSet):
             companies_qs = companies_qs.filter(
                 Q(company_name__icontains=q) | Q(industry__icontains=q) | Q(location__icontains=q)
             )
-
+             # Role-based restriction: employers only see their own company
+        user = request.user if hasattr(request, 'user') else None
+        if getattr(user, 'is_authenticated', False):
+            role = getattr(user, 'userType', None)
+            if role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
+                try:
+                    employer = user.employer_profile
+                    if employer.company_id:
+                        companies_qs = companies_qs.filter(id=employer.company_id)
+                    else:
+                        companies_qs = Company.objects.none()
+                except Employer.DoesNotExist:
+                    companies_qs = Company.objects.none()
+            # candidates/public get full list
+            
         # Return all matching companies (no active-only restriction)
         companies_qs = companies_qs.distinct().order_by('-created_at')
 
