@@ -68,6 +68,7 @@ LOCAL_APPS = [
     'jobs',
     'projects',
     'applications',   
+    'chat'
 ]
 
 
@@ -185,11 +186,13 @@ REST_FRAMEWORK = {
     ],
 }
 
-# CORS settings
-# CORS_ALLOWED_ORIGINS = ["*"]
-
+# CORS/CSRF settings
+# Allow all CORS origins in dev (adjust for prod as needed)
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
+
+# Explicitly trust local frontend origins for CSRF origin checking
 # Email settings (force SMTP even in DEBUG)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 

@@ -27,8 +27,15 @@ def welcome_root(request):
         "message": "Welcome to FLIT APIs",
     })
 
+def health_check(request):
+    return JsonResponse({
+        "status": "ok",
+        "message": "Backend is healthy",
+    })
+
 urlpatterns = [
     path('', welcome_root, name='root'),
+    path('health/', health_check, name='health'),
     path('admin/', admin.site.urls),
 
     # API routes
@@ -39,6 +46,7 @@ urlpatterns = [
     path('api/companies/', include('companies.urls')),
     path('api/jobs/', include('jobs.urls')),
     path('api/projects/', include('projects.urls')),
+    path('api/chat/', include('chat.urls')),
 ]
 
 if settings.DEBUG:

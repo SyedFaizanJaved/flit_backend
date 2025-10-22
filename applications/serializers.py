@@ -217,10 +217,11 @@ class JobApplicationListSerializer(serializers.ModelSerializer):
         source='candidate.full_name', read_only=True)
     job_title = serializers.CharField(source='job.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
+    candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
 
     class Meta:
         model = JobApplication
-        fields = ('id', 'candidate_name', 'job_title', 'company_name', 'status',
+        fields = ('id', 'candidate_name', 'candidate_user_id', 'job_title', 'company_name', 'status',
                   'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
 
 
@@ -233,8 +234,9 @@ class ProjectApplicationListSerializer(serializers.ModelSerializer):
     project_title = serializers.CharField(
         source='project.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
+    candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
 
     class Meta:
         model = ProjectApplication
-        fields = ('id', 'candidate_name', 'project_title', 'company_name', 'status',
+        fields = ('id', 'candidate_name', 'candidate_user_id', 'project_title', 'company_name', 'status',
                   'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
