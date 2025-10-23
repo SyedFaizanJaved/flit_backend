@@ -1,5 +1,5 @@
-from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -10,107 +10,73 @@ from .serializers import (
 )
 from accounts.permissions import IsEmployer
 
-
-class ProjectListView(generics.ListCreateAPIView):
-    """
-    Project list and create view
-    """
-    queryset = Project.objects.filter(status='active')
-    permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['category', 'paymentType', 'company']
-    # filterset_fields = ['category', 'complexity', 'paymentType', 'work_style', 'company']
-    search_fields = ['title', 'description', 'company__company_name']
-    # ordering_fields = ['created_at', 'budget_min', 'budget_max']
-    ordering = ['-created_at']
-    
-    def get_serializer_class(self):
-        if self.request.method == 'POST':
-            return ProjectCreateSerializer
-        return ProjectListSerializer
-
-    def get_permissions(self):
-        # Only employers can create; everyone authenticated can list
-        if self.request.method == 'POST':
-            return [permissions.IsAuthenticated(), IsEmployer()]
-        return [permissions.IsAuthenticated()]
-
-
-class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Project detail view
-    """
+class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['category', 'paymentType', 'company']
+    search_fields = ['title', 'description', 'company__company_name']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == 'list':
+            return qs.filter(status='active')
+        return qs
+
     def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
+        if self.action == 'list':
+            return ProjectListSerializer
+        if self.action == 'create':
+            return ProjectCreateSerializer
+        if self.action in ['update', 'partial_update']:
             return ProjectUpdateSerializer
         return ProjectSerializer
 
     def get_permissions(self):
-        # Restrict modifications to employers; retrieval allowed to any authenticated
-        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'milestones']:
             return [permissions.IsAuthenticated(), IsEmployer()]
         return [permissions.IsAuthenticated()]
 
+    @action(detail=False, methods=['get'], url_path='my-projects')
+    def my_projects(self, request):
+        projects = Project.objects.filter(employer=request.user)
+        page = self.paginate_queryset(projects)
+        serializer = ProjectSerializer(page or projects, many=True, context=self.get_serializer_context())
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
-class MyProjectsView(generics.ListAPIView):
-    """
-    User's posted projects view
-    """
-    serializer_class = ProjectSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        return Project.objects.filter(employer=self.request.user)
-
-
-class ProjectSkillView(generics.ListCreateAPIView):
-    """
-    Project skills view
-    """
-    serializer_class = ProjectSkillSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        project_id = self.kwargs['project_id']
-        return ProjectSkill.objects.filter(project_id=project_id)
-    
-    def perform_create(self, serializer):
-        project_id = self.kwargs['project_id']
-        project = Project.objects.get(id=project_id, employer=self.request.user)
+    @action(detail=True, methods=['get', 'post'], url_path='skills')
+    def skills(self, request, pk=None):
+        project = self.get_object()
+        if request.method == 'GET':
+            skills = ProjectSkill.objects.filter(project=project)
+            serializer = ProjectSkillSerializer(skills, many=True)
+            return Response(serializer.data)
+        serializer = ProjectSkillSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save(project=project)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-
-class ProjectMilestoneView(generics.ListCreateAPIView):
-    """
-    Project milestones view
-    """
-    serializer_class = ProjectMilestoneSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        project_id = self.kwargs['project_id']
-        return ProjectMilestone.objects.filter(project_id=project_id)
-    
-    def perform_create(self, serializer):
-        project_id = self.kwargs['project_id']
-        project = Project.objects.get(id=project_id, employer=self.request.user)
+    @action(detail=True, methods=['get', 'post'], url_path='milestones')
+    def milestones(self, request, pk=None):
+        project = self.get_object()
+        if request.method == 'GET':
+            milestones = ProjectMilestone.objects.filter(project=project)
+            serializer = ProjectMilestoneSerializer(milestones, many=True)
+            return Response(serializer.data)
+        serializer = ProjectMilestoneSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save(project=project)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def project_applications(request, project_id):
-    """
-    Get project applications
-    """
-    try:
-        project = Project.objects.get(id=project_id, employer=request.user)
+    @action(detail=True, methods=['get'], url_path='applications')
+    def applications(self, request, pk=None):
+        try:
+            project = Project.objects.get(id=pk, employer=request.user)
+        except Project.DoesNotExist:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         applications = project.applications.all()
-        
         data = {
             'project': ProjectSerializer(project).data,
             'applications': [
@@ -129,92 +95,48 @@ def project_applications(request, project_id):
             'shortlisted_count': applications.filter(is_shortlisted=True).count(),
             'rejected_count': applications.filter(is_rejected=True).count(),
         }
-        
         return Response(data, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def update_project_status(request, project_id):
-    """
-    Update project status
-    """
-    try:
-        project = Project.objects.get(id=project_id, employer=request.user)
+    @action(detail=True, methods=['post'], url_path='status')
+    def update_status(self, request, pk=None):
+        try:
+            project = Project.objects.get(id=pk, employer=request.user)
+        except Project.DoesNotExist:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
-        
         if new_status not in ['draft', 'active', 'paused', 'closed', 'in-progress', 'completed']:
             return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
-        
         project.status = new_status
         project.save()
-        
-        return Response({
-            'message': 'Project status updated successfully',
-            'project': ProjectSerializer(project).data
-        }, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Project status updated successfully', 'project': ProjectSerializer(project).data}, status=status.HTTP_200_OK)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def shortlist_application(request, project_id, application_id):
-    """
-    Shortlist a project application
-    """
-    try:
-        project = Project.objects.get(id=project_id, employer=request.user)
-        application = project.applications.get(id=application_id)
-        
+    @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/shortlist')
+    def shortlist_application(self, request, pk=None, application_id=None):
+        try:
+            project = Project.objects.get(id=pk, employer=request.user)
+            application = project.applications.get(id=application_id)
+        except Project.DoesNotExist:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_shortlisted = True
         application.is_rejected = False
         application.status = 'shortlisted'
         application.save()
-        
-        return Response({
-            'message': 'Application shortlisted successfully',
-            'application': {
-                'id': application.id,
-                'candidate_name': application.candidate.full_name,
-                'status': application.status,
-                'is_shortlisted': application.is_shortlisted
-            }
-        }, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Application shortlisted successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_shortlisted': application.is_shortlisted}}, status=status.HTTP_200_OK)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def reject_application(request, project_id, application_id):
-    """
-    Reject a project application
-    """
-    try:
-        project = Project.objects.get(id=project_id, employer=request.user)
-        application = project.applications.get(id=application_id)
-        
+    @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/reject')
+    def reject_application(self, request, pk=None, application_id=None):
+        try:
+            project = Project.objects.get(id=pk, employer=request.user)
+            application = project.applications.get(id=application_id)
+        except Project.DoesNotExist:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_rejected = True
         application.is_shortlisted = False
         application.status = 'rejected'
         application.rejection_reason = request.data.get('rejection_reason', '')
         application.save()
-        
-        return Response({
-            'message': 'Application rejected successfully',
-            'application': {
-                'id': application.id,
-                'candidate_name': application.candidate.full_name,
-                'status': application.status,
-                'is_rejected': application.is_rejected
-            }
-        }, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Application rejected successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_rejected': application.is_rejected}}, status=status.HTTP_200_OK)

@@ -9,7 +9,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from jwt import InvalidTokenError
 import re
 from rest_framework.serializers import ValidationError
-from .models import User, PasswordReset
+from .models import User, PasswordReset, Role
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -18,14 +18,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     """
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
+    role = serializers.SlugRelatedField(slug_field='name', queryset=Role.objects.all())
     
     class Meta:
         model = User
-        fields = ('email', 'username', 'userType', 'password', 'password_confirm', 'first_name', 'last_name')
+        fields = ('email', 'username', 'role', 'password', 'password_confirm', 'first_name', 'last_name')
         extra_kwargs = {
             'email': {'required': True},
             'username': {'required': True},
-            'userType': {'required': True},
+            'role': {'required': True},
             'first_name': {'required': True},
             'last_name': {'required': False},
             'password': {'write_only': True},
@@ -66,10 +67,29 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        user = User.objects.create_user(**validated_data)
+        # Role can be provided as id or name via nested representation
+        role_value = validated_data.pop('role', None)
+        role_obj = None
+        if isinstance(role_value, Role):
+            role_obj = role_value
+        elif isinstance(role_value, dict):
+            role_id = role_value.get('id')
+            role_name = role_value.get('name')
+            if role_id:
+                role_obj = Role.objects.get(id=role_id)
+            elif role_name:
+                role_obj, _ = Role.objects.get_or_create(name=str(role_name).lower())
+        elif role_value is not None:
+            # If a primitive is passed, try interpret as id else as name
+            try:
+                role_obj = Role.objects.get(id=int(role_value))
+            except Exception:
+                role_obj, _ = Role.objects.get_or_create(name=str(role_value).lower())
+
+        user = User.objects.create_user(**validated_data, role=role_obj)
 
         # Create related profile based on role using safe defaults
-        user_role = user.userType
+        user_role = (user.role.name if user.role_id else None)
         try:
             if user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
                 # Lazy import to avoid circular deps at import time
@@ -132,13 +152,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
     company = serializers.IntegerField(source='employer_profile.company.id', read_only=True, allow_null=True)
     company_name = serializers.CharField(source='employer_profile.company.company_name', read_only=True, allow_null=True)
     
+    role = serializers.CharField(source='role.name', read_only=True, allow_null=True)
+    role_id = serializers.IntegerField(source='role.id', read_only=True, allow_null=True)
+
     class Meta:
         model = User
         fields = (
-            'id', 'email', 'username', 'userType', 'first_name', 'last_name', 'full_name',
+            'id', 'email', 'username', 'role', 'role_id', 'first_name', 'last_name', 'full_name',
             'created_at', 'company', 'company_name'
         )
-        read_only_fields = ('id', 'email', 'userType', 'created_at')
+        read_only_fields = ('id', 'email', 'role', 'role_id', 'created_at')
     
 
 
@@ -201,9 +224,11 @@ class UserListSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     
+    role = serializers.CharField(source='role.name', read_only=True, allow_null=True)
+
     class Meta:
         model = User
-        fields = ('id', 'email', 'username', 'userType', 'full_name', 
+        fields = ('id', 'email', 'username', 'role', 'full_name', 
                  'profile_completed', 'created_at')
 
 

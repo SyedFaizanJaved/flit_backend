@@ -5,7 +5,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import check_password
 from django.conf import settings
-from .models import User
+from .models import User, Role
 from companies.models import Company
 from candidates.models import Candidate
 from .serializers import (
@@ -48,7 +48,7 @@ class BaseRoleRegistrationView(generics.CreateAPIView):
         data = kwargs.get('data')
         if isinstance(data, dict) and self.fixed_user_type:
             # Override/ensure the role set by the endpoint
-            data = {**data, 'userType': self.fixed_user_type}
+            data = {**data, 'role': self.fixed_user_type}
             kwargs['data'] = data
         return super().get_serializer(*args, **kwargs)
 
@@ -76,7 +76,7 @@ def user_login(request):
         # Issue JWT tokens
         refresh = RefreshToken.for_user(user)
         # Determine unified profile completion flag by role
-        user_role = getattr(user, 'userType', None)
+        user_role = getattr(getattr(user, 'role', None), 'name', None)
         profile_completed = False
         if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
             profile_completed = Company.objects.filter(
@@ -185,18 +185,18 @@ def user_dashboard(request):
     data = {
         'user': UserProfileSerializer(user).data,
         'profile_completed': user.profile_completed,
-        'role': user.userType,
+        'role': getattr(getattr(user, 'role', None), 'name', None),
     }
     
     # Add role-specific data
-    if user.userType == settings.USER_ROLE_CANDIDATE and hasattr(user, 'candidate_profile'):
+    if getattr(getattr(user, 'role', None), 'name', None) == settings.USER_ROLE_CANDIDATE and hasattr(user, 'candidate_profile'):
         candidate = user.candidate_profile
         data['candidate'] = {
             'profile_completed': candidate.is_profile_complete,
             'applications_count': candidate.applications.count(),
             'references_count': candidate.references.count(),
         }
-    elif user.userType == settings.USER_ROLE_EMPLOYER and hasattr(user, 'employer_profile'):
+    elif getattr(getattr(user, 'role', None), 'name', None) == settings.USER_ROLE_EMPLOYER and hasattr(user, 'employer_profile'):
         employer = user.employer_profile
         data['employer'] = {
             'profile_completed': employer.is_profile_complete,
@@ -234,3 +234,14 @@ def password_reset_confirm(request):
         return Response({'message': 'The password has been reset successfully.'}, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def roles_list(request):
+    """
+    Public endpoint to list available roles for registration selector.
+    Returns: [{id, name, description}]
+    """
+    roles = list(Role.objects.all().values('id', 'name', 'description'))
+    return Response({'results': roles}, status=status.HTTP_200_OK)
