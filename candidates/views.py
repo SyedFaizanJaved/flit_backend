@@ -149,7 +149,7 @@ class CandidateViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[permissions.IsAuthenticated])
     def profile(self, request):
-        if request.user.userType != "candidate":
+        if getattr(getattr(request.user, 'role', None), 'name', None) != "candidate":
             raise PermissionDenied("Only candidates can access this endpoint.")
         candidate, _ = Candidate.objects.get_or_create(
             user=request.user,
@@ -346,7 +346,7 @@ class CandidateViewSet(viewsets.ViewSet):
             )
         user = request.user if hasattr(request, 'user') else None
         if getattr(user, 'is_authenticated', False):
-            role = getattr(user, 'userType', None)
+            role = getattr(getattr(user, 'role', None), 'name', None)
             if role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
                 try:
                     employer = user.employer_profile

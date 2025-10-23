@@ -1,5 +1,5 @@
-from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -10,106 +10,74 @@ from .serializers import (
 )
 from accounts.permissions import IsEmployer
 
-
-class JobListView(generics.ListCreateAPIView):
-    """
-    Job list and create view
-    """
-    queryset = Job.objects.filter(status='active')
+class JobViewSet(viewsets.ModelViewSet):
+    queryset = Job.objects.all()
+    serializer_class = JobSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
-    
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == 'list':
+            return qs.filter(status='active')
+        return qs
+
     def get_serializer_class(self):
-        if self.request.method == 'POST':
+        if self.action == 'list':
+            return JobListSerializer
+        if self.action == 'create':
             return JobCreateSerializer
-        return JobListSerializer
-
-    def get_permissions(self):
-        # Only employers can create; everyone authenticated can list
-        if self.request.method == 'POST':
-            return [permissions.IsAuthenticated(), IsEmployer()]
-        return [permissions.IsAuthenticated()]
-
-
-class JobDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Job detail view
-    """
-    queryset = Job.objects.all()
-    serializer_class = JobSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
+        if self.action in ['update', 'partial_update']:
             return JobUpdateSerializer
         return JobSerializer
 
     def get_permissions(self):
-        # Restrict modifications to employers; retrieval allowed to any authenticated
-        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'languages']:
             return [permissions.IsAuthenticated(), IsEmployer()]
         return [permissions.IsAuthenticated()]
 
+    @action(detail=False, methods=['get'], url_path='my-jobs')
+    def my_jobs(self, request):
+        jobs = Job.objects.filter(employer=request.user)
+        page = self.paginate_queryset(jobs)
+        serializer = JobSerializer(page or jobs, many=True, context=self.get_serializer_context())
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
-class MyJobsView(generics.ListAPIView):
-    """
-    User's posted jobs view
-    """
-    serializer_class = JobSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        return Job.objects.filter(employer=self.request.user)
-
-
-class JobSkillView(generics.ListCreateAPIView):
-    """
-    Job skills view
-    """
-    serializer_class = JobSkillSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        job_id = self.kwargs['job_id']
-        return JobSkill.objects.filter(job_id=job_id)
-    
-    def perform_create(self, serializer):
-        job_id = self.kwargs['job_id']
-        job = Job.objects.get(id=job_id, employer=self.request.user)
+    @action(detail=True, methods=['get', 'post'], url_path='skills')
+    def skills(self, request, pk=None):
+        job = self.get_object()
+        if request.method == 'GET':
+            skills = JobSkill.objects.filter(job=job)
+            serializer = JobSkillSerializer(skills, many=True)
+            return Response(serializer.data)
+        serializer = JobSkillSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save(job=job)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-
-class JobLanguageView(generics.ListCreateAPIView):
-    """
-    Job languages view
-    """
-    serializer_class = JobLanguageSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        job_id = self.kwargs['job_id']
-        return JobLanguage.objects.filter(job_id=job_id)
-    
-    def perform_create(self, serializer):
-        job_id = self.kwargs['job_id']
-        job = Job.objects.get(id=job_id, employer=self.request.user)
+    @action(detail=True, methods=['get', 'post'], url_path='languages')
+    def languages(self, request, pk=None):
+        job = self.get_object()
+        if request.method == 'GET':
+            langs = JobLanguage.objects.filter(job=job)
+            serializer = JobLanguageSerializer(langs, many=True)
+            return Response(serializer.data)
+        serializer = JobLanguageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save(job=job)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def job_applications(request, job_id):
-    """
-    Get job applications
-    """
-    try:
-        job = Job.objects.get(id=job_id, employer=request.user)
+    @action(detail=True, methods=['get'], url_path='applications')
+    def applications(self, request, pk=None):
+        try:
+            job = Job.objects.get(id=pk, employer=request.user)
+        except Job.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         applications = job.applications.all()
-        
         data = {
             'job': JobSerializer(job).data,
             'applications': [
@@ -128,92 +96,48 @@ def job_applications(request, job_id):
             'shortlisted_count': applications.filter(is_shortlisted=True).count(),
             'rejected_count': applications.filter(is_rejected=True).count(),
         }
-        
         return Response(data, status=status.HTTP_200_OK)
-    except Job.DoesNotExist:
-        return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def update_job_status(request, job_id):
-    """
-    Update job status
-    """
-    try:
-        job = Job.objects.get(id=job_id, employer=request.user)
+    @action(detail=True, methods=['post'], url_path='status')
+    def update_status(self, request, pk=None):
+        try:
+            job = Job.objects.get(id=pk, employer=request.user)
+        except Job.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
-        
         if new_status not in ['draft', 'active', 'paused', 'closed', 'filled']:
             return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
-        
         job.status = new_status
         job.save()
-        
-        return Response({
-            'message': 'Job status updated successfully',
-            'job': JobSerializer(job).data
-        }, status=status.HTTP_200_OK)
-    except Job.DoesNotExist:
-        return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Job status updated successfully', 'job': JobSerializer(job).data}, status=status.HTTP_200_OK)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def shortlist_application(request, job_id, application_id):
-    """
-    Shortlist a job application
-    """
-    try:
-        job = Job.objects.get(id=job_id, employer=request.user)
-        application = job.applications.get(id=application_id)
-        
+    @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/shortlist')
+    def shortlist_application(self, request, pk=None, application_id=None):
+        try:
+            job = Job.objects.get(id=pk, employer=request.user)
+            application = job.applications.get(id=application_id)
+        except Job.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_shortlisted = True
         application.is_rejected = False
         application.status = 'shortlisted'
         application.save()
-        
-        return Response({
-            'message': 'Application shortlisted successfully',
-            'application': {
-                'id': application.id,
-                'candidate_name': application.candidate.full_name,
-                'status': application.status,
-                'is_shortlisted': application.is_shortlisted
-            }
-        }, status=status.HTTP_200_OK)
-    except Job.DoesNotExist:
-        return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Application shortlisted successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_shortlisted': application.is_shortlisted}}, status=status.HTTP_200_OK)
 
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def reject_application(request, job_id, application_id):
-    """
-    Reject a job application
-    """
-    try:
-        job = Job.objects.get(id=job_id, employer=request.user)
-        application = job.applications.get(id=application_id)
-        
+    @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/reject')
+    def reject_application(self, request, pk=None, application_id=None):
+        try:
+            job = Job.objects.get(id=pk, employer=request.user)
+            application = job.applications.get(id=application_id)
+        except Job.DoesNotExist:
+            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_rejected = True
         application.is_shortlisted = False
         application.status = 'rejected'
         application.rejection_reason = request.data.get('rejection_reason', '')
         application.save()
-        
-        return Response({
-            'message': 'Application rejected successfully',
-            'application': {
-                'id': application.id,
-                'candidate_name': application.candidate.full_name,
-                'status': application.status,
-                'is_rejected': application.is_rejected
-            }
-        }, status=status.HTTP_200_OK)
-    except Job.DoesNotExist:
-        return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'message': 'Application rejected successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_rejected': application.is_rejected}}, status=status.HTTP_200_OK)

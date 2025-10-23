@@ -40,9 +40,9 @@ class JobApplicationListView(generics.ListCreateAPIView):
         return JobApplicationListSerializer
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return JobApplication.objects.filter(candidate__user=self.request.user)
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return JobApplication.objects.filter(employer=self.request.user)
         return JobApplication.objects.none()
 
@@ -76,9 +76,9 @@ class ProjectApplicationListView(generics.ListCreateAPIView):
         return ProjectApplicationListSerializer
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return ProjectApplication.objects.filter(candidate__user=self.request.user)
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return ProjectApplication.objects.filter(employer=self.request.user)
         return ProjectApplication.objects.none()
 
@@ -103,9 +103,9 @@ class JobApplicationDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return JobApplication.objects.filter(candidate__user=self.request.user)
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return JobApplication.objects.filter(employer=self.request.user)
         return JobApplication.objects.none()
 
@@ -119,9 +119,9 @@ class ProjectApplicationDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return ProjectApplication.objects.filter(candidate__user=self.request.user)
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return ProjectApplication.objects.filter(employer=self.request.user)
         return ProjectApplication.objects.none()
 
@@ -135,12 +135,12 @@ class InterviewListView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return Interview.objects.filter(
                 models.Q(job_application__candidate__user=self.request.user)
                 | models.Q(project_application__candidate__user=self.request.user)
             )
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return Interview.objects.filter(
                 models.Q(job_application__employer=self.request.user)
                 | models.Q(project_application__employer=self.request.user)
@@ -157,12 +157,12 @@ class InterviewDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return Interview.objects.filter(
                 models.Q(job_application__candidate__user=self.request.user)
                 | models.Q(project_application__candidate__user=self.request.user)
             )
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return Interview.objects.filter(
                 models.Q(job_application__employer=self.request.user)
                 | models.Q(project_application__employer=self.request.user)
@@ -179,12 +179,12 @@ class ApplicationMessageListView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return ApplicationMessage.objects.filter(
                 models.Q(job_application__candidate__user=self.request.user)
                 | models.Q(project_application__candidate__user=self.request.user)
             )
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return ApplicationMessage.objects.filter(
                 models.Q(job_application__employer=self.request.user)
                 | models.Q(project_application__employer=self.request.user)
@@ -201,12 +201,12 @@ class InterviewRequestListView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.userType == "candidate":
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
             return InterviewRequest.objects.filter(
                 models.Q(job_application__candidate__user=self.request.user)
                 | models.Q(project_application__candidate__user=self.request.user)
             )
-        elif self.request.user.userType == "employer":
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
             return InterviewRequest.objects.filter(
                 models.Q(job_application__employer=self.request.user)
                 | models.Q(project_application__employer=self.request.user)
