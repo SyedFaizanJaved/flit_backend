@@ -34,6 +34,27 @@ class ChatMessageListView(generics.ListCreateAPIView):
         )
 
 
+class ConversationWithUserListView(generics.ListAPIView):
+    """
+    List all messages between the authenticated user and a specific other user
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ['message']
+    ordering_fields = ['created_at']
+    ordering = ['created_at']
+    serializer_class = ChatMessageListSerializer
+
+    def get_queryset(self):
+        other_user_id = self.kwargs.get('user_id')
+        return ChatMessage.objects.filter(
+            (
+                models.Q(sender=self.request.user, recipient_id=other_user_id) |
+                models.Q(sender_id=other_user_id, recipient=self.request.user)
+            )
+        ).order_by('created_at')
+
+
 class ChatRoomListView(generics.ListCreateAPIView):
     """
     Chat room list and create view
@@ -186,6 +207,26 @@ def mark_message_read(request, message_id):
     except ChatMessage.DoesNotExist:
         return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
 
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def mark_messages_from_sender_read(request, sender_id):
+    try:
+        from accounts.models import User
+        User.objects.get(id=sender_id)
+    except Exception:
+        return Response({'error': 'Sender not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    updated_count = ChatMessage.objects.filter(
+        sender_id=sender_id,
+        recipient=request.user,
+        is_read=False
+    ).update(is_read=True)
+
+    return Response({
+        'message': 'Messages marked as read',
+        'updated_count': updated_count
+    }, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

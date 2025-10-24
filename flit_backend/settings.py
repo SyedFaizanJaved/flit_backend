@@ -126,7 +126,7 @@ AUTH_USER_MODEL = 'accounts.User'
 # User Role Constants
 USER_ROLE_CANDIDATE = 'candidate'
 USER_ROLE_EMPLOYER = 'employer'
-
+USER_ROLE_ADMIN = 'admin'
 
 
 # Password validation

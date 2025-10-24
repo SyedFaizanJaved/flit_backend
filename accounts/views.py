@@ -8,6 +8,10 @@ from django.conf import settings
 from .models import User, Role
 from companies.models import Company
 from candidates.models import Candidate
+from employers.models import Employer
+from jobs.models import Job
+from projects.models import Project
+from applications.models import JobApplication, ProjectApplication
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserUpdateSerializer, ChangePasswordSerializer, UserListSerializer,
@@ -78,11 +82,24 @@ def user_login(request):
         # Determine unified profile completion flag by role
         user_role = getattr(getattr(user, 'role', None), 'name', None)
         profile_completed = False
-        if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
-            profile_completed = Company.objects.filter(
+        employer_company_completed = False
+        try:
+            # Fast path: if employer profile exists and is linked to a company, treat as completed
+            if hasattr(user, 'employer_profile') and getattr(user.employer_profile, 'company_id', None):
+                employer_company_completed = True
+            else:
+                # Fallback: check completed companies created by the user
+                employer_company_completed = Company.objects.filter(
+                    created_by=user, is_active=True, is_completed=True
+                ).exists()
+        except Exception:
+            employer_company_completed = Company.objects.filter(
                 created_by=user, is_active=True, is_completed=True
             ).exists()
-        elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
+
+        if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer') or (user_role is None and employer_company_completed):
+            profile_completed = employer_company_completed
+        elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate') or (user_role is None and hasattr(user, 'candidate_profile')):
             try:
                 candidate_profile = user.candidate_profile
                 profile_completed = candidate_profile.is_profile_complete
@@ -205,6 +222,40 @@ def user_dashboard(request):
             'applications_received': employer.total_applications_received,
         }
     
+    return Response(data, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def admin_dashboard(request):
+    """
+    Admin dashboard data: aggregates across users, candidates, employers, jobs, projects, and applications.
+    Only accessible to admin users (role == USER_ROLE_ADMIN or is_staff True).
+    """
+    user = request.user
+    role_name = getattr(getattr(user, 'role', None), 'name', None)
+    admin_role = getattr(settings, 'USER_ROLE_ADMIN', 'admin')
+    if not (getattr(user, 'is_staff', False) or role_name == admin_role):
+        return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+
+    data = {
+        'summary': {
+            'total_users': User.objects.count(),
+            'total_candidates': Candidate.objects.count(),
+            'total_employers': Employer.objects.count(),
+            'total_jobs': Job.objects.count(),
+            'total_projects': Project.objects.count(),
+            'total_job_applications': JobApplication.objects.count(),
+            'total_project_applications': ProjectApplication.objects.count(),
+        },
+        'recent': {
+            'candidates': list(Candidate.objects.order_by('-created_at').values('id', 'full_name', 'title')[:5]),
+            'employers': list(Employer.objects.order_by('-created_at').values('id', 'first_name', 'last_name')[:5]),
+            'jobs': list(Job.objects.order_by('-created_at').values('id', 'title', 'status')[:5]),
+            'projects': list(Project.objects.order_by('-created_at').values('id', 'title', 'status')[:5]),
+        }
+    }
+
     return Response(data, status=status.HTTP_200_OK)
 
 
