@@ -11,6 +11,11 @@ class IsEmployer(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        return getattr(getattr(request.user, 'role', None), 'name', None) == settings.USER_ROLE_EMPLOYER
+        user = request.user
+        role_name = getattr(getattr(user, 'role', None), 'name', None)
+        is_employer = role_name == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer')
+        is_admin = getattr(user, 'is_staff', False) or role_name == getattr(settings, 'USER_ROLE_ADMIN', 'admin')
+        has_employer_profile = hasattr(user, 'employer_profile')
+        return bool(is_employer or is_admin or has_employer_profile)
 
 

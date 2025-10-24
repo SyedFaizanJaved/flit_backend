@@ -192,8 +192,17 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'video_transcription',
                  'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
+    def to_internal_value(self, data):
+    
+        data_copy = data.copy() if hasattr(data, 'copy') else data    
+        # Convert empty string to None for profile_image when no file is uploaded
+        if hasattr(data_copy, 'get') and data_copy.get('profile_image') == '':
+            data_copy['profile_image'] = None
+            
+        return super().to_internal_value(data_copy)
+    
     def validate(self, attrs):
-        if attrs.get('profile_image', None) == "":
+        if 'profile_image' in attrs and attrs['profile_image'] in (None, ""):
             attrs['profile_image'] = None
         return attrs
     

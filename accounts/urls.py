@@ -26,4 +26,5 @@ urlpatterns = [
     
     # Admin
     path('list/', views.UserListView.as_view(), name='user-list'),
+    path('admin/dashboard/', views.admin_dashboard, name='admin-dashboard'),
 ]

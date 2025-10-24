@@ -4,8 +4,10 @@ from . import views
 urlpatterns = [
     # Chat Messages
     path('messages/', views.ChatMessageListView.as_view(), name='chat-message-list'),
+    path('messages/with/<int:user_id>/', views.ConversationWithUserListView.as_view(), name='conversation-with-user'),
     path('messages/send/<int:recipient_id>/', views.send_message, name='send-message'),
     path('messages/<int:message_id>/read/', views.mark_message_read, name='mark-message-read'),
+    path('messages/from/<int:sender_id>/read-all/', views.mark_messages_from_sender_read, name='mark-messages-from-sender-read'),
     
     # Chat Rooms
     path('rooms/', views.ChatRoomListView.as_view(), name='chat-room-list'),

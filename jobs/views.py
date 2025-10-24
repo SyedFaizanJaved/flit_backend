@@ -24,6 +24,13 @@ class JobViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         if self.action == 'list':
             return qs.filter(status='active')
+        owner_scoped_actions = {
+            'retrieve', 'update', 'partial_update', 'destroy',
+            'skills', 'languages', 'applications', 'update_status',
+            'shortlist_application', 'reject_application'
+        }
+        if getattr(self, 'action', None) in owner_scoped_actions:
+            return qs.filter(employer=self.request.user)
         return qs
 
     def get_serializer_class(self):

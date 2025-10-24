@@ -133,4 +133,5 @@ class JobUpdateSerializer(serializers.ModelSerializer):
         fields = ('title', 'description', 'location', 'workStyle', 'category',
                  'experienceLevel', 'employmentType', 'hasTemporaryOption',
                  'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 
-                 'benefits', 'applicationDeadline', 'start_date', 'status')
+                 'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name')
+                 
