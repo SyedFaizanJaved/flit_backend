@@ -25,11 +25,18 @@ class ChatMessageListSerializer(serializers.ModelSerializer):
     """
     sender_name = serializers.CharField(source='sender.email', read_only=True)
     recipient_name = serializers.CharField(source='recipient.email', read_only=True)
+    direction = serializers.SerializerMethodField()
     
     class Meta:
         model = ChatMessage
         fields = ('id', 'sender', 'recipient', 'sender_name', 'recipient_name', 'message', 'messageType',
-                 'is_read', 'created_at')
+                 'is_read', 'created_at', 'direction')
+
+    def get_direction(self, obj):
+        request = self.context.get('request')
+        if request and request.user.id == obj.sender.id:
+            return 'outgoing' 
+        return 'incoming'   
 
 
 class ChatRoomSerializer(serializers.ModelSerializer):
