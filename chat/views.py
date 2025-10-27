@@ -46,7 +46,9 @@ class ConversationWithUserListView(generics.ListAPIView):
     serializer_class = ChatMessageListSerializer
 
     def get_queryset(self):
-        other_user_id = self.kwargs.get('user_id')
+        other_user_id = self.request.query_params.get('candidate_id') or self.kwargs.get('user_id')
+        if not other_user_id:
+            raise ValueError("candidate_id or user_id is required")
         return ChatMessage.objects.filter(
             (
                 models.Q(sender=self.request.user, recipient_id=other_user_id) |

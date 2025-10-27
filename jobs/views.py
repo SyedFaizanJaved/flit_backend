@@ -14,7 +14,6 @@ class JobViewSet(viewsets.ModelViewSet):
     queryset = Job.objects.all()
     serializer_class = JobSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
@@ -25,12 +24,14 @@ class JobViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return qs.filter(status='active')
         owner_scoped_actions = {
-            'retrieve', 'update', 'partial_update', 'destroy',
+            'update', 'partial_update', 'destroy',
             'skills', 'languages', 'applications', 'update_status',
             'shortlist_application', 'reject_application'
         }
         if getattr(self, 'action', None) in owner_scoped_actions:
             return qs.filter(employer=self.request.user)
+        if self.action == 'retrieve':
+            return qs
         return qs
 
     def get_serializer_class(self):
@@ -46,6 +47,32 @@ class JobViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'languages']:
             return [permissions.IsAuthenticated(), IsEmployer()]
         return [permissions.IsAuthenticated()]
+        
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if response.status_code == status.HTTP_201_CREATED:
+            response.data = {
+                'message': 'Job created successfully',
+                'data': response.data
+            }
+        return response
+        
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            response.data = {
+                'message': 'Job updated successfully',
+                'data': response.data
+            }
+        return response
+        
+    def destroy(self, request, *args, **kwargs):
+        job = self.get_object()
+        self.perform_destroy(job)
+        return Response(
+            {'message': 'Job deleted successfully'}, 
+            status=status.HTTP_200_OK
+        )
 
     @action(detail=False, methods=['get'], url_path='my-jobs')
     def my_jobs(self, request):

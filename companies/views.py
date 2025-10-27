@@ -20,7 +20,7 @@ class CompanyViewSet(viewsets.ViewSet):
     ordering = ['-created_at']
 
     def list(self, request):
-        queryset = Company.objects.filter(is_active=True)
+        queryset = Company.objects.all()
         for backend in self.filter_backends:
             queryset = backend().filter_queryset(request, queryset, self)
         serializer = CompanyListSerializer(queryset, many=True)
@@ -63,15 +63,15 @@ class CompanyViewSet(viewsets.ViewSet):
 
     def retrieve(self, request, pk=None):
         try:
-            company = Company.objects.get(pk=pk, is_active=True)
+            company = Company.objects.get(pk=pk)
             serializer = CompanySerializer(company)
             return Response(serializer.data)
         except Company.DoesNotExist:
-            return Response(status=status.HTTP_404_NOT_FOUND)
+            return Response({"message": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
 
     def partial_update(self, request, pk=None):
         try:
-            company = Company.objects.get(pk=pk, created_by=request.user, is_active=True)
+            company = Company.objects.get(pk=pk, created_by=request.user)
             serializer = CompanyUpdateSerializer(company, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
@@ -82,7 +82,7 @@ class CompanyViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='my-companies')
     def my_companies(self, request):
-        queryset = Company.objects.filter(created_by=request.user, is_active=True)
+        queryset = Company.objects.filter(created_by=request.user)
         serializer = CompanySerializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -148,20 +148,6 @@ class CompanyViewSet(viewsets.ViewSet):
             
             return Response({
                 'message': 'Company verified successfully',
-                'company': CompanySerializer(company).data
-            }, status=status.HTTP_200_OK)
-        except Company.DoesNotExist:
-            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['post'], url_path='deactivate')
-    def deactivate(self, request, pk=None):
-        try:
-            company = Company.objects.get(id=pk, created_by=request.user)
-            company.is_active = False
-            company.save()
-            
-            return Response({
-                'message': 'Company deactivated successfully',
                 'company': CompanySerializer(company).data
             }, status=status.HTTP_200_OK)
         except Company.DoesNotExist:

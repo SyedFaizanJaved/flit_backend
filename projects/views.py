@@ -38,13 +38,39 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'milestones']:
             return [permissions.IsAuthenticated(), IsEmployer()]
         return [permissions.IsAuthenticated()]
-
+        
     @action(detail=False, methods=['get'], url_path='my-projects')
     def my_projects(self, request):
         projects = Project.objects.filter(employer=request.user)
         page = self.paginate_queryset(projects)
         serializer = ProjectSerializer(page or projects, many=True, context=self.get_serializer_context())
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+        
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if response.status_code == status.HTTP_201_CREATED:
+            response.data = {
+                'message': 'Project created successfully',
+                'data': response.data
+            }
+        return response
+        
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            response.data = {
+                'message': 'Project updated successfully',
+                'data': response.data
+            }
+        return response
+        
+    def destroy(self, request, *args, **kwargs):
+        project = self.get_object()
+        self.perform_destroy(project)
+        return Response(
+            {'message': 'Project deleted successfully'}, 
+            status=status.HTTP_200_OK
+        )
 
     @action(detail=True, methods=['get', 'post'], url_path='skills')
     def skills(self, request, pk=None):

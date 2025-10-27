@@ -103,6 +103,7 @@ class CandidateSerializer(serializers.ModelSerializer):
 
 
 class CandidateListSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
