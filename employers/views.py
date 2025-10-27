@@ -3,12 +3,16 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.db import models
 from .models import Employer, EmployerPreference, EmployerCompliance
+from chat.models import ChatMessage
 from .serializers import (
     EmployerSerializer, EmployerListSerializer, EmployerProfileUpdateSerializer,
-    EmployerPreferenceSerializer, EmployerComplianceSerializer
+    EmployerPreferenceSerializer, EmployerComplianceSerializer ,EmployerConversationSummarySerializer
 )
 from accounts.views import BaseRoleRegistrationView
+from candidates.models import Candidate
+
 class EmployerRegistrationView(BaseRoleRegistrationView):
     """Register a new employer user (role is forced to employer)."""
     fixed_user_type = "employer"
@@ -153,6 +157,32 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
     def perform_create(self, serializer):
         employer = self.request.user.employer_profile
         serializer.save(employer=employer)
+        
+class EmployerConversationListView(generics.ListAPIView):
+    """
+    Lists, for the authenticated employer, each candidate they have chatted with
+    along with candidate id, name, title, and the last message time.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = EmployerConversationSummarySerializer
+
+    def get_queryset(self):
+
+        # Subquery to get the latest message created_at between request.user and each candidate.user
+        latest_msg_subq = ChatMessage.objects.filter(
+            (
+                models.Q(sender=self.request.user, recipient=models.OuterRef('user')) |
+                models.Q(sender=models.OuterRef('user'), recipient=self.request.user)
+            )
+        ).order_by('-created_at').values('created_at')[:1]
+
+        qs = Candidate.objects.annotate(
+            last_message_time=models.Subquery(latest_msg_subq)
+        ).filter(
+            last_message_time__isnull=False
+        ).order_by('-last_message_time')
+
+        return qs
 
 
 

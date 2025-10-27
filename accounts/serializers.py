@@ -163,6 +163,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'email', 'role', 'role_id', 'created_at')
     
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Hide employer-specific fields for non-employer roles (e.g., candidates)
+        role_name = getattr(getattr(instance, 'role', None), 'name', None)
+        employer_role = getattr(settings, 'USER_ROLE_EMPLOYER', 'employer')
+        if role_name != employer_role:
+            data.pop('company', None)
+            data.pop('company_name', None)
+        return data
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
