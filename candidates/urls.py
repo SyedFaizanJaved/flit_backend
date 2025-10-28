@@ -8,6 +8,7 @@ router.register(r'', views.CandidateViewSet, basename='candidates')
 urlpatterns = [
     # Registration
     path('register/', views.CandidateRegistrationView.as_view(), name='candidate-register'),
+    path('conversations/', views.CandidateEmployerConversationListView.as_view(), name='candidate-employer-conversations'),
     # Work DNA (kept as-is)
     path('work-dna/', views.WorkDNAView.as_view(), name='work-dna'),
     # References

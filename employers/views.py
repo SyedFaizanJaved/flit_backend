@@ -1,17 +1,19 @@
-from rest_framework import generics, status, permissions, viewsets
+from rest_framework import viewsets, generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db import models
+from django.db.models import Q, OuterRef, Subquery, Count, F
+from django.db.models.functions import Coalesce
 from .models import Employer, EmployerPreference, EmployerCompliance
-from chat.models import ChatMessage
 from .serializers import (
     EmployerSerializer, EmployerListSerializer, EmployerProfileUpdateSerializer,
-    EmployerPreferenceSerializer, EmployerComplianceSerializer ,EmployerConversationSummarySerializer
+    EmployerPreferenceSerializer, EmployerComplianceSerializer, EmployerConversationSummarySerializer
 )
 from accounts.views import BaseRoleRegistrationView
 from candidates.models import Candidate
+from chat.models import ChatMessage
 
 class EmployerRegistrationView(BaseRoleRegistrationView):
     """Register a new employer user (role is forced to employer)."""
@@ -161,13 +163,38 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
 class EmployerConversationListView(generics.ListAPIView):
     """
     Lists, for the authenticated employer, each candidate they have chatted with
-    along with candidate id, name, title, and the last message time.
+    along with candidate id, name, title, last message time, and unread message count.
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = EmployerConversationSummarySerializer
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Calculate number of candidates with unread messages
+        candidates_with_unread = sum(1 for candidate in queryset if candidate.unread_count > 0)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            # Create a new ordered dictionary for the paginated response
+            response_data = {
+                'count': self.paginator.page.paginator.count,
+                'unread_candidates_count': candidates_with_unread,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'results': serializer.data
+            }
+            return Response(response_data)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': len(serializer.data),
+            'unread_candidates_count': candidates_with_unread,
+            'results': serializer.data
+        })
 
     def get_queryset(self):
-
         # Subquery to get the latest message created_at between request.user and each candidate.user
         latest_msg_subq = ChatMessage.objects.filter(
             (
@@ -175,9 +202,17 @@ class EmployerConversationListView(generics.ListAPIView):
                 models.Q(sender=models.OuterRef('user'), recipient=self.request.user)
             )
         ).order_by('-created_at').values('created_at')[:1]
+        
+        # Subquery to count unread messages from each candidate
+        unread_count_subq = ChatMessage.objects.filter(
+            sender=models.OuterRef('user'),
+            recipient=self.request.user,
+            is_read=False
+        ).values('sender').annotate(count=Count('id')).values('count')[:1]
 
         qs = Candidate.objects.annotate(
-            last_message_time=models.Subquery(latest_msg_subq)
+            last_message_time=models.Subquery(latest_msg_subq),
+            unread_count=Coalesce(models.Subquery(unread_count_subq), 0)
         ).filter(
             last_message_time__isnull=False
         ).order_by('-last_message_time')

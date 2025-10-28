@@ -138,8 +138,26 @@ class EmployerComplianceSerializer(serializers.ModelSerializer):
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     last_message_time = serializers.DateTimeField(read_only=True)
-
+    unread_count = serializers.IntegerField(read_only=True)
+    
     class Meta:
         from candidates.models import Candidate
         model = Candidate
-        fields = ('user_id', 'full_name', 'title', 'last_message_time')
+        fields = ('user_id', 'full_name', 'title', 'last_message_time', 'unread_count')
+    
+class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer used on the candidate side to list employers they have chatted with,
+    returning employer's user id, the associated company details, and unread message count.
+    """
+    id = serializers.IntegerField(source='user.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    industry = serializers.CharField(source='company.industry', read_only=True)
+    logo = serializers.ImageField(source='company.logo', read_only=True)
+    last_message_time = serializers.DateTimeField(read_only=True)
+    last_seen = serializers.DateTimeField(source='user.last_login', read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Employer
+        fields = ('id', 'company_name', 'industry', 'logo', 'last_message_time', 'last_seen', 'unread_count')

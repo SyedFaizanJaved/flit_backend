@@ -4,7 +4,9 @@ import os
 import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
-from django.db.models import Case, Q, When, F
+from django.db import models
+from django.db.models import Case, Q, When, F, OuterRef, Subquery, Count
+from django.db.models.functions import Coalesce
 from django.utils.text import get_valid_filename
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.views import APIView
@@ -30,6 +32,8 @@ from .serializers import (
     WorkDNASerializer,
     CompanyWithOpeningsSerializer,
 )
+from employers.serializers import EmployerCompanyConversationSummarySerializer
+from chat.models import ChatMessage
 
 class CandidateRegistrationView(BaseRoleRegistrationView):
     """Register a new candidate user (role is forced to candidate)."""
@@ -56,14 +60,35 @@ class CandidateViewSet(viewsets.ViewSet):
             return None
 
     def retrieve(self, request, pk=None):
+        # Support viewing by either candidate PK or user ID on the same endpoint.
+        candidate = None
+        viewed_publicly = False
+        # 1) Try by USER ID with public visibility first (to prefer user.id semantics)
         try:
-            candidate = Candidate.objects.get(pk=pk, profile_visibility="public")
+            candidate = Candidate.objects.get(user__id=pk, profile_visibility="public")
+            viewed_publicly = True
         except Candidate.DoesNotExist:
+            candidate = None
+        # 2) If not found, try by candidate PK with public visibility
+        if candidate is None:
+            try:
+                candidate = Candidate.objects.get(pk=pk, profile_visibility="public")
+                viewed_publicly = True
+            except Candidate.DoesNotExist:
+                candidate = None
+        # 3) If still not found, allow owner to view their own profile regardless of visibility (by either key)
+        if candidate is None and getattr(request.user, 'is_authenticated', False):
+            try:
+                candidate = Candidate.objects.get(Q(pk=pk) | Q(user__id=pk), user=request.user)
+                viewed_publicly = False
+            except Candidate.DoesNotExist:
+                candidate = None
+        if candidate is None:
             return Response(
                 {"detail": "Candidate not found or profile is not public"},
                 status=status.HTTP_404_NOT_FOUND
             )
-        if hasattr(request.user, 'employer_profile'):
+        if viewed_publicly and hasattr(request.user, 'employer_profile'):
             employer = request.user.employer_profile
             viewers_list = list(candidate.viewers or [])
             if employer.id not in viewers_list:
@@ -539,3 +564,65 @@ class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
+
+class CandidateEmployerConversationListView(generics.ListAPIView):
+    """
+    List all employers that the candidate has chatted with,
+    along with employer user id, company name, industry, logo, the last message time, and the unread message count.
+    Includes total_unread_count of all conversations in the response.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = EmployerCompanyConversationSummarySerializer
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Calculate number of employers with unread messages
+        employers_with_unread = sum(1 for employer in queryset if employer.unread_count > 0)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            # Get the paginated response data
+            paginated_data = self.get_paginated_response(serializer.data).data
+            # Create a new ordered dictionary for the response
+            response_data = {
+                'count': paginated_data['count'],
+                'unread_employers_count': employers_with_unread,
+                'next': paginated_data['next'],
+                'previous': paginated_data['previous'],
+                'results': paginated_data['results']
+            }
+            return Response(response_data)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': len(serializer.data),
+            'unread_employers_count': employers_with_unread,
+            'results': serializer.data
+        })
+
+    def get_queryset(self):
+        # Subquery to get the last message time
+        latest_msg_subq = ChatMessage.objects.filter(
+            (
+                Q(sender=self.request.user, recipient=OuterRef('user')) |
+                Q(sender=OuterRef('user'), recipient=self.request.user)
+            )
+        ).order_by('-created_at').values('created_at')[:1]
+
+        # Subquery to count unread messages
+        unread_count_subq = ChatMessage.objects.filter(
+            sender=OuterRef('user'),
+            recipient=self.request.user,
+            is_read=False
+        ).values('sender').annotate(count=models.Count('id')).values('count')[:1]
+
+        qs = Employer.objects.annotate(
+            last_message_time=Subquery(latest_msg_subq),
+            unread_count=Coalesce(Subquery(unread_count_subq), 0)
+        ).filter(
+            last_message_time__isnull=False
+        ).select_related('company').order_by('-last_message_time')
+
+        return qs
