@@ -1,17 +1,14 @@
-from rest_framework import generics, status, permissions, viewsets
+from rest_framework import viewsets, generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db import models
 from .models import Employer, EmployerPreference, EmployerCompliance
-from chat.models import ChatMessage
 from .serializers import (
     EmployerSerializer, EmployerListSerializer, EmployerProfileUpdateSerializer,
-    EmployerPreferenceSerializer, EmployerComplianceSerializer ,EmployerConversationSummarySerializer
+    EmployerPreferenceSerializer, EmployerComplianceSerializer
 )
 from accounts.views import BaseRoleRegistrationView
-from candidates.models import Candidate
 
 class EmployerRegistrationView(BaseRoleRegistrationView):
     """Register a new employer user (role is forced to employer)."""
@@ -157,57 +154,4 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
     def perform_create(self, serializer):
         employer = self.request.user.employer_profile
         serializer.save(employer=employer)
-        
-class EmployerConversationListView(generics.ListAPIView):
-    """
-    Lists, for the authenticated employer, each candidate they have chatted with
-    along with candidate id, name, title, and the last message time.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = EmployerConversationSummarySerializer
 
-    def get_queryset(self):
-
-        # Subquery to get the latest message created_at between request.user and each candidate.user
-        latest_msg_subq = ChatMessage.objects.filter(
-            (
-                models.Q(sender=self.request.user, recipient=models.OuterRef('user')) |
-                models.Q(sender=models.OuterRef('user'), recipient=self.request.user)
-            )
-        ).order_by('-created_at').values('created_at')[:1]
-
-        qs = Candidate.objects.annotate(
-            last_message_time=models.Subquery(latest_msg_subq)
-        ).filter(
-            last_message_time__isnull=False
-        ).order_by('-last_message_time')
-
-        return qs
-
-
-
-# @api_view(['POST'])
-# @permission_classes([permissions.IsAuthenticated])
-# def complete_profile_section(request, section):
-#     """
-#     Mark a profile section as complete
-#     """
-#     try:
-#         employer = request.user.employer_profile
-#         section_fields = {
-#             'basic_info': 'basic_info_completed',
-#             'company_info': 'company_info_completed',
-#         }
-        
-#         if section not in section_fields:
-#             return Response({'error': 'Invalid section'}, status=status.HTTP_400_BAD_REQUEST)
-        
-#         setattr(employer, section_fields[section], True)
-#         employer.save()
-        
-#         return Response({
-#             'message': f'{section} section marked as complete',
-#             'is_profile_complete': employer.is_profile_complete
-#         }, status=status.HTTP_200_OK)
-#     except Employer.DoesNotExist:
-#         return Response({'error': 'Employer profile not found'}, status=status.HTTP_404_NOT_FOUND)
