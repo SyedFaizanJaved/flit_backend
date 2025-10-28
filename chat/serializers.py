@@ -1,6 +1,98 @@
 from rest_framework import serializers
 from .models import ChatMessage, ChatRoom, ChatRoomMessage
+from candidates.models import Candidate
 
+class EmployerConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing candidates that an employer has chatted with.
+    Shows candidate details like name, title, etc.
+    """
+    user_id = serializers.IntegerField(source='user.id')
+    full_name = serializers.SerializerMethodField()
+    title = serializers.CharField(allow_null=True)
+    last_message_time = serializers.DateTimeField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Candidate
+        fields = ('user_id', 'full_name', 'title', 'last_message_time', 'unread_count')
+    
+    def get_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}"
+
+
+
+class CandidateConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing candidates that an employer has chatted with.
+    Used on the employer side to list candidates they have chatted with.
+    Shows candidate details like name, title, etc.
+    """
+    id = serializers.IntegerField(source='id', read_only=True)
+    name = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    profile_picture = serializers.SerializerMethodField()
+    last_seen = serializers.DateTimeField(source='last_login', read_only=True)
+    last_message_time = serializers.DateTimeField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        from django.contrib.auth import get_user_model
+        model = get_user_model()
+        fields = (
+            'id', 'name', 'title', 'profile_picture', 
+            'last_seen', 'last_message_time', 'unread_count'
+        )
+    
+    def get_candidate_info(self, obj):
+        """Helper method to get candidate info"""
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(user=obj)
+            return {
+                'name': f"{candidate.user.first_name} {candidate.user.last_name}",
+                'title': candidate.title,
+                'profile_picture': candidate.profile_picture.url if candidate.profile_picture else None
+            }
+        except Candidate.DoesNotExist:
+            return {
+                'name': f"{obj.first_name} {obj.last_name}" if obj.first_name or obj.last_name else obj.email,
+                'title': 'No title',
+                'profile_picture': None
+            }
+    
+    def get_name(self, obj):
+        return self.get_candidate_info(obj)['name']
+    
+    def get_title(self, obj):
+        return self.get_candidate_info(obj)['title']
+    
+    def get_profile_picture(self, obj):
+        return self.get_candidate_info(obj)['profile_picture']
+
+
+class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer used on the candidate side to list employers they have chatted with,
+    returning employer's user id, the associated company details, and unread message count.
+    """
+    id = serializers.IntegerField(source='user.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    industry = serializers.CharField(source='company.industry', read_only=True)
+    logo = serializers.SerializerMethodField()
+    last_message_time = serializers.DateTimeField(read_only=True)
+    last_seen = serializers.DateTimeField(source='user.last_login', read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        from employers.models import Employer
+        model = Employer
+        fields = ('id', 'company_name', 'industry', 'logo', 'last_message_time', 'last_seen', 'unread_count')
+    
+    def get_logo(self, obj):
+        if obj.company and obj.company.logo:
+            return self.context['request'].build_absolute_uri(obj.company.logo.url)
+        return None
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     """

@@ -136,14 +136,14 @@ class EmployerComplianceSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
-    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    id = serializers.IntegerField(source='user.id', read_only=True)
     last_message_time = serializers.DateTimeField(read_only=True)
     unread_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         from candidates.models import Candidate
         model = Candidate
-        fields = ('user_id', 'full_name', 'title', 'last_message_time', 'unread_count')
+        fields = ('id', 'title', 'last_message_time', 'unread_count')
     
 class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
     """
