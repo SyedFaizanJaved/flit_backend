@@ -240,7 +240,7 @@ class CandidateViewSet(viewsets.ViewSet):
             pass
         if request.FILES.get('video_file'):
             try:
-                transcribe_url = getattr(settings, 'ML_TRANSCRIBE_VIDEO_URL', 'https://dev-flit-ai.neurooceans.com/transcribe_video')
+                analyze_url = 'https://dev-flit-ai.neurooceans.com/analyze_intro_video'
                 headers = {}
                 api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
                 if api_key:
@@ -250,19 +250,15 @@ class CandidateViewSet(viewsets.ViewSet):
                 files = {
                     'video_file': (video_file.name, video_content, video_file.content_type)
                 }
-                data = {
+                data_payload = {
                     'user_id': str(getattr(request.user, 'id', '')),
-                    'transcription_only': 'true',
                     'video_url': request.build_absolute_uri(candidate.video_intro_url)
                 }
-                resp = requests.post(transcribe_url, files=files, data=data, headers=headers, timeout=60)
+                resp = requests.post(analyze_url, files=files, data=data_payload, headers=headers, timeout=60)
                 if resp and resp.ok:
                     resp_json = resp.json()
-                    transcription = None
-                    if isinstance(resp_json.get('transcription'), str):
-                        transcription = resp_json.get('transcription')
-                    elif isinstance(resp_json.get('text'), str):
-                        transcription = resp_json.get('text')
+                    analysis = resp_json.get('analysis', {})
+                    transcription = analysis.get('video_transcript')
                     if transcription:
                         update_fields = ['updated_at', 'video_transcription']
                         candidate.video_transcription = transcription
@@ -270,7 +266,7 @@ class CandidateViewSet(viewsets.ViewSet):
                         update_fields.append('intro_video_description')
                         candidate.save(update_fields=update_fields)
             except Exception as e:
-                print(f"Unexpected error during transcription: {str(e)}")
+                print(f"Unexpected error during video analysis: {str(e)}")
         data = CandidateSerializer(candidate).data
         return Response(data, status=status.HTTP_200_OK)
 
@@ -459,57 +455,6 @@ class WorkDNAView(APIView):
         except Candidate.DoesNotExist:
             return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    def get(self, request):
-        try:
-            obj = request.user.candidate_profile.work_dna
-        except WorkDNA.DoesNotExist:
-            return Response({}, status=status.HTTP_200_OK)
-
-        serializer = WorkDNASerializer(obj)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def post(self, request):
-        # Upsert: create if missing, otherwise partial update
-        try:
-            candidate = request.user.candidate_profile
-        except Candidate.DoesNotExist:
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            obj = candidate.work_dna
-        except WorkDNA.DoesNotExist:
-            obj = None
-
-        if obj is None:
-            serializer = WorkDNASerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save(candidate=candidate)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        else:
-            serializer = WorkDNASerializer(obj, data=request.data, partial=True, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def patch(self, request):
-        # Upsert on PATCH as well
-        try:
-            candidate = request.user.candidate_profile
-        except Candidate.DoesNotExist:
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            obj = candidate.work_dna
-        except WorkDNA.DoesNotExist:
-            return Response({}, status=status.HTTP_200_OK)
-        serializer = WorkDNASerializer(obj)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def patch(self, request):
-        try:
-            candidate = request.user.candidate_profile
-        except Candidate.DoesNotExist:
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
         try:
             obj = candidate.work_dna
         except WorkDNA.DoesNotExist:
@@ -585,6 +530,3 @@ class ReferenceRequestListView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         candidate = self.request.user.candidate_profile
         serializer.save(candidate=candidate)
-
-    def get_queryset(self):
-        return ReferenceRequest.objects.filter(candidate__user=self.request.user)

@@ -40,11 +40,21 @@ class VerifyReferenceTokenView(APIView):
         
         if not token:
             return Response(
-                {'error': 'Token is required'}, 
+                {'status': 'error', 'message': 'Token is required'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         try:
+            # First check if token is in valid UUID format
+            try:
+                from uuid import UUID
+                UUID(token)
+            except ValueError:
+                return Response(
+                    {'status': 'error', 'message': 'Invalid token format'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
             ref_request = ReferenceRequest.objects.get(
                 token=token,
                 status='pending',
@@ -52,14 +62,31 @@ class VerifyReferenceTokenView(APIView):
             )
             
             return Response({
-                'status': 'valid',
-                'request': ReferenceRequestSerializer(ref_request).data
+                'status': 'success',
+                'message': 'Token is valid',
+                'data': ReferenceRequestSerializer(ref_request).data
             })
             
         except ReferenceRequest.DoesNotExist:
+            logger.warning(f'Invalid or expired token attempt: {token}')
             return Response(
-                {'status': 'invalid', 'error': 'Invalid or expired token'}, 
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    'status': 'error',
+                    'message': 'Invalid or expired token',
+                    'code': 'invalid_token'
+                }, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f'Error verifying token {token}: {str(e)}', exc_info=True)
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'An error occurred while verifying the token',
+                    'code': 'server_error'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -144,13 +171,13 @@ def send_reference_request_email(ref_request, request):
     Send reference request email with accept/deny buttons
     """
     try:
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://main.drduz4mpczn3l.amplifyapp.com/reference-response')
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://dev.flit.works/reference-response')
         backend_url = request.build_absolute_uri('/')[:-1]  # Get current backend URL
         
-        logo_url = 'https://main.drduz4mpczn3l.amplifyapp.com/flit_icon.png'  # Integrated the provided logo URL
+        logo_url = 'https://dev.flit.works/flit_icon.png'  # Integrated the provided logo URL
         
-        accept_url = f"{frontend_url}?id={ref_request.id}&token={ref_request.token}&action=accept"
-        deny_url = f"{frontend_url}?id={ref_request.id}&token={ref_request.token}&action=deny"  # Updated to include reference ID and token
+        accept_url = f"{frontend_url}?&token={ref_request.token}&action=accept"
+        deny_url = f"{frontend_url}?&token={ref_request.token}&action=deny"  
         
         subject = f"Reference Request from {ref_request.candidate.full_name}"
         
@@ -272,7 +299,7 @@ def send_reference_request_email(ref_request, request):
                     border: 1px solid #e0e6ed;
                 }}
                 .button-container {{
-                    margin: 40px 40px;
+                    margin: 40px 100px;
                     text-align: center;
                     display: flex;
                     justify-content: center;
@@ -282,14 +309,14 @@ def send_reference_request_email(ref_request, request):
                 }}
                 .button {{
                     display: inline-block;
-                    padding: 15px 35px;
+                    padding: 10px 20px;
                     text-decoration: none;
                     border-radius: 50px;
                     font-weight: bold;
                     color: white !important;
                     text-align: center;
                     cursor: pointer;
-                    font-size: 16px;
+                    font-size: 12px;
                     transition: transform 0.2s ease, box-shadow 0.2s ease;
                     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
                     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -302,11 +329,17 @@ def send_reference_request_email(ref_request, request):
                 .button-accept {{
                     background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
                     color: white !important;
+                    white-space: nowrap;
+                    padding: 10px 20px;
+
                 }}
                 .button-deny {{
                     background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
                     color: white !important;
                     margin-left: 20px;
+                    white-space: nowrap;
+                    padding: 10px 20px;
+
                 }}
                 .expiry-note {{
                     background-color: #fff3cd;
