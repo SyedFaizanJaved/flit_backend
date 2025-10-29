@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -239,12 +240,34 @@ class ReferenceRequest(models.Model):
     suggested_relationship = models.CharField(max_length=20, choices=RELATIONSHIP_TYPE_CHOICES, blank=True, null=True)
     suggested_company = models.CharField(max_length=200, blank=True, null=True)
     request_message = models.TextField(blank=True, null=True)
+    reply_message = models.TextField(blank=True, null=True, verbose_name='Reference Response')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        db_index=True,
+    ) 
     expires_at = models.DateTimeField(blank=True, null=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def save(self, *args, **kwargs):
+        # Ensure token is set and unique
+        if not self.token:
+            self.token = uuid.uuid4()
+            while ReferenceRequest.objects.filter(token=self.token).exists():
+                self.token = uuid.uuid4()
+        
+        # Set expiry to 30 days from creation if not set
+        if not self.expires_at and not self.pk:
+            from django.utils import timezone
+            from datetime import timedelta
+            self.expires_at = timezone.now() + timedelta(days=30)
+            
+        super().save(*args, **kwargs)
     
     class Meta:
         db_table = 'candidate_reference_requests'
@@ -253,7 +276,9 @@ class ReferenceRequest(models.Model):
     
     def __str__(self):
         return f"Reference request to {self.reference_name} from {self.candidate.full_name}"
-
+        
+    def __str__(self):
+        return f"Ref Request - {self.token}"
 
 class Education(models.Model):
     """

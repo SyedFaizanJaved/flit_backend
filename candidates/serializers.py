@@ -167,14 +167,25 @@ class ReferenceRequestSerializer(serializers.ModelSerializer):
     """
     Serializer for reference requests
     """
+    token = serializers.UUIDField(read_only=True)
+    user_id = serializers.SerializerMethodField()
+    
     class Meta:
         model = ReferenceRequest
-        fields = '__all__'
-        read_only_fields = ('candidate', 'created_at', 'updated_at', 'status')
+        fields = [
+            'id', 'token', 'reference_email', 'reference_name', 'suggested_relationship',
+            'suggested_company', 'request_message', 'reply_message', 'status',
+            'expires_at', 'created_at', 'updated_at', 'candidate', 'user_id'
+        ]
+        read_only_fields = ('candidate', 'created_at', 'updated_at', 'token', 'user_id')
+    
+    def get_user_id(self, obj):
+        """Return the user ID associated with the candidate"""
+        return obj.candidate.user.id if obj.candidate and hasattr(obj.candidate, 'user') else None
     
     def validate_reference_email(self, value):
         """
-        Validate that the reference email exists in the system and doesn't belong to an employer
+        Validate that the reference email doesn't belong to an employer
         """
         from django.contrib.auth import get_user_model
         
@@ -188,21 +199,72 @@ class ReferenceRequestSerializer(serializers.ModelSerializer):
             if hasattr(user, 'employer_profile'):
                 raise serializers.ValidationError("Reference requests cannot be sent to employers.")
                 
-            # Check if user has a candidate profile (optional, remove if not needed)
-            if not hasattr(user, 'candidate_profile'):
-                raise serializers.ValidationError("This user is not registered as a candidate.")
-                
         except User.DoesNotExist:
-            raise serializers.ValidationError("No user found with this email address.")
+            # Allow sending to emails not in the system
+            pass
             
         return value
     
     def create(self, validated_data):
-        # Set status to pending by default
-        validated_data['status'] = 'pending'
-        validated_data['candidate'] = self.context['request'].user.candidate_profile
-        return super().create(validated_data)
-
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
+            validated_data['candidate'] = request.user.candidate_profile
+        
+        ref_request = super().create(validated_data)
+        
+        # Send reference request email
+        from .views_reference import send_reference_request_email
+        send_reference_request_email(ref_request, request)
+        
+        ref_request.status = 'pending'
+        ref_request.save()
+        return ref_request
+    """
+    Serializer for reference requests
+    """
+    token = serializers.UUIDField(read_only=True)
+    
+    class Meta:
+        model = ReferenceRequest
+        fields = '__all__'
+        read_only_fields = ('candidate', 'created_at', 'updated_at', 'status', 'token')
+    
+    def validate_reference_email(self, value):
+        """
+        Validate that the reference email doesn't belong to an employer
+        """
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        
+        # Check if user with this email exists
+        try:
+            user = User.objects.get(email=value)
+            
+            # Check if the user is an employer
+            if hasattr(user, 'employer_profile'):
+                raise serializers.ValidationError("Reference requests cannot be sent to employers.")
+                
+        except User.DoesNotExist:
+            # Allow sending to emails not in the system
+            pass
+            
+        return value
+    
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
+            validated_data['candidate'] = request.user.candidate_profile
+        
+        ref_request = super().create(validated_data)
+        
+        # Send reference request email
+        from .views_reference import send_reference_request_email
+        send_reference_request_email(ref_request, request)
+        
+        ref_request.status = 'pending'
+        ref_request.save()
+        return ref_request
 
 class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """

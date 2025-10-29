@@ -1,6 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from .views_reference import (
+    VerifyReferenceTokenView, 
+    ReferenceResponseView,
+    ReferenceResponsesView
+)
 
 router = DefaultRouter()
 router.register(r'', views.CandidateViewSet, basename='candidates')
@@ -16,6 +21,11 @@ urlpatterns = [
     # Reference Requests
     path('reference-requests/', views.ReferenceRequestListView.as_view(), name='reference-request-list'),
     path('reference-requests/<int:pk>/', views.ReferenceRequestDetailView.as_view(), name='reference-request-detail'),
+    # Reference verification and response
+    path('verify-reference-token/', VerifyReferenceTokenView.as_view(), name='verify-reference-token'),
+    path('respond-to-reference/', ReferenceResponseView.as_view(), name='respond-to-reference'),
+    path('reference-responses/', ReferenceResponsesView.as_view(), name='reference-responses'),
+   
     # Router-based endpoints for list/profile/dashboard/complete-section
     path('', include(router.urls)),
 ]
