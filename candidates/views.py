@@ -545,22 +545,46 @@ class ReferenceDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return Reference.objects.filter(candidate__user=self.request.user)
 
+
+class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Reference request detail view.
+    - GET: Public access to view reference request details
+    - Other methods (PUT, PATCH, DELETE): Require authentication
+    """
+    serializer_class = ReferenceRequestSerializer
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.request.method == 'GET':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+    def get_queryset(self):
+        if self.request.method == 'GET':
+            return ReferenceRequest.objects.all()
+        return ReferenceRequest.objects.filter(candidate__user=self.request.user)
+    
 class ReferenceRequestListView(generics.ListCreateAPIView):
     """Reference request list and create view."""
     serializer_class = ReferenceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # Disable pagination
 
     def get_queryset(self):
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': queryset.count(),
+            'results': serializer.data
+        })
+
     def perform_create(self, serializer):
         candidate = self.request.user.candidate_profile
         serializer.save(candidate=candidate)
-
-class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Reference request detail view."""
-    serializer_class = ReferenceRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
