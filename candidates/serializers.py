@@ -5,22 +5,54 @@ from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
 
 
+
+class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
+    """
+    Serializer for reference request responses (used in candidate profile)
+    """
+    class Meta:
+        model = ReferenceRequest
+        fields = [
+            'id',
+            'reference_name',
+            'reference_email',
+            'suggested_relationship',
+            'reply_message'
+        ]
+        read_only_fields = fields
+
 class CandidateSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     viewers_count = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
+    reference_responses = serializers.SerializerMethodField()
+    passion_projects = serializers.SerializerMethodField()
     
     class Meta:
         model = Candidate
-        fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
-            "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
-             "video_transcription", "privacy_completed","location","created_at","updated_at","user",
-            "profile_image","resume_url","profile_views","viewers_count","profile_views_display"
-        )
+        fields = [
+            "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
+            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
+            "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
+            "profile_image", "resume_url", "profile_views", "viewers_count", "profile_views_display",
+            "passion_projects","reference_responses"     
+        ]
         read_only_fields = ("user", "created_at", "updated_at")
-
+    
+    def get_passion_projects(self, obj):
+        return obj.passion_projects
+    
+    def get_reference_responses(self, obj):
+        # Get all accepted reference requests with reply messages
+        references = ReferenceRequest.objects.filter(
+            candidate=obj,
+            status='accepted',
+            reply_message__isnull=False
+        ).order_by('-updated_at')
+        return ReferenceRequestResponseSerializer(references, many=True).data
+    
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         instance = super().create(validated_data)
@@ -110,7 +142,7 @@ class CandidateListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Candidate
-        fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 
+        fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 'passion_projects',
                  'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at', 'profile_views_display')
     
     def get_profile_completed(self, obj):
