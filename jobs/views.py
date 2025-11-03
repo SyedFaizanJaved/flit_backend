@@ -1,6 +1,7 @@
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework import viewsets, status, permissions, mixins, authentication
+from rest_framework.decorators import action, authentication_classes, permission_classes
 from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import Job, JobSkill, JobLanguage
@@ -8,7 +9,36 @@ from .serializers import (
     JobSerializer, JobListSerializer, JobCreateSerializer, JobUpdateSerializer,
     JobSkillSerializer, JobLanguageSerializer
 )
+from companies.models import Company
 from accounts.permissions import IsEmployer
+
+
+
+class PublicAuthentication(authentication.BaseAuthentication):
+    """
+    Authentication class that allows any request (public access).
+    """
+    def authenticate(self, request):
+        return None  
+
+@authentication_classes([]) 
+@permission_classes([permissions.AllowAny])  # Anyone can access
+class PublicJobViewSet(mixins.ListModelMixin,
+                      mixins.RetrieveModelMixin,
+                      GenericViewSet):
+    """
+    Public API: Anyone can see active jobs
+    """
+    queryset = Job.objects.all()
+    serializer_class = JobListSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
+    search_fields = ['title', 'description', 'company__company_name']
+    ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
+    ordering = ['-created_at']
+    pagination_class = None  # Disable pagination to show all jobs on one page
+
 
 class JobViewSet(viewsets.ModelViewSet):
     queryset = Job.objects.all()
@@ -20,19 +50,78 @@ class JobViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        """
+        Filter jobs based on the current user and request context.
+        For employer users, only show jobs from their company by default.
+        """
+        queryset = super().get_queryset()
+        
+        # For list action, only show active jobs
         if self.action == 'list':
-            return qs.filter(status='active')
+            queryset = queryset.filter(status='active')
+            
+        # For employer users, filter by their company
+        if hasattr(self.request.user, 'employer_profile'):
+            queryset = queryset.filter(company=self.request.user.employer_profile.company)
+        
+        # For owner-scoped actions, filter by the employer
         owner_scoped_actions = {
             'update', 'partial_update', 'destroy',
             'skills', 'languages', 'applications', 'update_status',
             'shortlist_application', 'reject_application'
         }
         if getattr(self, 'action', None) in owner_scoped_actions:
-            return qs.filter(employer=self.request.user)
-        if self.action == 'retrieve':
-            return qs
-        return qs
+            queryset = queryset.filter(employer=self.request.user)
+            
+        # Allow explicit company filtering via query params
+        company_id = self.request.query_params.get('company_id')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+            
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def my_jobs(self, request):
+        """
+        Get jobs posted by the current user's company.
+        """
+        # Get the company ID from query params if provided
+        company_id = request.query_params.get('company_id')
+        
+        if company_id:
+            # If company_id is provided, verify the user has access to this company
+            from companies.models import Company
+            try:
+                company = Company.objects.get(id=company_id)
+                if not (request.user.is_staff or company.employers.filter(user=request.user).exists()):
+                    return Response(
+                        {'error': 'You do not have permission to view jobs for this company'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                queryset = self.filter_queryset(Job.objects.filter(company_id=company_id))
+            except Company.DoesNotExist:
+                return Response(
+                    {'error': 'Company not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # If no company_id provided, get all companies the user has access to
+          
+            user_companies = Company.objects.filter(employers__user=request.user)
+            if not user_companies.exists():
+                return Response([], status=status.HTTP_200_OK)
+                
+            queryset = self.filter_queryset(Job.objects.filter(company__in=user_companies))
+        
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = JobListSerializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = JobListSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
 
     def get_serializer_class(self):
         if self.action == 'list':

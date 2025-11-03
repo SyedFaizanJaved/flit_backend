@@ -222,7 +222,7 @@ class JobApplicationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'job_title', 'company_name', 'status',
-                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
+                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected', 'coverLetter')
 
 
 class ProjectApplicationListSerializer(serializers.ModelSerializer):
@@ -239,4 +239,4 @@ class ProjectApplicationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'project_title', 'company_name', 'status',
-                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
+                  'coverLetter', 'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')

@@ -203,6 +203,12 @@ def user_dashboard(request):
         'user': UserProfileSerializer(user).data,
         'profile_completed': user.profile_completed,
         'role': getattr(getattr(user, 'role', None), 'name', None),
+        'totals': {
+            'jobs': Job.objects.count(),
+            'projects': Project.objects.count(),
+            'active_jobs': Job.objects.filter(status='active').count(),
+            'active_projects': Project.objects.filter(status='active').count(),
+        }
     }
     
     # Add role-specific data
@@ -292,7 +298,10 @@ def password_reset_confirm(request):
 def roles_list(request):
     """
     Public endpoint to list available roles for registration selector.
+    Only returns 'candidate' and 'employer' roles.
     Returns: [{id, name, description}]
     """
-    roles = list(Role.objects.all().values('id', 'name', 'description'))
+    roles = list(Role.objects.filter(
+        name__in=['candidate', 'employer']
+    ).values('id', 'name', 'description'))
     return Response({'results': roles}, status=status.HTTP_200_OK)

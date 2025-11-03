@@ -76,6 +76,11 @@ class Candidate(models.Model):
     skills_completed = models.BooleanField(default=False)
     portfolio_completed = models.BooleanField(default=False)
     privacy_completed = models.BooleanField(default=False)
+
+    # Ml Endpoints
+    candidate_tags = models.JSONField(default=list)  # List of tags for categorization
+    candidate_index_id = models.CharField(max_length=200, blank=True, null=True)  # ID in vector DB for candidate
+    candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
