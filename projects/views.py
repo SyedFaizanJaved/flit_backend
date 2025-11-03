@@ -1,14 +1,43 @@
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework import viewsets, status, permissions, mixins, authentication
+from rest_framework.decorators import action, authentication_classes
 from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
     ProjectSkillSerializer, ProjectMilestoneSerializer
 )
 from accounts.permissions import IsEmployer
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+
+class PublicAuthentication(authentication.BaseAuthentication):
+    """
+    Authentication class that allows any request (public access).
+    """
+    def authenticate(self, request):
+        return None  # Always return None to indicate no authentication needed
+
+
+@authentication_classes([PublicAuthentication])
+class PublicProjectViewSet(mixins.ListModelMixin,
+                         mixins.RetrieveModelMixin,
+                         GenericViewSet):
+    """
+    Public API endpoint that allows viewing projects without authentication.
+    """
+    queryset = Project.objects.all()
+    serializer_class = ProjectListSerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = [PublicAuthentication]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['category', 'paymentType', 'company']
+    search_fields = ['title', 'description', 'company__company_name']
+    ordering = ['-created_at']
+    pagination_class = None  # Disable pagination to show all projects on one page
+
+
 
 class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all()
@@ -21,8 +50,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        # For employer users, only show their company's projects
+        if hasattr(self.request.user, 'employer_profile'):
+            qs = qs.filter(company=self.request.user.employer_profile.company)
+        # Filter active projects for list view
         if self.action == 'list':
-            return qs.filter(status='active')
+            qs = qs.filter(status='active')
         return qs
 
     def get_serializer_class(self):

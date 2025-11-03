@@ -1,5 +1,44 @@
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 from .models import Employer, EmployerPreference, EmployerCompliance
+
+User = get_user_model()
+
+
+class EmployerRegistrationSerializer(serializers.ModelSerializer):
+    """Serializer for employer registration"""
+    email = serializers.EmailField(write_only=True)
+    password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    first_name = serializers.CharField(required=True)
+    last_name = serializers.CharField(required=True)
+    
+    class Meta:
+        model = User
+        fields = ('email', 'password', 'first_name', 'last_name')
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'first_name': {'required': True},
+            'last_name': {'required': True}
+        }
+    
+    def create(self, validated_data):
+        # Create user
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            password=validated_data['password'],
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name'],
+            is_employer=True
+        )
+        
+        # Create employer profile
+        Employer.objects.create(
+            user=user,
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name']
+        )
+        
+        return user
 
 
 class EmployerSerializer(serializers.ModelSerializer):

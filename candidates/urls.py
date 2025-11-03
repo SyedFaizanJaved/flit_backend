@@ -10,7 +10,17 @@ from .views_reference import (
 router = DefaultRouter()
 router.register(r'', views.CandidateViewSet, basename='candidates')
 
+# Dashboard endpoints
 urlpatterns = [
+    # Legacy dashboard (all-in-one)
+    path('dashboard/', views.CandidateDashboardView.as_view(), name='candidate-dashboard'),
+    
+    # New separated dashboard endpoints
+    path('dashboard/profile/', views.CandidateProfileDashboardView.as_view(), name='candidate-profile-dashboard'),
+    path('dashboard/applications/', views.CandidateApplicationsView.as_view(), name='candidate-applications'),
+    path('dashboard/latest-jobs/', views.CandidateLatestJobsView.as_view(), name='candidate-latest-jobs'),
+    path('dashboard/latest-projects/', views.CandidateLatestProjectsView.as_view(), name='candidate-latest-projects'),
+    
     # Registration
     path('register/', views.CandidateRegistrationView.as_view(), name='candidate-register'),
     # Work DNA (kept as-is)

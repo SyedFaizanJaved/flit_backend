@@ -8,15 +8,18 @@ from django.db import models
 from django.db.models import Case, Q, When, F, OuterRef, Subquery, Count
 from django.db.models.functions import Coalesce
 from django.utils.text import get_valid_filename
-from rest_framework import generics, permissions, status, viewsets
-from rest_framework.views import APIView
+from applications.models import JobApplication as Application
+from rest_framework import status, permissions, viewsets, filters, mixins, generics
 from rest_framework.decorators import action
+from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.views import APIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from accounts.views import BaseRoleRegistrationView
 from jobs.models import Job
+from .models import Reference, ReferenceRequest
 from jobs.serializers import JobListSerializer
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
@@ -34,15 +37,303 @@ from .serializers import (
 )
 from employers.serializers import EmployerCompanyConversationSummarySerializer
 from chat.models import ChatMessage
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.generics import ListAPIView
+from jobs.models import Job
+from projects.models import Project
+from jobs.serializers import JobListSerializer
+from projects.serializers import ProjectListSerializer
+from django.urls import reverse
+from django.http import JsonResponse
+import requests
+from rest_framework.reverse import reverse as drf_reverse
+
+
+class PublicProjectListAPIView(ListAPIView):
+    """
+    Public API endpoint for listing all active projects
+    No authentication required
+    """
+    queryset = Project.objects.filter(status='active')
+    serializer_class = ProjectListSerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = PageNumberPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ['title', 'description']
+    ordering_fields = ['created_at', 'budget', 'deadline']
+    filterset_fields = {
+        'project_type': ['exact'],
+        'complexity': ['exact'],
+        'work_style': ['exact'],
+        'collaboration_style': ['exact'],
+    }
+
+
+class PublicJobListAPIView(ListAPIView):
+    """
+    Public API endpoint for listing all active jobs
+    No authentication required
+    """
+    queryset = Job.objects.filter(status='active')
+    serializer_class = JobListSerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = PageNumberPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ['title', 'description', 'company__name']
+    ordering_fields = ['created_at', 'salary_min', 'salary_max', 'application_deadline']
+    filterset_fields = {
+        'job_type': ['exact'],
+        'work_style': ['exact'],
+        'education_level': ['exact'],
+        'is_remote': ['exact'],
+    }
+
 
 class CandidateRegistrationView(BaseRoleRegistrationView):
     """Register a new candidate user (role is forced to candidate)."""
     fixed_user_type = "candidate"
 
-class CandidateViewSet(viewsets.ViewSet):
-    """ViewSet consolidating candidate endpoints (list, profile, dashboard)."""
+class DashboardBaseView(APIView):
+    """Base view for dashboard endpoints with common functionality."""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_candidate_profile(self, user):
+        try:
+            return user.candidate_profile
+        except Candidate.DoesNotExist:
+            raise Http404('Candidate profile not found')
+
+
+class CandidateDashboardView(DashboardBaseView):
+    """Legacy dashboard endpoint that combines all dashboard data."""
+    def get(self, request):
+        # This is the original dashboard endpoint that combines all data
+        # It's kept for backward compatibility but can be deprecated later
+  
+        base_url = request.build_absolute_uri('/')
+        
+        # Get profile data
+        profile_url = base_url.rstrip('/') + drf_reverse('candidate-profile-dashboard')
+        profile_response = requests.get(
+            profile_url,
+            headers={'Authorization': request.META.get('HTTP_AUTHORIZATION', '')}
+        )
+        
+        if profile_response.status_code != 200:
+            return Response(
+                {'error': 'Could not fetch profile data'}, 
+                status=profile_response.status_code
+            )
+            
+        response_data = profile_response.json()
+        
+        # Add other dashboard data
+        endpoints = [
+            ('applications', 'candidate-applications'),
+            ('latest_jobs', 'candidate-latest-jobs'),
+            ('latest_projects', 'candidate-latest-projects')
+        ]
+        
+        for key, url_name in endpoints:
+            endpoint_url = base_url.rstrip('/') + drf_reverse(url_name)
+            endpoint_response = requests.get(
+                endpoint_url,
+                headers={'Authorization': request.META.get('HTTP_AUTHORIZATION', '')}
+            )
+            
+            if endpoint_response.status_code == 200:
+                response_data.update(endpoint_response.json())
+        
+        return Response(response_data)
+
+
+class CandidateProfileDashboardView(DashboardBaseView):
+    """Endpoint for candidate profile data in dashboard."""
+    def get(self, request):
+        candidate = self.get_candidate_profile(request.user)
+        serializer = CandidateSerializer(candidate, context={'request': request})
+        
+        # Get counts for dashboard
+        applications_count = Application.objects.filter(
+            candidate=candidate, 
+            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
+        ).count()
+        
+        job_applications_count = Application.objects.filter(
+            candidate=candidate,
+            job__isnull=False,
+            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
+        ).count()
+        
+        project_applications_count = applications_count - job_applications_count
+        
+        references_count = Reference.objects.filter(
+            candidate=candidate,
+            is_public=True
+        ).count()
+        
+        reference_requests_count = ReferenceRequest.objects.filter(
+            candidate=candidate
+        ).count()
+        
+        return Response({
+            'profile': serializer.data,
+            'profile_completed': candidate.is_profile_complete,
+            'applications_count': applications_count,
+            'job_applications_count': job_applications_count,
+            'project_applications_count': project_applications_count,
+            'references_count': references_count,
+            'reference_requests_count': reference_requests_count,
+        })
+
+
+class CandidateApplicationsView(DashboardBaseView):
+    """Endpoint for candidate's recent applications."""
+    def get(self, request):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            candidate = self.get_candidate_profile(request.user)
+            
+            # Get job applications
+            job_applications = list(Application.objects.filter(
+                candidate=candidate
+            ).select_related('job', 'job__company').order_by('-applied_at'))
+            
+            # Get project applications
+            from applications.models import ProjectApplication
+            project_applications = list(ProjectApplication.objects.filter(
+                candidate=candidate
+            ).select_related('project', 'project__company').order_by('-applied_at'))
+            
+            # Log counts for debugging
+            logger.info(f"Found {len(job_applications)} job applications and {len(project_applications)} project applications")
+            
+            # Combine and sort all applications by applied_at
+            all_applications = []
+            
+            for app in job_applications:
+                all_applications.append({
+                    'type': 'job',
+                    'object': app,
+                    'applied_at': app.applied_at
+                })
+                
+            for app in project_applications:
+                all_applications.append({
+                    'type': 'project',
+                    'object': app,
+                    'applied_at': app.applied_at
+                })
+            
+            # Sort by applied_at in descending order
+            all_applications.sort(key=lambda x: x['applied_at'], reverse=True)
+            
+            # Take the 5 most recent applications
+            recent_applications = all_applications[:5]
+            
+            # Prepare response data
+            applications_data = []
+            for app in recent_applications:
+                app_obj = app['object']
+                if app['type'] == 'job':
+                    applications_data.append({
+                        'id': app_obj.id,
+                        'title': app_obj.job.title if hasattr(app_obj, 'job') and app_obj.job else 'Unknown Job',
+                        'company': app_obj.job.company.name if hasattr(app_obj, 'job') and hasattr(app_obj.job, 'company') and app_obj.job.company else 'Unknown Company',
+                        'status': app_obj.status,
+                        'applied_at': app_obj.applied_at,
+                        'type': 'job'
+                    })
+                else:  # project application
+                    applications_data.append({
+                        'id': app_obj.id,
+                        'title': app_obj.project.title if hasattr(app_obj, 'project') and app_obj.project else 'Unknown Project',
+                        'company': app_obj.project.company.name if hasattr(app_obj, 'project') and hasattr(app_obj.project, 'company') and app_obj.project.company else 'Unknown Company',
+                        'status': app_obj.status,
+                        'applied_at': app_obj.applied_at,
+                        'type': 'project'
+                    })
+            
+            return Response({
+                'recent_applications': applications_data,
+                'total_applications': len(job_applications) + len(project_applications),
+                'job_applications_count': len(job_applications),
+                'project_applications_count': len(project_applications)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error fetching applications: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'An error occurred while fetching applications'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+
+
+class CandidateLatestJobsView(DashboardBaseView):
+    """Endpoint for latest jobs relevant to candidate."""
+    def get(self, request):
+        candidate = self.get_candidate_profile(request.user)
+        
+        # Get candidate's skills for filtering
+        candidate_skills = candidate.skills or []
+        
+        # Get latest active jobs, ordered by creation date
+        latest_jobs = Job.objects.filter(
+            status='active'
+        ).select_related('company').order_by('-created_at')[:10]
+        
+        # Serialize the jobs
+        job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
+        
+        return Response({
+            'latest_jobs': job_serializer.data
+        })
+
+
+class CandidateLatestProjectsView(DashboardBaseView):
+    """Endpoint for latest projects relevant to candidate."""
+    def get(self, request):
+        candidate = self.get_candidate_profile(request.user)
+        
+        # Get candidate's skills for filtering
+        candidate_skills = candidate.skills or []
+        
+        # Get latest active projects, ordered by creation date
+        latest_projects = Project.objects.filter(
+            status='active'
+        ).select_related('company').order_by('-created_at')[:10]
+        
+        # Serialize the projects
+        project_serializer = ProjectListSerializer(latest_projects, many=True, context={'request': request})
+        
+        return Response({
+            'latest_projects': project_serializer.data
+        })
+
+
+class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
+    """
+    ViewSet for candidate endpoints.
+    """
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     permission_classes = [permissions.AllowAny]
+    pagination_class = PageNumberPagination
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+    
+    def get_paginated_response(self, data):
+        response = super().get_paginated_response(data)
+        # Add our custom response data to the paginated response
+        response.data.update({
+            'total_companies': self.queryset.count() if hasattr(self, 'queryset') else 0,
+            'total_jobs': Job.objects.count(),
+            'total_projects': Project.objects.count(),
+        })
+        return response
 
     def _get_candidate_profile(self, user):
         try:
@@ -288,7 +579,7 @@ class CandidateViewSet(viewsets.ViewSet):
         ml_resp = {}
         matched_qs = Candidate.objects.none()
         try:
-            ml_service_url = 'https://dev-flit-ai.neurooceans.com/match_candidates_for_job'
+            ml_service_url = 'https://dev-flit-ai.neurooceans.com/get_candidates_for_job'
             headers = {'Content-Type': 'application/json'}
             response = requests.post(ml_service_url, data=json.dumps(payload), headers=headers)
             ml_resp = response.json()
