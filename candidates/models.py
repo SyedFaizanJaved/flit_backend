@@ -78,7 +78,7 @@ class Candidate(models.Model):
     privacy_completed = models.BooleanField(default=False)
 
     # Ml Endpoints
-    candidate_tags = models.JSONField(default=list)  # List of tags for categorization
+    candidate_tags = models.JSONField(default=list,blank=True, null=True)  # List of tags for categorization
     candidate_index_id = models.CharField(max_length=200, blank=True, null=True)  # ID in vector DB for candidate
     candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
     
