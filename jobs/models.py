@@ -122,7 +122,7 @@ class Job(models.Model):
     hired_count = models.PositiveIntegerField(default=0)
 
     # Ml Endpoints
-    job_tags = models.JSONField(default=list)  # List of tags for categorization
+    job_tags = models.JSONField(default=list, blank=True, null=True)  # List of tags for categorization
     job_index_id = models.CharField(max_length=200, blank=True, null=True)  # ID in vector DB for candidate
     job_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate prjob
 
