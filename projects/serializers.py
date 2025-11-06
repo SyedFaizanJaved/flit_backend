@@ -50,11 +50,17 @@ class ProjectListSerializer(serializers.ModelSerializer):
     """
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
-    # company_logo = serializers.CharField(source='company.logo.url', read_only=True)
+    skills = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
-        fields = ('id', 'title','description', 'company_name', 'company_id', 'category', 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 'created_at', 'skills')
+        fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
+                 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
+                 'created_at', 'skills')
+    
+    def get_skills(self, obj):
+        # Get skills from ProjectSkill model
+        return list(obj.required_skills.values_list('name', flat=True))
         # fields = ('id', 'title', 'company_name', 'company_logo', 'category', 'complexity',
         #          'paymentType', 'paymentAmount', 'estimatedHours', 'budget_min', 'budget_max',
         #          'budget_currency', 'work_style', 'status', 'created_at')

@@ -21,10 +21,13 @@ urlpatterns = [
     path('reset-password/', views.password_reset_confirm, name='password-reset-confirm'),
     
     # Dashboard
-    path('dashboard/', views.user_dashboard, name='user-dashboard'),
     path('roles/', views.roles_list, name='roles-list'),
     
     # Admin
     path('list/', views.UserListView.as_view(), name='user-list'),
     path('admin/dashboard/', views.admin_dashboard, name='admin-dashboard'),
+    path('admin/employers/<int:pk>/', views.admin_employer_detail, name='admin-employer-detail'),
+    path('admin/candidates/<int:pk>/', views.admin_candidate_detail, name='admin-candidate-detail'),
+    path('admin/jobs/<int:pk>/', views.admin_job_detail, name='admin-job-detail'),
+    path('admin/projects/<int:pk>/', views.admin_project_detail, name='admin-project-detail'),
 ]

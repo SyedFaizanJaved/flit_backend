@@ -8,6 +8,7 @@ from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 from .models import ReferenceRequest
 from .serializers import ReferenceRequestSerializer
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class VerifyReferenceTokenView(APIView):
         try:
             # First check if token is in valid UUID format
             try:
-                from uuid import UUID
+           
                 UUID(token)
             except ValueError:
                 return Response(
