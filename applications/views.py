@@ -20,7 +20,8 @@ from .serializers import (
     JobApplicationListSerializer,
     ProjectApplicationListSerializer,
 )
-
+from jobs.models import Job
+from projects.models import Project
 
 class JobApplicationListView(generics.ListCreateAPIView):
     """
@@ -221,7 +222,6 @@ def apply_to_job(request, job_id):
     Apply to a job
     """
     try:
-        from jobs.models import Job
 
         job = Job.objects.get(id=job_id, status="active")
 
@@ -267,8 +267,6 @@ def apply_to_project(request, project_id):
     Apply to a project
     """
     try:
-        from projects.models import Project
-
         project = Project.objects.get(id=project_id, status="active")
 
         # Check if already applied

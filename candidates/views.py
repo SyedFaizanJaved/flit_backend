@@ -3,6 +3,10 @@ import logging
 import os
 import requests
 from django.conf import settings
+from projects.models import Project, ProjectSkill  # Add ProjectSkill import
+from django.utils import timezone
+import time
+from django.db import transaction, models, IntegrityError
 from django.core.files.storage import default_storage
 from django.db import models
 from django.db.models import Case, Q, When, F, OuterRef, Subquery, Count
@@ -47,6 +51,7 @@ from django.urls import reverse
 from django.http import JsonResponse
 import requests
 from rest_framework.reverse import reverse as drf_reverse
+from applications.models import ProjectApplication
 
 
 class PublicProjectListAPIView(ListAPIView):
@@ -202,7 +207,6 @@ class CandidateApplicationsView(DashboardBaseView):
             ).select_related('job', 'job__company').order_by('-applied_at'))
             
             # Get project applications
-            from applications.models import ProjectApplication
             project_applications = list(ProjectApplication.objects.filter(
                 candidate=candidate
             ).select_related('project', 'project__company').order_by('-applied_at'))
@@ -276,43 +280,372 @@ class CandidateLatestJobsView(DashboardBaseView):
     """Endpoint for latest jobs relevant to candidate."""
     def get(self, request):
         candidate = self.get_candidate_profile(request.user)
+        logger = logging.getLogger(__name__)
         
-        # Get candidate's skills for filtering
-        candidate_skills = candidate.skills or []
+        # Try to get personalized jobs from ML endpoint
+        ml_success = False
+        latest_jobs = []
+        try:
+            ml_url = f"https://dev-flit-ai.neurooceans.com/show_jobs_for_candidate/{candidate.id}"
+            logger.info(f"Calling ML service at: {ml_url}")
+            
+            # Increased timeout to 5 minutes (300 seconds)
+            ml_response = requests.get(ml_url, timeout=300)
+            logger.info(f"ML service response status: {ml_response.status_code}")
+            logger.debug(f"ML service response content: {ml_response.text}")
+            
+            if ml_response.status_code == 200:
+                try:
+                    ml_data = ml_response.json()
+                    logger.info(f"ML service response data: {json.dumps(ml_data, indent=2)}")
+                    
+                    # Check for 'ranked_opportunities' key and that it's a list
+                    ranked_opportunities = ml_data.get('ranked_opportunities')
+                    if isinstance(ranked_opportunities, list) and ranked_opportunities:
+                        logger.info(f"Found {len(ranked_opportunities)} job opportunities in ML response")
+                        
+                        # Process each job in the ML response
+                        for job_data in ranked_opportunities:
+                            try:
+                                job_id = job_data.get('job_id')
+                                if not job_id:
+                                    logger.warning("Skipping job without job_id")
+                                    continue
+                                
+                                # Create a dictionary with the transformed job data
+                                job = {
+                                    'id': job_id,
+                                    'title': job_data.get('title', 'No Title'),
+                                    'description': job_data.get('description', ''),
+                                    'workStyle': job_data.get('work_style', 'remote'),
+                                    'category': job_data.get('category', 'other'),
+                                    'experienceLevel': job_data.get('experience_level', 'mid'),
+                                    'employmentType': job_data.get('employment_type', 'full-time'),
+                                    'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
+                                    'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
+                                    'status': job_data.get('status', 'active'),
+                                    'created_at': job_data.get('created_at', timezone.now().isoformat()),
+                                    'location': job_data.get('location'),
+                                    'skills': job_data.get('skills', [])
+                                }
+                                
+                                # Add company information if available
+                                company_data = job_data.get('company', {})
+                                if company_data:
+                                    job.update({
+                                        'company_name': company_data.get('company_name', 'Unknown Company'),
+                                        'company_id': company_data.get('id')
+                                    })
+                                
+                                latest_jobs.append(job)
+                                logger.info(f"Added job from ML data: {job_id} - {job['title']}")
+                                
+                                # Limit to 10 jobs
+                                if len(latest_jobs) >= 10:
+                                    break
+                            
+                            except Exception as e:
+                                logger.error(f"Error processing job from ML data: {str(e)}", exc_info=True)
+                        
+                        if latest_jobs:
+                            ml_success = True
+                            logger.info(f"Successfully got {len(latest_jobs)} jobs from ML service")
+                        else:
+                            logger.warning("No valid jobs processed from ML response")
+                    else:
+                        logger.warning("No ranked_opportunities found or empty in ML response")
+                except ValueError as e:
+                    logger.error(f"Invalid JSON in ML response: {str(e)}")
+            else:
+                logger.warning(f"ML service returned status code: {ml_response.status_code}")
+                logger.warning(f"Response content: {ml_response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error calling ML service: {str(e)}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
-        # Get latest active jobs, ordered by creation date
-        latest_jobs = Job.objects.filter(
-            status='active'
-        ).select_related('company').order_by('-created_at')[:10]
+        # Fallback to original logic if ML fails or no results
+        if not ml_success:
+            logger.info("Falling back to database query for latest jobs")
+            # Get candidate's skills for filtering (original logic) - but you're not using skills filter here?
+            # candidate_skills = candidate.skills or []  # Unused in fallback?
+            
+            # Get latest active jobs, ordered by creation date
+            latest_jobs = Job.objects.filter(
+                status='active'
+            ).select_related('company').order_by('-created_at')[:10]
         
-        # Serialize the jobs
-        job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
-        
+        # If we have Job objects (from fallback), serialize them
+        if latest_jobs and isinstance(latest_jobs[0], Job):
+            job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
+            return Response({
+                'latest_jobs': job_serializer.data
+            })
+        # If we have dictionaries (from ML API), return them directly
+        elif latest_jobs and isinstance(latest_jobs[0], dict):
+            return Response({
+                'latest_jobs': latest_jobs
+            })
+        # Fallback to empty list if no jobs found
         return Response({
-            'latest_jobs': job_serializer.data
+            'latest_jobs': []
         })
-
 
 class CandidateLatestProjectsView(DashboardBaseView):
     """Endpoint for latest projects relevant to candidate."""
     def get(self, request):
         candidate = self.get_candidate_profile(request.user)
+        logger = logging.getLogger(__name__)
         
-        # Get candidate's skills for filtering
-        candidate_skills = candidate.skills or []
+        # Try to get personalized projects from ML endpoint
+        ml_success = False
+        latest_projects = []
+        ml_data = None
         
-        # Get latest active projects, ordered by creation date
-        latest_projects = Project.objects.filter(
-            status='active'
-        ).select_related('company').order_by('-created_at')[:10]
+        try:
+            ml_url = f"https://dev-flit-ai.neurooceans.com/show_projects_for_candidate/{candidate.id}"
+            logger.info(f"Calling ML service for projects at: {ml_url}")
+            
+            # Add headers if needed (e.g., for authentication)
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            # Increase timeout to 30 seconds and add retry logic
+            max_retries = 2
+            retry_delay = 5  # seconds
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Attempt {attempt + 1}/{max_retries + 1} to call ML service")
+                    
+                    # Log the full request details
+                    logger.info(f"Sending GET request to ML service with headers: {headers}")
+                    
+                    # Increased timeout to 5 minutes (300 seconds)
+                    ml_response = requests.get(ml_url, headers=headers, timeout=300)
+                    logger.info(f"ML service response status: {ml_response.status_code}")
+                    logger.info(f"Response headers: {dict(ml_response.headers)}")
+                    
+                    # Log response content for debugging (first 1000 chars)
+                    response_preview = ml_response.text[:1000]
+                    logger.info(f"Response preview: {response_preview}")
+                    
+                    # If we got a successful response, break out of the retry loop
+                    if ml_response.status_code == 200:
+                        break
+                        
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries:
+                        logger.error(f"ML service timed out after {max_retries + 1} attempts")
+                        raise
+                    logger.warning(f"ML service timed out, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(retry_delay)
+                except requests.exceptions.RequestException as e:
+                    if attempt == max_retries:
+                        logger.error(f"Failed to call ML service after {max_retries + 1} attempts: {str(e)}")
+                        raise
+                    logger.warning(f"Error calling ML service, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    time.sleep(retry_delay)
+            
+            if ml_response.status_code == 200:
+                try:
+                    ml_data = ml_response.json()
+                    logger.info(f"ML service response data type: {type(ml_data)}")
+                    
+                    # Check if we have a direct list of projects or ranked_projects
+                    if isinstance(ml_data, list):
+                        logger.info(f"Received direct list of {len(ml_data)} projects from ML service")
+                        ml_data = {'opportunities': ml_data}
+                    # Check for ranked_projects in the response
+                    elif 'ranked_projects' in ml_data and isinstance(ml_data['ranked_projects'], list):
+                        logger.info(f"Found {len(ml_data['ranked_projects'])} projects in ranked_projects")
+                        ml_data['opportunities'] = ml_data.pop('ranked_projects')
+                    
+                    project_ids = []
+                    project_data_map = {}
+                    
+                    # Try to get project IDs from the opportunities array if it exists
+                    if 'opportunities' in ml_data and isinstance(ml_data['opportunities'], list):
+                        logger.info(f"Found {len(ml_data['opportunities'])} project opportunities in ML response")
+                        
+                        # Extract valid project IDs from opportunities and build project data map
+                        for project_data in ml_data['opportunities']:
+                            try:
+                                project_id = project_data.get('project_id') or project_data.get('id')
+                                if project_id is not None:
+                                    project_id = int(project_id)
+                                    project_ids.append(project_id)
+                                    project_data_map[project_id] = project_data
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Invalid project ID in ML response: {project_data.get('project_id') or project_data.get('id')}")
+                    
+                    # If no project IDs found in opportunities, try the root level ranked_opportunity_ids
+                    if not project_ids and 'ranked_opportunity_ids' in ml_data and isinstance(ml_data['ranked_opportunity_ids'], list):
+                        logger.info(f"Found {len(ml_data['ranked_opportunity_ids'])} project IDs in ranked_opportunity_ids")
+                        for project_id in ml_data['ranked_opportunity_ids']:
+                            try:
+                                project_id = int(project_id)
+                                project_ids.append(project_id)
+                            except (ValueError, TypeError):
+                                logger.warning(f"Invalid project ID in ranked_opportunity_ids: {project_id}")
+                    
+                    # If we still don't have project IDs, check if we have direct project data
+                    if not project_ids and isinstance(ml_data, dict):
+                        # Look for any list that might contain project data
+                        for key, value in ml_data.items():
+                            if isinstance(value, list) and value and isinstance(value[0], dict):
+                                if 'project_id' in value[0] or 'id' in value[0]:
+                                    logger.info(f"Found potential project data in key: {key}")
+                                    for item in value:
+                                        try:
+                                            project_id = item.get('project_id') or item.get('id')
+                                            if project_id is not None:
+                                                project_id = int(project_id)
+                                                project_ids.append(project_id)
+                                                project_data_map[project_id] = item
+                                        except (ValueError, TypeError):
+                                            logger.warning(f"Invalid project ID in {key}: {item.get('project_id') or item.get('id')}")
+                    
+                    if project_ids:
+                        logger.info(f"Processing {len(project_ids)} projects from ML response")
+                        
+                        # Remove duplicates while preserving order
+                        seen = set()
+                        project_ids = [x for x in project_ids if not (x in seen or seen.add(x))]
+                        
+                        # Create a list to hold all projects
+                        latest_projects = []
+                        
+                        # Process each project from the ML response
+                        for project_id in project_ids:
+                            project_data = project_data_map.get(project_id)
+                            if not project_data:
+                                continue
+                                
+                            try:
+                                logger.info(f"Processing project from ML data: {project_id} - {project_data.get('title')}")
+                                
+                                # Try to get the project from the database first
+                                try:
+                                    project = Project.objects.get(id=project_id, status='active')
+                                    logger.info(f"Found existing project in database: {project_id}")
+                                    
+                                    # Update skills from ML response if available
+                                    if 'skills' in project_data:
+                                        project._skills = project_data['skills']
+                                    
+                                    latest_projects.append(project)
+                                    continue
+                                except Project.DoesNotExist:
+                                    pass
+                                
+                                # If not in database, create a new project from ML data
+                                project = Project(
+                                    id=project_id,
+                                    title=project_data.get('title', 'No Title'),
+                                    description=project_data.get('description', ''),
+                                    paymentType=project_data.get('payment_type', 'fixed'),
+                                    paymentAmount=project_data.get('payment_amount') or 0,
+                                    estimatedHours=project_data.get('estimated_hours', '1-2 weeks'),
+                                    work_style=project_data.get('work_style', 'remote'),
+                                    status='active',
+                                    category=project_data.get('category', 'other')
+                                )
+                                
+                                # Set skills from ML response if available
+                                if 'skills' in project_data and project_data['skills']:
+                                    project._skills = project_data['skills']
+                                    
+                                    # Create ProjectSkill objects for each skill
+                                    # Skip creating ProjectSkill objects since we're not saving the project
+                                    # Just keep the skills in the _skills attribute for the response
+                                
+                                latest_projects.append(project)
+                                logger.info(f"Created project from ML data: {project_id} with skills: {project_data.get('skills', [])}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error processing project {project_id}: {str(e)}", exc_info=True)
+                    
+                    # If we still don't have projects, try to get them from the database as fallback
+                    if not latest_projects:
+                        logger.info("No projects from ML response, falling back to database")
+                        latest_projects = list(Project.objects.filter(status='active')
+                                           .select_related('company')
+                                           .prefetch_related('required_skills')
+                                           .order_by('-created_at')[:10])
+                    if latest_projects:
+                        ml_success = True
+                        logger.info(f"Successfully got {len(latest_projects)} projects from ML service")
+                    else:
+                        logger.warning("No projects found in ML response")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse ML service response as JSON: {e}")
+                    logger.info(f"Raw response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
+                except Exception as e:
+                    logger.error(f"Unexpected error processing ML response: {str(e)}", exc_info=True)
+            else:
+                logger.warning(f"ML service returned status code: {ml_response.status_code}")
+                logger.warning(f"Response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
+                
+        except requests.RequestException as e:
+            error_msg = f"Request to ML service failed: {str(e)}"
+            if hasattr(e, 'response') and e.response is not None:
+                error_msg += f"\nResponse status: {e.response.status_code}"
+                try:
+                    error_msg += f"\nResponse content: {e.response.text[:500]}"
+                except:
+                    pass
+            logger.error(error_msg, exc_info=True)
+        except Exception as e:
+            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
-        # Serialize the projects
-        project_serializer = ProjectListSerializer(latest_projects, many=True, context={'request': request})
+        # Fallback to original logic if ML fails or no results
+        if not ml_success or not latest_projects:
+            logger.info("Falling back to default project list")
+            # Get latest active projects, ordered by creation date
+            latest_projects = list(Project.objects.filter(status='active')
+                                        .select_related('company')
+                                        .prefetch_related('required_skills')
+                                        .order_by('-created_at')[:10])
+        
+        # Prepare the response data
+        response_data = []
+        
+        for project in latest_projects:
+            # Get project data from the database or ML response
+            project_data = {
+                'id': project.id,
+                'title': project.title,
+                'description': project.description or '',
+                'category': project.category or 'other',
+                'estimatedHours': project.estimatedHours or '1-2 weeks',
+                'paymentType': project.paymentType or 'fixed',
+                'paymentAmount': project.paymentAmount or 0,
+                'deadline': project.deadline.strftime('%Y-%m-%d') if hasattr(project, 'deadline') and project.deadline else None,
+                'status': project.status,
+                'created_at': project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if project.created_at else None,
+                'company_name': project.company.company_name if hasattr(project, 'company') and project.company else None,
+                'company_id': project.company.id if hasattr(project, 'company') and project.company else None,
+                'skills': []
+            }
+            
+            # Add skills from _skills if available, otherwise use the related skills
+            if hasattr(project, '_skills') and project._skills:
+                project_data['skills'] = project._skills
+            else:
+                # Fall back to database skills if _skills is not set
+                project_data['skills'] = list(project.required_skills.values_list('name', flat=True))
+            
+            response_data.append(project_data)
         
         return Response({
-            'latest_projects': project_serializer.data
+            'latest_projects': response_data,
+            'ml_success': ml_success
         })
-
 
 class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
     """
@@ -467,10 +800,30 @@ class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
     def profile(self, request):
         if getattr(getattr(request.user, 'role', None), 'name', None) != "candidate":
             raise PermissionDenied("Only candidates can access this endpoint.")
-        candidate, _ = Candidate.objects.get_or_create(
-            user=request.user,
-            defaults={'full_name': f"{request.user.first_name} {request.user.last_name}"}
-        )
+        
+        # First try to get existing candidate
+        candidate = Candidate.objects.filter(user=request.user).first()
+        
+        # Only create new candidate if one doesn't exist
+        if not candidate:
+            def create_candidate():
+                # Get the maximum ID currently in use
+                max_id = Candidate.objects.aggregate(models.Max('id'))['id__max']
+                next_id = (max_id or 0) + 1
+                
+                try:
+                    # Create new candidate with the next available ID
+                    return Candidate.objects.create(
+                        id=next_id,
+                        user=request.user,
+                        full_name=f"{request.user.first_name} {request.user.last_name}"
+                    )
+                except IntegrityError:
+                    # If there's a race condition and ID is already taken, retry
+                    return create_candidate()
+            
+            # Create the candidate in a new transaction
+            candidate = create_candidate()
         if request.method == 'GET':
             data = CandidateSerializer(candidate).data
             return Response(data, status=status.HTTP_200_OK)
@@ -518,6 +871,55 @@ class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
         resume_file = request.FILES.get('resume_file')
         if resume_file:
             data['resume_url'] = self._save_file(resume_file, 'candidates/resumes', request)
+            
+            # Parse CV using ML service
+            try:
+                parse_url = 'https://dev-flit-ai.neurooceans.com/parse_cv'
+                
+                # Reset file pointer and read content
+                resume_file.seek(0)
+                resume_content = resume_file.read()
+                
+                files = {
+                    'resume_file': (resume_file.name, resume_content, resume_file.content_type)
+                }
+                
+                data_payload = {
+                    'user_id': str(getattr(request.user, 'id', '')),
+                    'resume_url': request.build_absolute_uri(data['resume_url'])
+                }
+                
+                # Make the request to parse CV without API key
+                resp = requests.post(parse_url, files=files, data=data_payload, timeout=60)
+                
+                if resp and resp.ok:
+                    cv_data = resp.json()
+                    # Process the parsed CV data
+                    if cv_data.get('success', False):
+                        update_data = {}
+                        
+                        if 'skills' in cv_data:
+                            update_data['skills'] = cv_data['skills']
+                        if 'experience' in cv_data:
+                            update_data['experience'] = cv_data['experience']
+                        if 'education' in cv_data:
+                            update_data['education'] = cv_data['education']
+                        
+                        if update_data:
+                            # Update the candidate with parsed data
+                            for key, value in update_data.items():
+                                setattr(candidate, key, value)
+                            candidate.save()
+                            logger.info(f"Successfully parsed and updated CV data for user {request.user.id}")
+                else:
+                    logger.warning(f"CV parsing failed with status {resp.status_code}: {resp.text}")
+                            
+            except Exception as e:
+                # Log the error but don't fail the request
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error parsing CV: {str(e)}", exc_info=True)
+        
         video_file = request.FILES.get('video_file')
         if video_file:
             data['video_intro_url'] = self._save_file(video_file, 'candidates/videos', request)
