@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.conf import settings
+from django.utils import timezone
 
 
 class Employer(models.Model):
@@ -114,3 +115,28 @@ class EmployerCompliance(models.Model):
     
     def __str__(self):
         return f"Compliance for {self.employer.full_name}"
+
+
+class CandidateAction(models.Model):
+    """
+    Model to track candidate actions (pass/reject) by employers
+    """
+    ACTION_CHOICES = [
+        ('pass', 'Pass'),
+        ('reject', 'Reject'),
+    ]
+    
+    employer = models.ForeignKey(Employer, on_delete=models.CASCADE, related_name='candidate_actions')
+    candidate_id = models.CharField(max_length=100)
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'candidate_actions'
+        verbose_name = 'Candidate Action'
+        verbose_name_plural = 'Candidate Actions'
+        ordering = ['-created_at']
+        unique_together = ('employer', 'candidate_id')
+    
+    def __str__(self):
+        return f"{self.employer} - {self.candidate_id} - {self.action}"

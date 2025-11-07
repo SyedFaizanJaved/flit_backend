@@ -1,23 +1,27 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from django.http import Http404
-from .models import Employer, EmployerPreference, EmployerCompliance
+from django.http import Http404, JsonResponse
+import requests
+import logging
+from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
 from .serializers import (
     EmployerSerializer, 
     EmployerProfileUpdateSerializer,
     EmployerPreferenceSerializer,
     EmployerComplianceSerializer,
-    EmployerRegistrationSerializer
+    EmployerRegistrationSerializer,
+    CandidateActionSerializer
 )
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import status
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
@@ -32,7 +36,7 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import Employer, EmployerPreference, EmployerCompliance
+from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
 from .serializers import (
     EmployerSerializer, EmployerListSerializer, EmployerProfileUpdateSerializer,
     EmployerPreferenceSerializer, EmployerComplianceSerializer
@@ -56,6 +60,43 @@ class EmployerDashboardBaseView(APIView):
             return user.employer_profile
         except Employer.DoesNotExist:
             raise Http404('Employer profile not found')
+
+
+class CandidateActionViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint that allows candidate actions to be viewed or edited.
+    """
+    serializer_class = CandidateActionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        This view should return a list of all candidate actions
+        for the currently authenticated employer.
+        """
+        return CandidateAction.objects.filter(employer__user=self.request.user)
+    
+    def perform_create(self, serializer):
+        """
+        Automatically set the employer to the current user's employer profile.
+        """
+        employer = self.request.user.employer_profile
+        serializer.save(employer=employer)
+    
+    @action(detail=False, methods=['get'])
+    def by_candidate(self, request, candidate_id=None):
+        """
+        Get action for a specific candidate, if any.
+        """
+        try:
+            action = CandidateAction.objects.get(
+                employer__user=request.user,
+                candidate_id=candidate_id
+            )
+            serializer = self.get_serializer(action)
+            return Response(serializer.data)
+        except CandidateAction.DoesNotExist:
+            return Response({"detail": "No action found for this candidate."}, status=status.HTTP_404_NOT_FOUND)
 
 
 class EmployerProfileDashboardView(EmployerDashboardBaseView):
@@ -327,3 +368,31 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
         employer = self.request.user.employer_profile
         serializer.save(employer=employer)
 
+
+@api_view(['GET'])
+def get_flitpass_data(request, company_id):
+    """
+    Fetches data from the ML API for the given company ID.
+    """
+    try:
+        # The ML API endpoint URL
+        ml_api_url = f"https://dev-flit-ai.neurooceans.com/flitpass/{company_id}"
+        
+        # Make the GET request to the ML API
+        response = requests.get(ml_api_url)
+        
+        # Check if the request was successful
+        response.raise_for_status()
+        
+        # Return the JSON response from the ML API
+        return Response(response.json())
+        
+    except requests.exceptions.RequestException as e:
+        # Log the error for debugging
+        logger.error(f"Error calling ML API: {str(e)}")
+        
+        # Return an error response
+        return Response(
+            {"error": "Failed to fetch data from ML API", "details": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
