@@ -129,10 +129,12 @@ class Project(models.Model):
     # Tags for search
     tags = models.JSONField(default=list)  # List of tags
 
-        # Ml Endpoints
-    project_tags = models.JSONField(default=list)  # List of tags for categorization
+
+    project_tags = models.JSONField(default=list,blank=True,null=True)  # List of tags for categorization
     project_index_id = models.CharField(max_length=200, blank=True, null=True)  # ID in vector DB for candidate
-    project_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate prjob
+    project_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
+    
+
 
     
     # SEO

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Employer, EmployerPreference, EmployerCompliance
+from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
 
 User = get_user_model()
 
@@ -14,7 +14,7 @@ class EmployerRegistrationSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ('email', 'password', 'first_name', 'last_name')
+        fields = ['id', 'email', 'password', 'first_name', 'last_name']
         extra_kwargs = {
             'password': {'write_only': True},
             'first_name': {'required': True},
@@ -200,3 +200,31 @@ class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Employer
         fields = ('id', 'company_name', 'industry', 'logo', 'last_message_time', 'last_seen', 'unread_count')
+
+
+class CandidateActionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for candidate actions (pass/reject)
+    """
+    employer = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    class Meta:
+        model = CandidateAction
+        fields = ['id', 'employer', 'candidate_id', 'action', 'created_at']
+        read_only_fields = ['employer', 'created_at']
+    
+    def validate(self, data):
+        """
+        Validate that the same employer can't have multiple actions for the same candidate
+        """
+        # Get the employer from the context (set in the view)
+        employer = self.context['request'].user.employer_profile
+        
+        if CandidateAction.objects.filter(
+            employer=employer,
+            candidate_id=data['candidate_id']
+        ).exists():
+            raise serializers.ValidationError({
+                'detail': 'An action for this candidate already exists'
+            })
+        return data

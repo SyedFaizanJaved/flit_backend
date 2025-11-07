@@ -59,6 +59,7 @@ class Job(models.Model):
         ('senior', 'Senior'),
         ('lead', 'Lead'),
         ('executive', 'Executive'),
+        ('junior', 'Junior'),
     ]
     
     # Basic Information
