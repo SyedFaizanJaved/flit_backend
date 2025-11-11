@@ -77,7 +77,17 @@ class Job(models.Model):
         ('marketing', 'Marketing'),
         ('sales', 'Sales'),
         ('operations', 'Operations'),
+        ('wriing', 'Writing'),
+        ('technology/Digital', 'Technology/Digital'),
+        ('creative/,media', 'Creative/Media'),
+        ('business/finance', 'Business/Finance'),
+        ('trades/labour', 'Trades/Labour'),
+        ('healthcare & welness', 'Healthcare & Wellness'),
+        ('education & training', 'Education & Training'),
+        ('hospitality & services', 'Hospitality & Services'),
+        ('nonprofit/community work', 'Nonprofit/Community Work'),
         ('other', 'Other'),
+
     ])
     skills = models.JSONField(default=list)  # List of required skills
     experienceLevel = models.CharField(max_length=20, choices=EXPERIENCE_LEVEL_CHOICES)

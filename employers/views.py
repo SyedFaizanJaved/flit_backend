@@ -39,7 +39,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
 from .serializers import (
     EmployerSerializer, EmployerListSerializer, EmployerProfileUpdateSerializer,
-    EmployerPreferenceSerializer, EmployerComplianceSerializer
+    EmployerPreferenceSerializer, EmployerComplianceSerializer, CandidateActionDetailSerializer
 )
 from accounts.views import BaseRoleRegistrationView
 from django.urls import reverse
@@ -66,15 +66,29 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     """
     API endpoint that allows candidate actions to be viewed or edited.
     """
-    serializer_class = CandidateActionSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def get_serializer_class(self):
+        """
+        Use different serializers for different actions
+        """
+        if self.action in ['list', 'retrieve', 'by_candidate']:
+            return CandidateActionDetailSerializer
+        return CandidateActionSerializer
     
     def get_queryset(self):
         """
-        This view should return a list of all candidate actions
+        This view should return a list of pass candidate actions
         for the currently authenticated employer.
         """
-        return CandidateAction.objects.filter(employer__user=self.request.user)
+        # Only show candidates with 'accept' action
+        queryset = CandidateAction.objects.filter(
+            employer__user=self.request.user,
+            action='pass'  # Only include accepted candidates
+        )
+        
+        # Add select_related and prefetch_related for better performance
+        return queryset.select_related('employer')
     
     def perform_create(self, serializer):
         """
@@ -86,17 +100,32 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def by_candidate(self, request, candidate_id=None):
         """
-        Get action for a specific candidate, if any.
+        Get action for a specific candidate with full details.
         """
         try:
-            action = CandidateAction.objects.get(
-                employer__user=request.user,
-                candidate_id=candidate_id
-            )
-            serializer = self.get_serializer(action)
+            action = self.get_queryset().get(candidate_id=candidate_id)
+            serializer = self.get_serializer(action, context={'request': request})
             return Response(serializer.data)
         except CandidateAction.DoesNotExist:
-            return Response({"detail": "No action found for this candidate."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "No action found for this candidate."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    def list(self, request, *args, **kwargs):
+        """
+        List all candidate actions with candidate details.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Get paginated queryset if needed
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
 
 
 class EmployerProfileDashboardView(EmployerDashboardBaseView):

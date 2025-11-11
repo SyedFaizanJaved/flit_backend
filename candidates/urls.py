@@ -18,16 +18,12 @@ urlpatterns = [
     # New separated dashboard endpoints
     path('dashboard/profile/', views.CandidateProfileDashboardView.as_view(), name='candidate-profile-dashboard'),
     path('dashboard/applications/', views.CandidateApplicationsView.as_view(), name='candidate-applications'),
+    path('work-dna/questions/', views.WorkDNAQuestionView.as_view(), name='work-dna-questions'),
     path('dashboard/latest-jobs/', views.CandidateLatestJobsView.as_view(), name='candidate-latest-jobs'),
     path('dashboard/latest-projects/', views.CandidateLatestProjectsView.as_view(), name='candidate-latest-projects'),
     
     # Registration
     path('register/', views.CandidateRegistrationView.as_view(), name='candidate-register'),
-    # Work DNA (kept as-is)
-    path('work-dna/', views.WorkDNAView.as_view(), name='work-dna'),
-    # References
-    path('references/', views.ReferenceListView.as_view(), name='reference-list'),
-    path('references/<int:pk>/', views.ReferenceDetailView.as_view(), name='reference-detail'),
     # Reference Requests
     path('reference-requests/', views.ReferenceRequestListView.as_view(), name='reference-request-list'),
     path('reference-requests/<int:pk>/', views.ReferenceRequestDetailView.as_view(), name='reference-request-detail'),

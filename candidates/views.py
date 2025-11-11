@@ -23,20 +23,19 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from accounts.views import BaseRoleRegistrationView
 from jobs.models import Job
-from .models import Reference, ReferenceRequest
+from .models import  ReferenceRequest
 from jobs.serializers import JobListSerializer
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from companies.models import Company
 from employers.models import Employer
-from .models import Candidate, Reference, ReferenceRequest, WorkDNA
+from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from .serializers import (
     CandidateListSerializer,
     CandidateProfileUpdateSerializer,
     CandidateSerializer,
     ReferenceRequestSerializer,
-    ReferenceSerializer,
-    WorkDNASerializer,
+    WorkDNAQuestionSerializer,
     CompanyWithOpeningsSerializer,
 )
 from employers.serializers import EmployerCompanyConversationSummarySerializer
@@ -1105,83 +1104,150 @@ class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
             'profile_completed': candidate.is_profile_complete
         }, status=status.HTTP_200_OK)
 
-class WorkDNAView(APIView):
-    """Work DNA assessment view."""
+class WorkDNAQuestionView(APIView):
+    """
+    View to handle work DNA questions and answers
+    """
     permission_classes = [permissions.IsAuthenticated]
-
+    
     def get(self, request):
+        """
+        Get work DNA questions for the authenticated candidate
+        If no questions exist, fetch them from the ML API
+        Response includes questions and any existing answers
+        """
         try:
-            obj = request.user.candidate_profile.work_dna
-        except WorkDNA.DoesNotExist:
-            return Response({}, status=status.HTTP_200_OK)
-
-        serializer = WorkDNASerializer(obj)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+            candidate = request.user.candidate_profile
+            
+            # Check if questions exist for this candidate
+            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+            
+            if work_dna_question:
+                serializer = WorkDNAQuestionSerializer(work_dna_question)
+                return Response(serializer.data)
+            
+            # If no questions exist, fetch from ML API
+            return self.fetch_work_dna_questions(candidate)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     def post(self, request):
-        # Upsert: create if missing, otherwise partial update
+        """
+        Submit answers to work DNA questions
+        Expected request data format:
+        {
+            "answers": {
+                "1": "answer text for question 1",
+                "2": "answer text for question 2"
+            }
+        }
+        """
         try:
             candidate = request.user.candidate_profile
-        except Candidate.DoesNotExist:
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
+            answers = request.data.get('answers', {})
+            
+            if not isinstance(answers, dict):
+                return Response(
+                    {'error': 'Answers must be a dictionary with question IDs as keys'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get work DNA question record
+            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+            
+            if not work_dna_question:
+                return Response(
+                    {'error': 'No work DNA questions found. Please fetch questions first.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get the current questions and answers
+            current_questions = work_dna_question.questions
+            current_answers = work_dna_question.answers or {}
+            
+            # Update answers with the new ones
+            for question_id, answer in answers.items():
+                if question_id.isdigit() and int(question_id) <= len(current_questions):
+                    # Use the question text as the key in the answers dictionary
+                    question_text = current_questions[int(question_id) - 1].get('question', f'Question {question_id}')
+                    current_answers[question_text] = answer
+                    # Also keep the numeric key for backward compatibility
+                    current_answers[question_id] = answer
+            
+            # Remove any old numeric keys to prevent duplicates
+            for key in list(current_answers.keys()):
+                if str(key).isdigit():
+                    del current_answers[key]
+            
+            # Save the updated answers
+            work_dna_question.answers = current_answers
+            work_dna_question.save()
+            
+            # Return the updated record with questions and answers
+            response_data = {
+                'id': work_dna_question.id,
+                'candidate': work_dna_question.candidate.id,
+                'questions': current_questions,
+                'answers': current_answers,
+                'created_at': work_dna_question.created_at,
+                'updated_at': work_dna_question.updated_at
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'An error occurred while saving answers: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def fetch_work_dna_questions(self, candidate):
+        """Fetch work DNA questions from ML API and filter to include only questions 1 and 2"""
         try:
-            obj = candidate.work_dna
-        except WorkDNA.DoesNotExist:
-            obj = None
-
-        if obj is None:
-            serializer = WorkDNASerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save(candidate=candidate)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        else:
-            serializer = WorkDNASerializer(obj, data=request.data, partial=True, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def patch(self, request):
-        # Upsert on PATCH as well
-        try:
-            candidate = request.user.candidate_profile
-        except Candidate.DoesNotExist:
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            obj = candidate.work_dna
-        except WorkDNA.DoesNotExist:
-            obj = None
-        if obj is None:
-            serializer = WorkDNASerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save(candidate=candidate)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        else:
-            serializer = WorkDNASerializer(obj, data=request.data, partial=True, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-class ReferenceListView(generics.ListCreateAPIView):
-    """Reference list and create view."""
-    serializer_class = ReferenceSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return Reference.objects.filter(candidate__user=self.request.user)
-
-    def perform_create(self, serializer):
-        candidate = self.request.user.candidate_profile
-        serializer.save(candidate=candidate)
-
-class ReferenceDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Reference detail view."""
-    serializer_class = ReferenceSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return Reference.objects.filter(candidate__user=self.request.user)
+            # Call the ML API to get work DNA questions
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/generate_work_dna_questions/{candidate.id}"
+            response = requests.get(ml_api_url)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Filter questions to include only questions 1 and 2
+                if 'questions' in data and isinstance(data['questions'], list):
+                    # Keep only the first two questions
+                    filtered_questions = data['questions']
+                    # Update the total questions count
+                    data['questions'] = filtered_questions
+                    data['total_questions'] = len(filtered_questions)
+                
+                # Create and save work dna questions
+                work_dna_question = WorkDNAQuestion.objects.create(
+                    candidate=candidate,
+                    candidate_name=candidate.full_name,
+                    questions=data.get('questions', []),
+                    total_questions=data.get('total_questions', 0)
+                )
+                
+                serializer = WorkDNAQuestionSerializer(work_dna_question)
+                return Response(serializer.data)
+            else:
+                return Response(
+                    {'error': 'Failed to fetch work DNA questions from ML service'},
+                    status=response.status_code
+                )
+                
+        except requests.RequestException as e:
+            return Response(
+                {'error': f'Error connecting to ML service: {str(e)}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
