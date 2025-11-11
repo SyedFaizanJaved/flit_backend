@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Candidate, WorkDNA, Reference, ReferenceRequest
+from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from companies.models import Company
 from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
@@ -37,7 +37,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "resume_url", "profile_views", "viewers_count", "profile_views_display",
-            "passion_projects","reference_responses"     
+            "passion_projects","reference_responses" ,"portfolio_links","seniority_level","is_available" 
         ]
         read_only_fields = ("user", "created_at", "updated_at")
     
@@ -142,9 +142,8 @@ class CandidateListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Candidate
-        fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 'passion_projects',
-                 'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at', 'profile_views_display')
-    
+        fields = '__all__'
+
     def get_profile_completed(self, obj):
         try:
             return bool(getattr(obj, 'is_profile_complete', False))
@@ -167,34 +166,27 @@ class CandidateListSerializer(serializers.ModelSerializer):
         return str(n)
 
 
-class WorkDNASerializer(serializers.ModelSerializer):
+class WorkDNAQuestionSerializer(serializers.ModelSerializer):
     """
-    Serializer for Work DNA assessment
+    Serializer for Work DNA Questions
     """
     class Meta:
-        model = WorkDNA
+        model = WorkDNAQuestion
         fields = '__all__'
         read_only_fields = ('candidate', 'created_at', 'updated_at')
     
     def create(self, validated_data):
         validated_data['candidate'] = self.context['request'].user.candidate_profile
         return super().create(validated_data)
-
-
-class ReferenceSerializer(serializers.ModelSerializer):
-    """
-    Serializer for references
-    """
-    class Meta:
-        model = Reference
-        fields = '__all__'
-        read_only_fields = ('candidate', 'created_at', 'updated_at')
+        
+    def update(self, instance, validated_data):
+        # Handle answers update if provided
+        answers = validated_data.pop('answers', None)
+        if answers is not None:
+            instance.answers = answers
+            instance.save()
+        return super().update(instance, validated_data)
     
-    def create(self, validated_data):
-        validated_data['candidate'] = self.context['request'].user.candidate_profile
-        return super().create(validated_data)
-
-
 class ReferenceRequestSerializer(serializers.ModelSerializer):
     """
     Serializer for reference requests
@@ -311,7 +303,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'preferred_roles', 'passion_projects', 'min_salary', 'max_salary', 
                  'salary_currency', 'portfolio_links', 'profile_image', 'resume_url', 
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
-                 'video_transcription',
+                 'video_transcription', 'seniority_level',
                  'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
     def to_internal_value(self, data):
@@ -332,9 +324,8 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
         # Update profile completion status based on filled fields
         updated_instance = super().update(instance, validated_data)
 
-        # If client did not send profile_image in the payload for PUT/PATCH,
-        # clear it by setting to None (so response shows null)
-        if 'profile_image' not in self.initial_data and 'profile_image' not in validated_data:
+        # Only clear profile_image if it's explicitly set to None or empty string in the request
+        if 'profile_image' in self.initial_data and self.initial_data.get('profile_image') in (None, ''):
             if getattr(updated_instance, 'profile_image', None):
                 updated_instance.profile_image = None
                 updated_instance.save(update_fields=['profile_image'])

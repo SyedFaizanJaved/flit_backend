@@ -73,8 +73,17 @@ class Project(models.Model):
         ('engineering', 'Engineering'),
         ('design', 'Design'),
         ('marketing', 'Marketing'),
+        ('sales', 'Sales'),
+        ('operations', 'Operations'),
         ('writing', 'Writing'),
-        ('data', 'Data'),
+        ('technology/Digital', 'Technology/Digital'),
+        ('creative/,media', 'Creative/Media'),
+        ('business/finance', 'Business/Finance'),
+        ('trades/labour', 'Trades/Labour'),
+        ('healthcare & welness', 'Healthcare & Wellness'),
+        ('education & training', 'Education & Training'),
+        ('hospitality & services', 'Hospitality & Services'),
+        ('nonprofit/community work', 'Nonprofit/Community Work'),
         ('other', 'Other'),
     ])
     skills = models.JSONField(default=list)  # List of required skills

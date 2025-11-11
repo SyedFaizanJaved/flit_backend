@@ -217,14 +217,126 @@ class CandidateActionSerializer(serializers.ModelSerializer):
         """
         Validate that the same employer can't have multiple actions for the same candidate
         """
-        # Get the employer from the context (set in the view)
         employer = self.context['request'].user.employer_profile
+        candidate_id = data.get('candidate_id')
+        action = data.get('action')
         
-        if CandidateAction.objects.filter(
+        # Check if action already exists
+        existing_action = CandidateAction.objects.filter(
             employer=employer,
-            candidate_id=data['candidate_id']
-        ).exists():
-            raise serializers.ValidationError({
-                'detail': 'An action for this candidate already exists'
-            })
+            candidate_id=candidate_id
+        ).first()
+        
+        if self.instance is None and existing_action:
+            raise serializers.ValidationError(
+                f"You have already {existing_action.action}ed this candidate."
+            )
+            
         return data
+
+
+class CandidateActionDetailSerializer(serializers.ModelSerializer):
+    """Serializer for candidate actions with candidate details"""
+    user_id = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CandidateAction
+        fields = [
+            'id', 'user_id', 'action', 'created_at',
+            'full_name', 'title', 'profile_image', 'skills'
+        ]
+        read_only_fields = ('user_id',)
+    
+    def get_user_id(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.user.id
+        except (Candidate.DoesNotExist, AttributeError):
+            return None
+    
+    def get_full_name(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.full_name
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_title(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.title or "No title"
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_profile_image(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            if candidate.profile_image:
+                return self.context['request'].build_absolute_uri(candidate.profile_image.url)
+        except (Candidate.DoesNotExist, ValueError):
+            pass
+        return None
+    
+    def get_skills(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            # Return the skills list directly from the Candidate model
+            return candidate.skills or []
+        except Candidate.DoesNotExist:
+            return []
+    """Serializer for candidate actions with candidate details"""
+    full_name = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CandidateAction
+        fields = [
+            'id', 'candidate_id', 'action', 'created_at',
+            'full_name', 'title', 'profile_image', 'skills'
+        ]
+    
+    def get_full_name(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.full_name
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_title(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.title or "No title"
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_profile_image(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            if candidate.profile_image:
+                return self.context['request'].build_absolute_uri(candidate.profile_image.url)
+        except (Candidate.DoesNotExist, ValueError):
+            pass
+        return None
+    
+    def get_skills(self, obj):
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            # Return the skills list directly from the Candidate model
+            return candidate.skills or []
+        except Candidate.DoesNotExist:
+            return []
