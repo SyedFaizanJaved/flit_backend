@@ -132,39 +132,64 @@ class ReferenceResponseView(APIView):
         
         if not token or action not in ['accept', 'deny']:
             return Response(
-                {'error': 'Invalid request'}, 
+                {'error': 'Token and valid action (accept/deny) are required'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         try:
+            # First check if token exists and is not expired
             ref_request = ReferenceRequest.objects.get(
                 token=token,
-                status='pending',
                 expires_at__gt=timezone.now()
             )
             
+            # Check if the reference request can be updated
+            if ref_request.status not in ['pending', 'accepted']:
+                return Response(
+                    {'error': f'This reference request has already been {ref_request.get_status_display().lower()}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Update status based on action
-            ref_request.status = 'accepted' if action == 'accept' else 'declined'
+            new_status = 'accepted' if action == 'accept' else 'declined'
             
-            # Save reply message if provided and request is accepted
-            if action == 'accept' and 'reply_message' in request.data:
-                ref_request.reply_message = request.data['reply_message']
-            
-            ref_request.save()
-            
-            # TODO: Send notification to candidate about the response
-            
-            return Response({
-                'status': 'success',
-                'message': f'Reference request {ref_request.get_status_display()}',
-                'reference_request': ReferenceRequestSerializer(ref_request).data
-            })
+            # Only update if status is changing
+            if ref_request.status != new_status:
+                ref_request.status = new_status
+                
+                # Save reply message if provided and request is being accepted
+                if action == 'accept' and 'reply_message' in request.data:
+                    ref_request.reply_message = request.data['reply_message']
+                
+                ref_request.save()
+                
+                # TODO: Send notification to candidate about the response
+                
+                return Response({
+                    'status': 'success',
+                    'message': f'Reference request has been {new_status}',
+                    'reference_request': ReferenceRequestSerializer(ref_request).data
+                })
+            else:
+                return Response({
+                    'status': 'success',
+                    'message': f'Reference request is already {ref_request.get_status_display().lower()}',
+                    'reference_request': ReferenceRequestSerializer(ref_request).data
+                })
             
         except ReferenceRequest.DoesNotExist:
-            return Response(
-                {'error': 'Invalid or expired token'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
+            try:
+                # Check if token exists but is expired
+                ReferenceRequest.objects.get(token=token)
+                return Response(
+                    {'error': 'This reference link has expired'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except ReferenceRequest.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid reference token'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
 
 def send_reference_request_email(ref_request, request):
