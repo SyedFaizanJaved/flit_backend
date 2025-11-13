@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
+from candidates.models import Candidate
 
 User = get_user_model()
 
@@ -243,100 +244,56 @@ class CandidateActionDetailSerializer(serializers.ModelSerializer):
     profile_image = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
     
+    # Define fields directly without source
+    candidate_id = serializers.CharField(read_only=True)
+    employer_id = serializers.PrimaryKeyRelatedField(source='employer', read_only=True)
+    
     class Meta:
         model = CandidateAction
         fields = [
             'id', 'user_id', 'action', 'created_at',
-            'full_name', 'title', 'profile_image', 'skills'
+            'full_name', 'title', 'profile_image', 'skills',
+            'candidate_id', 'employer_id'
         ]
-        read_only_fields = ('user_id',)
-    
+        read_only_fields = fields  # Make all fields read-only
+        
     def get_user_id(self, obj):
-        from candidates.models import Candidate
         try:
             candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.user.id
+            return candidate.user.id if hasattr(candidate, 'user') else None
         except (Candidate.DoesNotExist, AttributeError):
             return None
     
     def get_full_name(self, obj):
-        from candidates.models import Candidate
         try:
             candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.full_name
+            return getattr(candidate, 'full_name', None)
         except Candidate.DoesNotExist:
             return None
     
     def get_title(self, obj):
-        from candidates.models import Candidate
         try:
             candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.title or "No title"
+            return getattr(candidate, 'title', 'No title')
         except Candidate.DoesNotExist:
             return None
     
     def get_profile_image(self, obj):
-        from candidates.models import Candidate
         try:
             candidate = Candidate.objects.get(id=obj.candidate_id)
-            if candidate.profile_image:
-                return self.context['request'].build_absolute_uri(candidate.profile_image.url)
-        except (Candidate.DoesNotExist, ValueError):
+            if hasattr(candidate, 'profile_image') and candidate.profile_image:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(candidate.profile_image.url)
+                return candidate.profile_image.url
+        except (Candidate.DoesNotExist, ValueError, AttributeError):
             pass
         return None
     
     def get_skills(self, obj):
-        from candidates.models import Candidate
         try:
             candidate = Candidate.objects.get(id=obj.candidate_id)
-            # Return the skills list directly from the Candidate model
-            return candidate.skills or []
-        except Candidate.DoesNotExist:
-            return []
-    """Serializer for candidate actions with candidate details"""
-    full_name = serializers.SerializerMethodField()
-    title = serializers.SerializerMethodField()
-    profile_image = serializers.SerializerMethodField()
-    skills = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = CandidateAction
-        fields = [
-            'id', 'candidate_id', 'action', 'created_at',
-            'full_name', 'title', 'profile_image', 'skills'
-        ]
-    
-    def get_full_name(self, obj):
-        from candidates.models import Candidate
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.full_name
-        except Candidate.DoesNotExist:
-            return None
-    
-    def get_title(self, obj):
-        from candidates.models import Candidate
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.title or "No title"
-        except Candidate.DoesNotExist:
-            return None
-    
-    def get_profile_image(self, obj):
-        from candidates.models import Candidate
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            if candidate.profile_image:
-                return self.context['request'].build_absolute_uri(candidate.profile_image.url)
-        except (Candidate.DoesNotExist, ValueError):
-            pass
-        return None
-    
-    def get_skills(self, obj):
-        from candidates.models import Candidate
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            # Return the skills list directly from the Candidate model
-            return candidate.skills or []
+            # Safely get skills with a default empty list
+            return getattr(candidate, 'skills', [])
         except Candidate.DoesNotExist:
             return []

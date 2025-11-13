@@ -218,11 +218,12 @@ class JobApplicationListSerializer(serializers.ModelSerializer):
     job_title = serializers.CharField(source='job.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
     candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
+    candidate_profile_image = serializers.ImageField(source='candidate.profile_image', read_only=True)
 
     class Meta:
         model = JobApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'job_title', 'company_name', 'status',
-                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected', 'coverLetter')
+                  'candidate_profile_image', 'applied_at', 'is_shortlisted', 'is_rejected', 'coverLetter')
 
 
 class ProjectApplicationListSerializer(serializers.ModelSerializer):
@@ -235,8 +236,10 @@ class ProjectApplicationListSerializer(serializers.ModelSerializer):
         source='project.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
     candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
+    candidate_profile_image = serializers.ImageField(source='candidate.profile_image', read_only=True)
+
 
     class Meta:
         model = ProjectApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'project_title', 'company_name', 'status',
-                  'coverLetter', 'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
+                  'candidate_profile_image','coverLetter', 'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')

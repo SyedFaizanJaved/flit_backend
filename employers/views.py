@@ -78,17 +78,11 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """
-        This view should return a list of pass candidate actions
-        for the currently authenticated employer.
+        Return all candidate actions for the currently authenticated employer.
         """
-        # Only show candidates with 'accept' action
-        queryset = CandidateAction.objects.filter(
-            employer__user=self.request.user,
-            action='pass'  # Only include accepted candidates
-        )
-        
-        # Add select_related and prefetch_related for better performance
-        return queryset.select_related('employer')
+        return CandidateAction.objects.filter(
+            employer__user=self.request.user
+        ).select_related('employer')
     
     def perform_create(self, serializer):
         """
@@ -97,6 +91,46 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
         employer = self.request.user.employer_profile
         serializer.save(employer=employer)
     
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Update a candidate action (e.g., change from 'pass' to 'reject' or vice versa)
+        """
+        try:
+            # Get the candidate action for the current employer
+            instance = self.get_queryset().get(pk=kwargs.get('pk'))
+            
+            # Ensure the employer can only update their own actions
+            if instance.employer.user != request.user:
+                return Response(
+                    {"detail": "You can only update your own candidate actions"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            
+            # Return the updated data with the detail serializer
+            detail_serializer = CandidateActionDetailSerializer(instance)
+            return Response(detail_serializer.data)
+            
+        except CandidateAction.DoesNotExist:
+            return Response(
+                {"detail": "Candidate action not found or you don't have permission to update it"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'])
+    def list_ids(self, request):
+        """
+        List all candidate action IDs for the current employer (for debugging).
+        """
+        action_ids = list(self.get_queryset().values_list('id', flat=True))
+        return Response({
+            'count': len(action_ids),
+            'action_ids': action_ids
+        })
+
     @action(detail=False, methods=['get'])
     def by_candidate(self, request, candidate_id=None):
         """
@@ -109,6 +143,43 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
         except CandidateAction.DoesNotExist:
             return Response(
                 {"detail": "No action found for this candidate."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=True, methods=['patch'])
+    def update_status(self, request, pk=None):
+        """
+        Update candidate status from 'reject' to 'pass' with confirmation.
+        """
+        try:
+            # Get the candidate action for the current employer
+            instance = self.get_queryset().get(pk=pk)
+            
+            # Ensure the employer can only update their own actions
+            if instance.employer.user != request.user:
+                return Response(
+                    {"detail": "You can only update your own candidate actions"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if the candidate is currently rejected
+            if instance.action != 'reject':
+                return Response(
+                    {"detail": "This candidate is not in 'rejected' status."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update the status to 'pass'
+            instance.action = 'pass'
+            instance.save()
+            
+            # Return the updated data with the detail serializer
+            detail_serializer = CandidateActionDetailSerializer(instance, context={'request': request})
+            return Response(detail_serializer.data)
+            
+        except CandidateAction.DoesNotExist:
+            return Response(
+                {"detail": "Candidate action not found or you don't have permission to update it"},
                 status=status.HTTP_404_NOT_FOUND
             )
     

@@ -75,6 +75,11 @@ class ProjectApplicationListView(generics.ListCreateAPIView):
         if self.request.method == "POST":
             return ProjectApplicationSerializer
         return ProjectApplicationListSerializer
+        
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
     def get_queryset(self):
         if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":

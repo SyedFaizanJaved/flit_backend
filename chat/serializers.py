@@ -5,20 +5,26 @@ from candidates.models import Candidate
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
     """
     Serializer for listing candidates that an employer has chatted with.
-    Shows candidate details like name, title, etc.
+    Shows candidate details like name, title, profile image, etc.
     """
     user_id = serializers.IntegerField(source='user.id')
     full_name = serializers.SerializerMethodField()
     title = serializers.CharField(allow_null=True)
+    profile_image = serializers.SerializerMethodField()
     last_message_time = serializers.DateTimeField(read_only=True)
     unread_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Candidate
-        fields = ('user_id', 'full_name', 'title', 'last_message_time', 'unread_count')
+        fields = ('user_id', 'full_name', 'title', 'profile_image', 'last_message_time', 'unread_count')
     
     def get_full_name(self, obj):
         return f"{obj.user.first_name} {obj.user.last_name}"
+        
+    def get_profile_image(self, obj):
+        if obj.profile_image:
+            return obj.profile_image.url
+        return None
 
 
 
@@ -26,12 +32,12 @@ class CandidateConversationSummarySerializer(serializers.ModelSerializer):
     """
     Serializer for listing candidates that an employer has chatted with.
     Used on the employer side to list candidates they have chatted with.
-    Shows candidate details like name, title, etc.
+    Shows candidate details like name, title, profile image, etc.
     """
     id = serializers.IntegerField(source='id', read_only=True)
     name = serializers.SerializerMethodField()
     title = serializers.SerializerMethodField()
-    profile_picture = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
     last_seen = serializers.DateTimeField(source='last_login', read_only=True)
     last_message_time = serializers.DateTimeField(read_only=True)
     unread_count = serializers.IntegerField(read_only=True)
@@ -40,9 +46,26 @@ class CandidateConversationSummarySerializer(serializers.ModelSerializer):
         from django.contrib.auth import get_user_model
         model = get_user_model()
         fields = (
-            'id', 'name', 'title', 'profile_picture', 
+            'id', 'name', 'title', 'profile_image', 
             'last_seen', 'last_message_time', 'unread_count'
         )
+    
+    def get_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}"
+    
+    def get_title(self, obj):
+        try:
+            return obj.candidate_profile.title
+        except:
+            return None
+    
+    def get_profile_image(self, obj):
+        try:
+            if hasattr(obj, 'candidate_profile') and obj.candidate_profile.profile_image:
+                return obj.candidate_profile.profile_image.url
+        except:
+            pass
+        return None
     
     def get_candidate_info(self, obj):
         """Helper method to get candidate info"""
@@ -52,7 +75,7 @@ class CandidateConversationSummarySerializer(serializers.ModelSerializer):
             return {
                 'name': f"{candidate.user.first_name} {candidate.user.last_name}",
                 'title': candidate.title,
-                'profile_picture': candidate.profile_picture.url if candidate.profile_picture else None
+                'profile_image': candidate.profile_image.url if candidate.profile_image else None
             }
         except Candidate.DoesNotExist:
             return {
