@@ -31,8 +31,8 @@ class Candidate(models.Model):
         ('junior', 'Junior'),
         ('beginner', 'Beginner'),
         ('intermediate', 'Intermediate'),
-        ('mid-level', 'Mid-level'),
-        ('senior-level', 'Senior-level'),
+        ('mid', 'Mid'),
+        ('senior', 'Senior'),
     ]
     
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='candidate_profile')
@@ -87,9 +87,9 @@ class Candidate(models.Model):
     portfolio_completed = models.BooleanField(default=False)
     privacy_completed = models.BooleanField(default=False)
 
+
     # Ml Endpoints
     candidate_tags = models.JSONField(default=list,blank=True, null=True)  # List of tags for categorization
-    candidate_index_id = models.CharField(max_length=200, blank=True, null=True)  # ID in vector DB for candidate
     candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
     
     # Timestamps

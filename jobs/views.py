@@ -1,9 +1,11 @@
 from rest_framework import viewsets, status, permissions, mixins, authentication
-from rest_framework.decorators import action, authentication_classes, permission_classes
+from rest_framework.decorators import action, authentication_classes, permission_classes, api_view
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.parsers import JSONParser
+from django.shortcuts import get_object_or_404
 from .models import Job, JobSkill, JobLanguage
 from .serializers import (
     JobSerializer, JobListSerializer, JobCreateSerializer, JobUpdateSerializer,
@@ -11,6 +13,10 @@ from .serializers import (
 )
 from companies.models import Company
 from accounts.permissions import IsEmployer
+import requests
+import time
+from django.conf import settings
+        
 
 
 
@@ -147,12 +153,190 @@ class JobViewSet(viewsets.ModelViewSet):
         return response
         
     def update(self, request, *args, **kwargs):
+   
+        # First, perform the normal update
         response = super().update(request, *args, **kwargs)
+        
         if response.status_code == status.HTTP_200_OK:
-            response.data = {
-                'message': 'Job updated successfully',
-                'data': response.data
-            }
+            try:
+                job = self.get_object()
+                
+                # Prepare data for ML API
+                ml_api_url = f"https://dev-flit-ai.neurooceans.com/update_job_data/{job.id}"
+                ml_payload = {
+                    "title": job.title,
+                    "description": job.description,
+                    "company_name": job.company.company_name if hasattr(job, 'company') else "",
+                    "employment_type": job.employmentType,
+                    "experience_level": job.experienceLevel,
+                    "work_style": job.workStyle,
+                    "category": job.category,
+                    "salary_range_min": job.salaryRangeMin,
+                    "salary_range_max": job.salaryRangeMax,
+                    "benefits": job.benefits or [],
+                    "application_deadline": job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                    "status": job.status
+                }
+                
+                # Call ML API with retry logic
+                max_retries = 2
+                timeout_seconds = 30  # Increased from 10 to 30 seconds
+                
+                for attempt in range(max_retries + 1):
+                    try:
+                        print(f"Calling ML API (attempt {attempt + 1}/{max_retries + 1})...")
+                        ml_response = requests.patch(
+                            ml_api_url,
+                            json=ml_payload,
+                            headers={"Content-Type": "application/json"},
+                            timeout=timeout_seconds
+                        )
+                        break  # If successful, exit the retry loop
+                    except requests.exceptions.Timeout:
+                        if attempt == max_retries:
+                            raise  # Re-raise the timeout if we've exhausted all retries
+                        print(f"ML API timeout (attempt {attempt + 1}), retrying...")
+                        time.sleep(1)  # Wait 1 second before retry
+                    except requests.exceptions.RequestException as e:
+                        # For other request exceptions, log and re-raise
+                        print(f"ML API request failed: {str(e)}")
+                        raise
+                
+                if ml_response.status_code == 200:
+                    try:
+                        ml_data = ml_response.json()
+                        # Update job with ML-enhanced data
+                        if 'job_profile_summary' in ml_data:
+                            job.job_profile_summary = ml_data['job_profile_summary']
+                        if 'job_tags' in ml_data:
+                            job.job_tags = ml_data['job_tags']
+                        job.save()
+                        
+                        # Create response data in the exact format we want
+                        response_data = {
+                            'message': 'Job updated successfully',
+                            'ml_success': True,  # ML API call was successful
+                            'job_profile_summary': ml_data.get('job_profile_summary', ''),
+                            'job_tags': ml_data.get('job_tags', []),
+                            'data': {
+                                'title': job.title,
+                                'description': job.description,
+                                'job_tags': ml_data.get('job_tags', []),
+                                'location': job.location,
+                                'workStyle': job.workStyle,
+                                'category': job.category,
+                                'experienceLevel': job.experienceLevel,
+                                'employmentType': job.employmentType,
+                                'hasTemporaryOption': job.hasTemporaryOption,
+                                'temporaryDuration': job.temporaryDuration,
+                                'salaryRangeMin': job.salaryRangeMin,
+                                'salaryRangeMax': job.salaryRangeMax,
+                                'benefits': job.benefits or [],
+                                'applicationDeadline': job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                                'start_date': job.start_date.isoformat() if job.start_date else None,
+                                'status': job.status,
+                                'company_name': job.company.company_name if hasattr(job, 'company') and job.company else None
+                            }
+                        }
+                        
+                        # Update the response with the formatted data
+                        response.data = response_data
+                    except Exception as e:
+                        print(f"Error processing ML API response: {str(e)}")
+                        print(f"Response content: {ml_response.text}")
+                        # Return the original response data with success message
+                        response.data = {
+                            'message': 'Job updated successfully (ML processing failed - invalid response format)',
+                            'ml_success': False,  # ML API call failed
+                            'job_profile_summary': None,
+                            'job_tags': [],
+                            'data': {
+                                'title': job.title,
+                                'description': job.description,
+                                'job_tags': [],
+                                'location': job.location,
+                                'workStyle': job.workStyle,
+                                'category': job.category,
+                                'experienceLevel': job.experienceLevel,
+                                'employmentType': job.employmentType,
+                                'hasTemporaryOption': job.hasTemporaryOption,
+                                'temporaryDuration': job.temporaryDuration,
+                                'salaryRangeMin': job.salaryRangeMin,
+                                'salaryRangeMax': job.salaryRangeMax,
+                                'benefits': job.benefits or [],
+                                'applicationDeadline': job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                                'start_date': job.start_date.isoformat() if job.start_date else None,
+                                'status': job.status,
+                                'company_name': job.company.company_name if hasattr(job, 'company') and job.company else None
+                            }
+                        }
+                else:
+                    # If ML API fails, still return success but log the error
+                    error_msg = f"ML API returned status code {ml_response.status_code}"
+                    print(error_msg)
+                    print(f"Response content: {ml_response.text}")
+                    response.data = {
+                        'message': f'Job updated successfully (ML processing failed - {error_msg})',
+                        'ml_success': False,  # ML API call failed
+                        'job_profile_summary': None,
+                        'job_tags': [],
+                        'data': {
+                            'title': job.title,
+                            'description': job.description,
+                            'job_tags': [],
+                            'location': job.location,
+                            'workStyle': job.workStyle,
+                            'category': job.category,
+                            'experienceLevel': job.experienceLevel,
+                            'employmentType': job.employmentType,
+                            'hasTemporaryOption': job.hasTemporaryOption,
+                            'temporaryDuration': job.temporaryDuration,
+                            'salaryRangeMin': job.salaryRangeMin,
+                            'salaryRangeMax': job.salaryRangeMax,
+                            'benefits': job.benefits or [],
+                            'applicationDeadline': job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                            'start_date': job.start_date.isoformat() if job.start_date else None,
+                            'status': job.status,
+                            'company_name': job.company.company_name if hasattr(job, 'company') and job.company else None
+                        }
+                    }
+                    
+            except Exception as e:
+                # If any error occurs with ML API, still return success but log the error
+                error_msg = f"Error calling ML API: {str(e)}"
+                print(error_msg)
+                if 'ml_response' in locals():
+                    print(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
+                    print(f"Response content: {getattr(ml_response, 'text', 'N/A')}")
+                
+                # Get the latest job data
+                job = self.get_object()
+                response.data = {
+                    'message': f'Job updated successfully (ML processing failed - {str(e)})',
+                    'ml_success': False,  # ML API call failed
+                    'job_profile_summary': None,
+                    'job_tags': [],
+                    'data': {
+                        'title': job.title,
+                        'description': job.description,
+                        'job_tags': [],
+                        'location': job.location,
+                        'workStyle': job.workStyle,
+                        'category': job.category,
+                        'experienceLevel': job.experienceLevel,
+                        'employmentType': job.employmentType,
+                        'hasTemporaryOption': job.hasTemporaryOption,
+                        'temporaryDuration': job.temporaryDuration,
+                        'salaryRangeMin': job.salaryRangeMin,
+                        'salaryRangeMax': job.salaryRangeMax,
+                        'benefits': job.benefits or [],
+                        'applicationDeadline': job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                        'start_date': job.start_date.isoformat() if job.start_date else None,
+                        'status': job.status,
+                        'company_name': job.company.company_name if hasattr(job, 'company') and job.company else None
+                    }
+                }
+        
         return response
         
     def destroy(self, request, *args, **kwargs):
