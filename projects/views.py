@@ -10,6 +10,9 @@ from .serializers import (
 )
 from accounts.permissions import IsEmployer
 from rest_framework.filters import SearchFilter, OrderingFilter
+import requests
+import time
+from django.conf import settings
 
 
 class PublicAuthentication(authentication.BaseAuthentication):
@@ -89,12 +92,108 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return response
         
     def update(self, request, *args, **kwargs):
+       
+        # First, perform the normal update
         response = super().update(request, *args, **kwargs)
+        
         if response.status_code == status.HTTP_200_OK:
-            response.data = {
-                'message': 'Project updated successfully',
-                'data': response.data
-            }
+            try:
+                project = self.get_object()
+                
+                # Prepare data for ML API
+                ml_api_url = f"https://dev-flit-ai.neurooceans.com/update_project_data/{project.id}"
+                ml_payload = {
+                    "title": project.title,
+                    "description": project.description,
+                    "company_name": project.company.company_name if hasattr(project, 'company') and project.company else "",
+                    "category": project.category,
+                    "skills": project.skills if hasattr(project, 'skills') else [],
+                    "paymentType": project.paymentType,
+                    "paymentAmount": project.paymentAmount,
+                    "estimatedHours": project.estimatedHours,
+                    "deadline": project.deadline.isoformat() if project.deadline else None,
+                    "status": project.status
+                }
+                
+                # Call ML API with retry logic
+                max_retries = 2
+                timeout_seconds = 30
+                
+                for attempt in range(max_retries + 1):
+                    try:
+                        print(f"Calling Project ML API (attempt {attempt + 1}/{max_retries + 1})...")
+                        ml_response = requests.patch(
+                            ml_api_url,
+                            json=ml_payload,
+                            headers={"Content-Type": "application/json"},
+                            timeout=timeout_seconds
+                        )
+                        break  # If successful, exit the retry loop
+                    except requests.exceptions.Timeout:
+                        if attempt == max_retries:
+                            raise  # Re-raise the timeout if we've exhausted all retries
+                        print(f"Project ML API timeout (attempt {attempt + 1}), retrying...")
+                        time.sleep(1)
+                    except requests.exceptions.RequestException as e:
+                        print(f"Project ML API request failed: {str(e)}")
+                        raise
+                
+                if ml_response.status_code == 200:
+                    try:
+                        ml_data = ml_response.json()
+                        # Update project with ML-enhanced data
+                        if 'project_profile_summary' in ml_data:
+                            project.project_profile_summary = ml_data['project_profile_summary']
+                        if 'project_tags' in ml_data:
+                            project.project_tags = ml_data['project_tags']
+                        project.save()
+                        
+                        # Format the response with ML data
+                        response.data = {
+                            'message': 'Project updated successfully',
+                            'ml_success': True,
+                            'project_profile_summary': ml_data.get('project_profile_summary', ''),
+                            'project_tags': ml_data.get('project_tags', []),
+                            'data': response.data
+                        }
+                    except Exception as e:
+                        print(f"Error processing Project ML API response: {str(e)}")
+                        print(f"Response content: {ml_response.text}")
+                        response.data = {
+                            'message': 'Project updated successfully (ML processing failed - invalid response format)',
+                            'ml_success': False,
+                            'project_profile_summary': None,
+                            'project_tags': [],
+                            'data': response.data
+                        }
+                else:
+                    error_msg = f"Project ML API returned status code {ml_response.status_code}"
+                    print(error_msg)
+                    print(f"Response content: {ml_response.text}")
+                    response.data = {
+                        'message': f'Project updated successfully (ML processing failed - {error_msg})',
+                        'ml_success': False,
+                        'project_profile_summary': None,
+                        'project_tags': [],
+                        'data': response.data
+                    }
+                    
+            except Exception as e:
+                error_msg = f"Error calling Project ML API: {str(e)}"
+                print(error_msg)
+                if 'ml_response' in locals():
+                    print(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
+                    print(f"Response content: {getattr(ml_response, 'text', 'N/A')}")
+                
+                project = self.get_object()
+                response.data = {
+                    'message': f'Project updated successfully (ML processing failed - {str(e)})',
+                    'ml_success': False,
+                    'project_profile_summary': None,
+                    'project_tags': [],
+                    'data': response.data
+                }
+        
         return response
         
     def destroy(self, request, *args, **kwargs):

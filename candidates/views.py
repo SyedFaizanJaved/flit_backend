@@ -1,7 +1,11 @@
+
 import json
 import logging
 import os
 import requests
+
+# Set up logging
+logger = logging.getLogger(__name__)
 from django.conf import settings
 from projects.models import Project, ProjectSkill  # Add ProjectSkill import
 from django.utils import timezone
@@ -23,7 +27,8 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from accounts.views import BaseRoleRegistrationView
 from jobs.models import Job
-from .models import  ReferenceRequest
+from .models import ReferenceRequest
+from .serializers import CandidateSerializer, CandidateProfileUpdateSerializer
 from jobs.serializers import JobListSerializer
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
@@ -646,12 +651,14 @@ class CandidateLatestProjectsView(DashboardBaseView):
             'ml_success': ml_success
         })
 
-class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
-    """
-    ViewSet for candidate endpoints.
-    """
+from .serializers import CandidateSerializer
+
+class CandidateViewSet(viewsets.ModelViewSet):
+    """ViewSet for candidate endpoints."""
+    queryset = Candidate.objects.all()
+    serializer_class = CandidateSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = PageNumberPagination
     page_size = 10
     page_size_query_param = 'page_size'
@@ -795,172 +802,306 @@ class CandidateViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
         data['latest_projects'] = ProjectListSerializer(projects_qs, many=True).data
         return Response(data, status=status.HTTP_200_OK)
 
+    def _update_ml_candidate_data(self, candidate_id, data):
+        """
+        Update candidate data in the ML service
+        Returns:
+            tuple: (success: bool, message: str, data: dict)
+        """
+        try:
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/update_candidate_data/{candidate_id}"
+            logger.info(f"Sending data to ML API: {ml_api_url}")
+            logger.debug(f"Data being sent: {data}")
+            
+            # Prepare headers without API key
+            headers = {
+                'Content-Type': 'application/json'
+            }
+            
+            try:
+                # First try with PATCH
+                response = requests.patch(
+                    ml_api_url,
+                    json=data,
+                    headers=headers,
+                    timeout=30  # 30 seconds timeout
+                )
+                
+                # If PATCH is not allowed (405), try with PUT
+                if response.status_code == 405:
+                    logger.info("PATCH not allowed, trying PUT")
+                    response = requests.put(
+                        ml_api_url,
+                        json=data,
+                        headers=headers,
+                        timeout=30
+                    )
+                
+                # Log the raw response for debugging
+                logger.debug(f"ML API response status: {response.status_code}")
+                logger.debug(f"ML API response content: {response.text}")
+                
+                response.raise_for_status()
+                
+                try:
+                    response_data = response.json()
+                    # Consider it successful if we get a 200 status and valid JSON with candidate data
+                    if response.status_code == 200 and 'id' in response_data:
+                        logger.info(f"ML API update successful for candidate {candidate_id}")
+                        return True, "Profile updated successfully in ML service", response_data
+                    else:
+                        error_msg = response_data.get('message', 
+                            f"Status: {response.status_code}, Response: {response.text}")
+                        logger.error(f"ML API error for candidate {candidate_id}: {error_msg}")
+                        logger.debug(f"Full response headers: {dict(response.headers)}")
+                        return False, f"ML service error: {error_msg}", response_data
+                        
+                except json.JSONDecodeError:
+                    # If response is not JSON, but status is 200, consider it a success
+                    if response.status_code == 200:
+                        logger.info(f"ML API update successful (non-JSON response) for candidate {candidate_id}")
+                        return True, "Profile updated successfully in ML service", {}
+                    raise  # Re-raise if not 200
+                
+            except requests.exceptions.HTTPError as e:
+                error_msg = f"HTTP Error: {str(e)}"
+                logger.error(f"{error_msg} for candidate {candidate_id}")
+                return False, error_msg, None
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error connecting to ML service: {str(e)}"
+            logger.error(f"{error_msg} for candidate {candidate_id}")
+            return False, error_msg, None
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON response from ML service: {str(e)}"
+            logger.error(f"{error_msg} for candidate {candidate_id}")
+            return False, error_msg, None
+            
+        except Exception as e:
+            error_msg = f"Unexpected error updating ML service: {str(e)}"
+            logger.error(f"{error_msg} for candidate {candidate_id}", exc_info=True)
+            return False, error_msg, None
+            
+    def _parse_form_data(self, data):
+        """Helper method to parse form data"""
+        if not data:
+            return data
+            
+        if isinstance(data, dict):
+            # Handle list fields
+            for key in ['skills', 'languages', 'preferred_locations']:
+                if key in data:
+                    data[key] = self._parse_json_list(data.get(key))
+            
+            # Handle boolean fields
+            for key in ['is_remote', 'is_available']:
+                if key in data:
+                    data[key] = self._parse_bool(data.get(key))
+            
+            # Handle numeric fields
+            for key in ['min_salary', 'max_salary']:
+                if key in data and data.get(key) not in [None, '']:
+                    parsed = self._parse_int(data.get(key))
+                    if parsed is not None:
+                        data[key] = parsed
+        
+        return data
+        
+    def _parse_json_list(self, value):
+        """Parse a JSON list from string if needed"""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return [value] if value.strip() else []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+        
+    def _parse_bool(self, value):
+        """Parse boolean value from various formats"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes')
+        return bool(value)
+        
+    def _parse_int(self, value):
+        """Parse integer value from string"""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+            
+    def _prepare_ml_data(self, candidate):
+        """Prepare candidate data for ML API update"""
+        if not candidate or not hasattr(candidate, 'user'):
+            return None
+            
+        return {
+            'first_name': candidate.user.first_name or '',
+            'last_name': candidate.user.last_name or '',
+            'email': getattr(candidate.user, 'email', ''),
+            'profile_data': {
+                'headline': getattr(candidate, 'headline', '') or '',
+                'summary': getattr(candidate, 'summary', '') or '',
+                'skills': [skill.name for skill in getattr(candidate, 'skills', []) if hasattr(skill, 'name')],
+                'resume_url': getattr(candidate, 'resume_url', '') or '',
+                'profile_picture': candidate.profile_picture.url if hasattr(candidate, 'profile_picture') and candidate.profile_picture else '',
+                'work_experience': [
+                    {
+                        'title': getattr(exp, 'title', ''),
+                        'company': getattr(exp, 'company', ''),
+                        'description': getattr(exp, 'description', ''),
+                        'start_date': exp.start_date.isoformat() if hasattr(exp, 'start_date') and exp.start_date else None,
+                        'end_date': exp.end_date.isoformat() if hasattr(exp, 'end_date') and exp.end_date else None,
+                        'is_current': getattr(exp, 'is_current', False)
+                    } for exp in getattr(candidate, 'work_experiences', []).all() if hasattr(candidate, 'work_experiences')
+                ] if hasattr(candidate, 'work_experiences') else [],
+                'education': [
+                    {
+                        'degree': getattr(edu, 'degree', ''),
+                        'field_of_study': getattr(edu, 'field_of_study', ''),
+                        'institution': getattr(edu, 'institution', ''),
+                        'start_date': edu.start_date.isoformat() if hasattr(edu, 'start_date') and edu.start_date else None,
+                        'end_date': edu.end_date.isoformat() if hasattr(edu, 'end_date') and edu.end_date else None
+                    } for edu in getattr(candidate, 'educations', []).all() if hasattr(candidate, 'educations')
+                ] if hasattr(candidate, 'educations') else []
+            }
+        }
+        
     @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[permissions.IsAuthenticated])
     def profile(self, request):
-        if getattr(getattr(request.user, 'role', None), 'name', None) != "candidate":
-            raise PermissionDenied("Only candidates can access this endpoint.")
-        
-        # First try to get existing candidate
-        candidate = Candidate.objects.filter(user=request.user).first()
-        
-        # Only create new candidate if one doesn't exist
-        if not candidate:
-            def create_candidate():
-                # Get the maximum ID currently in use
-                max_id = Candidate.objects.aggregate(models.Max('id'))['id__max']
-                next_id = (max_id or 0) + 1
-                
-                try:
-                    # Create new candidate with the next available ID
-                    return Candidate.objects.create(
-                        id=next_id,
-                        user=request.user,
-                        full_name=f"{request.user.first_name} {request.user.last_name}"
-                    )
-                except IntegrityError:
-                    # If there's a race condition and ID is already taken, retry
-                    return create_candidate()
+        """
+        Retrieve or update the current candidate's profile.
+        """
+        # Get or create candidate profile
+        candidate = self._get_candidate_profile(request.user)
+        if isinstance(candidate, Response):
+            return candidate
             
-            # Create the candidate in a new transaction
-            candidate = create_candidate()
         if request.method == 'GET':
-            data = CandidateSerializer(candidate).data
-            return Response(data, status=status.HTTP_200_OK)
-        try:
-            if hasattr(request, 'data') and hasattr(request.data, 'dict'):
-                data = request.data.dict()
-            else:
-                data = request.data if hasattr(request, 'data') else {}
-        except Exception:
-            data = request.POST.copy() if hasattr(request, 'POST') else {}
-        def parse_bool(v):
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, str):
-                return v.lower() in ['true', '1', 'yes']
-            return bool(v)
-        def parse_int(v):
-            try:
-                return int(v)
-            except Exception:
-                return None
-        def parse_json_list(v):
-            if v is None:
-                return []
-            if isinstance(v, (list, tuple)):
-                return list(v)
-            if isinstance(v, str):
-                try:
-                    parsed = json.loads(v)
-                    return parsed if isinstance(parsed, list) else []
-                except Exception:
-                    return []
-            return []
-        for key in ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']:
-            if key in data:
-                data[key] = parse_json_list(data.get(key))
-        for key in ['is_remote', 'is_available']:
-            if key in data:
-                data[key] = parse_bool(data.get(key))
-        for key in ['min_salary', 'max_salary']:
-            if key in data and data.get(key) not in [None, '']:
-                parsed = parse_int(data.get(key))
-                if parsed is not None:
-                    data[key] = parsed
-        resume_file = request.FILES.get('resume_file')
-        if resume_file:
-            data['resume_url'] = self._save_file(resume_file, 'candidates/resumes', request)
+            serializer = self.get_serializer(candidate)
+            return Response(serializer.data)
             
-            # Parse CV using ML service
-            try:
-                parse_url = 'https://dev-flit-ai.neurooceans.com/parse_cv'
-                
-                # Reset file pointer and read content
-                resume_file.seek(0)
-                resume_content = resume_file.read()
-                
-                files = {
-                    'resume_file': (resume_file.name, resume_content, resume_file.content_type)
-                }
-                
-                data_payload = {
-                    'user_id': str(getattr(request.user, 'id', '')),
-                    'resume_url': request.build_absolute_uri(data['resume_url'])
-                }
-                
-                # Make the request to parse CV without API key
-                resp = requests.post(parse_url, files=files, data=data_payload, timeout=60)
-                
-                if resp and resp.ok:
-                    cv_data = resp.json()
-                    # Process the parsed CV data
-                    if cv_data.get('success', False):
-                        update_data = {}
-                        
-                        if 'skills' in cv_data:
-                            update_data['skills'] = cv_data['skills']
-                        if 'experience' in cv_data:
-                            update_data['experience'] = cv_data['experience']
-                        if 'education' in cv_data:
-                            update_data['education'] = cv_data['education']
-                        
-                        if update_data:
-                            # Update the candidate with parsed data
-                            for key, value in update_data.items():
-                                setattr(candidate, key, value)
-                            candidate.save()
-                            logger.info(f"Successfully parsed and updated CV data for user {request.user.id}")
-                else:
-                    logger.warning(f"CV parsing failed with status {resp.status_code}: {resp.text}")
-                            
-            except Exception as e:
-                # Log the error but don't fail the request
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error parsing CV: {str(e)}", exc_info=True)
+        # Handle PUT/PATCH requests
+        partial = request.method == 'PATCH'
+        serializer = self.get_serializer(candidate, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
         
+        # Handle file uploads
+        if 'profile_picture' in request.FILES:
+            serializer.validated_data['profile_picture'] = request.FILES['profile_picture']
+            
+        if 'resume_file' in request.FILES:
+            resume_url = self._save_file(request.FILES['resume_file'], 'candidates/resumes', request)
+            if resume_url:
+                serializer.validated_data['resume_url'] = resume_url
+        
+        # Save the updated profile
+        self.perform_update(serializer)
+        
+        # Initialize response data with updated candidate data
+        response_data = serializer.data
+        
+        # Update ML service
+        ml_success = False
+        ml_message = 'ML service not called'
+        
+        try:
+            ml_data = self._prepare_ml_data(candidate)
+            if ml_data:
+                ml_success, ml_message, _ = self._update_ml_candidate_data(candidate.id, ml_data)
+        except Exception as e:
+            logger.error(f"Error updating ML service: {str(e)}")
+            ml_success = False
+            ml_message = f"Error updating ML service: {str(e)}"
+        
+        # Add ML API status to the response
+        if isinstance(response_data, dict):
+            response_data['ml_api_status'] = {
+                'success': ml_success,
+                'message': ml_message
+            }
+        
+        # Clear prefetch cache if it exists
+        if getattr(candidate, '_prefetched_objects_cache', None):
+            candidate._prefetched_objects_cache = {}
+            
+        # Handle video file upload and analysis
         video_file = request.FILES.get('video_file')
         if video_file:
-            data['video_intro_url'] = self._save_file(video_file, 'candidates/videos', request)
-        serializer = CandidateProfileUpdateSerializer(
-            candidate, data=data, partial=(request.method == 'PATCH'))
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        try:
-            candidate = Candidate.objects.get(pk=candidate.pk)
-        except Exception:
-            pass
-        if request.FILES.get('video_file'):
             try:
                 analyze_url = 'https://dev-flit-ai.neurooceans.com/analyze_intro_video'
                 headers = {}
                 api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
                 if api_key:
                     headers['Authorization'] = f'Bearer {api_key}'
-                video_file.seek(0)
-                video_content = video_file.read()
-                files = {
-                    'video_file': (video_file.name, video_content, video_file.content_type)
-                }
-                data_payload = {
-                    'user_id': str(getattr(request.user, 'id', '')),
-                    'video_url': request.build_absolute_uri(candidate.video_intro_url)
-                }
-                resp = requests.post(analyze_url, files=files, data=data_payload, headers=headers, timeout=60)
-                if resp and resp.ok:
-                    resp_json = resp.json()
-                    analysis = resp_json.get('analysis', {})
-                    transcription = analysis.get('video_transcript')
-                    if transcription:
-                        update_fields = ['updated_at', 'video_transcription']
-                        candidate.video_transcription = transcription
-                        candidate.intro_video_description = None
-                        update_fields.append('intro_video_description')
-                        candidate.save(update_fields=update_fields)
+                    
+                # Save video file
+                video_url = self._save_file(video_file, 'candidates/videos', request)
+                if video_url:
+                    # Update candidate's video URL
+                    candidate.video_intro_url = video_url
+                    candidate.save(update_fields=['video_intro_url'])
+                    
+                    # Prepare video data for analysis
+                    video_file.seek(0)
+                    video_content = video_file.read()
+                    files = {
+                        'video_file': (video_file.name, video_content, video_file.content_type)
+                    }
+                    
+                    data_payload = {
+                        'user_id': str(getattr(request.user, 'id', '')),
+                        'video_url': request.build_absolute_uri(candidate.video_intro_url)
+                    }
+                    
+                    # Send video for analysis
+                    try:
+                        resp = requests.post(analyze_url, files=files, data=data_payload, headers=headers, timeout=60)
+                        if resp and resp.ok:
+                            resp_json = resp.json()
+                            analysis = resp_json.get('analysis', {})
+                            transcription = analysis.get('video_transcript')
+                            if transcription:
+                                update_fields = ['updated_at', 'video_transcription']
+                                candidate.video_transcription = transcription
+                                candidate.intro_video_description = analysis.get('description')
+                                update_fields.append('intro_video_description')
+                                candidate.save(update_fields=update_fields)
+                                
+                                # Update response with video analysis status
+                                if isinstance(response_data, dict):
+                                    if 'video_analysis' not in response_data:
+                                        response_data['video_analysis'] = {}
+                                    response_data['video_analysis'].update({
+                                        'status': 'success',
+                                        'has_transcription': bool(transcription)
+                                    })
+                    except Exception as e:
+                        logger.error(f"Error during video analysis: {str(e)}")
+                        if isinstance(response_data, dict):
+                            if 'video_analysis' not in response_data:
+                                response_data['video_analysis'] = {}
+                            response_data['video_analysis'].update({
+                                'status': 'error',
+                                'message': str(e)
+                            })
             except Exception as e:
-                print(f"Unexpected error during video analysis: {str(e)}")
-        data = CandidateSerializer(candidate).data
-        return Response(data, status=status.HTTP_200_OK)
+                logger.error(f"Error processing video file: {str(e)}")
+                if isinstance(response_data, dict):
+                    if 'video_analysis' not in response_data:
+                        response_data['video_analysis'] = {}
+                    response_data['video_analysis'].update({
+                        'status': 'error',
+                        'message': f"Failed to process video: {str(e)}"
+                    })
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
     def _match_candidates(self, search_text, seniority_list, job_types_list):
         sent_payload = {
