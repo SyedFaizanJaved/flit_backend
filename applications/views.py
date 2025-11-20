@@ -22,6 +22,12 @@ from .serializers import (
 )
 from jobs.models import Job
 from projects.models import Project
+from django.core.exceptions import PermissionDenied
+from datetime import timedelta , datetime
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+from vr_meet.views import create_google_event
+from vr_meet.models import MeetingRoom
 
 class JobApplicationListView(generics.ListCreateAPIView):
     """
@@ -219,6 +225,118 @@ class InterviewRequestListView(generics.ListCreateAPIView):
             )
         return InterviewRequest.objects.none()
 
+    # Create interview request
+    def perform_create(self, serializer):
+        user = self.request.user
+        data = self.request.data
+        role = getattr(getattr(user, 'role', None), 'name', None)
+
+        # Only employers can create interview requests
+        if role != "employer":
+            raise PermissionDenied("Only employers can create interview requests.")
+
+        # Save interview request
+        interview_request = serializer.save(status="pending")
+
+        # Determine candidate and job/project title
+        if interview_request.job_application:
+            candidate = interview_request.job_application.candidate.user
+            title = interview_request.job_application.job.title
+        elif interview_request.project_application:
+            candidate = interview_request.project_application.candidate.user
+            title = interview_request.project_application.project.title
+        else:
+            raise ValidationError('Interview request must be for either a job or project application.')
+
+        # Meeting time
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+
+        if start_time:
+            start_time = timezone.make_aware(datetime.fromisoformat(start_time))
+        if end_time:
+            end_time = timezone.make_aware(datetime.fromisoformat(end_time))
+        
+        if start_time and end_time:
+            now = timezone.now()
+            if start_time < now:
+                raise ValidationError('Start time cannot be in the past.')
+            if end_time <= start_time:
+                raise ValidationError('End time must be greater than start time.')
+            
+        elif start_time and not end_time:
+            end_time = start_time + timedelta(minutes=30)
+        elif end_time and not start_time:
+            start_time = end_time - timedelta(minutes=30)
+        else:
+            start_time = timezone.now()
+            end_time = start_time + timedelta(minutes=30)
+
+        # Create Google Meet event
+        try:
+            meet_link, event_id = create_google_event(
+                title=f"Interview for {title}",
+                description="Auto-generated interview room",
+                start_time=start_time,
+                end_time=end_time,
+                attendees=[candidate.email, user.email]
+            )
+        except Exception as e:
+            print("GOOGLE CALENDAR ERROR:", e)
+            meet_link = None
+
+        # Create MeetingRoom entry
+        room=MeetingRoom.objects.create(
+            room_name=f"Interview for {title}",
+            creator=user,
+            room_type="interview",
+            start_time=start_time,
+            end_time=end_time,
+            meet_link=meet_link,
+            description="Auto-generated interview room",
+            privacy="private"
+        )
+        room.candidates.add(candidate)
+
+        # attach Meet link to interview request
+        interview_request.meetLink = meet_link
+        interview_request.proposedTime = start_time
+        interview_request.save()
+        return interview_request
+
+# Update interview request
+class InterviewRequestupdateView(generics.RetrieveUpdateAPIView):
+    serializer_class = InterviewRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if getattr(getattr(self.request.user, 'role', None), 'name', None) == "candidate":
+            return InterviewRequest.objects.filter(
+                models.Q(job_application__candidate__user=self.request.user)
+                | models.Q(project_application__candidate__user=self.request.user)
+            )
+        elif getattr(getattr(self.request.user, 'role', None), 'name', None) == "employer":
+            return InterviewRequest.objects.filter(
+                models.Q(job_application__employer=self.request.user)
+                | models.Q(project_application__employer=self.request.user)
+            )
+        return InterviewRequest.objects.none()
+    
+    def perform_update(self, serializer):
+        user = self.request.user
+        role = getattr(getattr(user, 'role', None),'name', None)
+
+        # Only candidates can update interview requests
+        if role != "candidate":
+            raise PermissionDenied("You do not have permission to update interview requests")
+        
+        # Allowed status changes
+        allowed_status = ["accepted", "declined"]
+        new_status = serializer.validated_data.get('status')
+        if new_status not in allowed_status:
+            raise PermissionDenied("Invalid status change by candidate.")
+        instance = serializer.save()
+        return instance
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])

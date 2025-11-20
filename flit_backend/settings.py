@@ -68,7 +68,8 @@ LOCAL_APPS = [
     'jobs',
     'projects',
     'applications',   
-    'chat'
+    'chat',
+    'vr_meet'
 ]
 
 
@@ -249,3 +250,10 @@ STORAGES = {
         "LOCATION": "staticfiles",
     }
 }
+
+# Google Configuration
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(BASE_DIR)
+
+CREDENTIALS_FILE = os.path.join(BASE_DIR, config('GOOGLE_CLIENT_SECRET_FILE'))
+TOKEN_FILE = os.path.join(BASE_DIR, config('GOOGLE_TOKEN_FILE'))

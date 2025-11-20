@@ -12,6 +12,7 @@ staticfiles/
 # Virtual environment
 venv/
 .env
+google_secret
 
 # IDEs
 .vscode/
