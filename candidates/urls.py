@@ -21,6 +21,7 @@ urlpatterns = [
     path('work-dna/questions/', views.WorkDNAQuestionView.as_view(), name='work-dna-questions'),
     path('dashboard/latest-jobs/', views.CandidateLatestJobsView.as_view(), name='candidate-latest-jobs'),
     path('dashboard/latest-projects/', views.CandidateLatestProjectsView.as_view(), name='candidate-latest-projects'),
+    path('ai-matching/<int:candidate_id>/', views.CandidateAIMatchingView.as_view(), name='candidate-ai-matching'),
     
     # Registration
     path('register/', views.CandidateRegistrationView.as_view(), name='candidate-register'),

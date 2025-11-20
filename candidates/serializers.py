@@ -53,58 +53,90 @@ class CandidateSerializer(serializers.ModelSerializer):
         ).order_by('-updated_at')
         return ReferenceRequestResponseSerializer(references, many=True).data
     
-    def create(self, validated_data):
-        validated_data['user'] = self.context['request'].user
-        instance = super().create(validated_data)
+    def to_internal_value(self, data):
+        """
+        Ensure empty strings coming from JSON/form submissions are treated as null
+        for optional file/url fields so DRF doesn't expect an uploaded file.
+        """
+        data_copy = data.copy() if hasattr(data, 'copy') else data
+        if hasattr(data_copy, 'get'):
+            if data_copy.get('profile_image') in ('', None):
+                data_copy['profile_image'] = None
+        return super().to_internal_value(data_copy)
 
-        # Compute component completion flags using the same heuristics as update
+    def _update_completion_flags(self, instance, validated_data):
+        """
+        Shared helper to update completion flags across create/update flows.
+        """
         try:
+            updated_fields = set()
+
             # Basic info
             if getattr(instance, 'full_name', None) and getattr(instance, 'title', None):
-                instance.basic_info_completed = True
+                if not instance.basic_info_completed:
+                    instance.basic_info_completed = True
+                    updated_fields.add('basic_info_completed')
 
             # Work preferences
             work_pref_keys = [
                 'work_style', 'availability_type', 'is_available', 'is_remote', 'time_zone', 'location'
             ]
-            if any(key in validated_data for key in work_pref_keys):
+            if any(key in validated_data for key in work_pref_keys) and not instance.work_preferences_completed:
                 instance.work_preferences_completed = True
+                updated_fields.add('work_preferences_completed')
 
             # Skills
-            if 'skills' in validated_data and getattr(instance, 'skills', None):
+            if 'skills' in validated_data and getattr(instance, 'skills', None) and not instance.skills_completed:
                 instance.skills_completed = True
+                updated_fields.add('skills_completed')
 
             # Portfolio
             if (
                 'portfolio_links' in validated_data or
                 ('resume_url' in validated_data and instance.resume_url) or
                 ('video_intro_url' in validated_data and instance.video_intro_url)
-            ):
+            ) and not instance.portfolio_completed:
                 instance.portfolio_completed = True
+                updated_fields.add('portfolio_completed')
 
             # Privacy: allow explicit flag or infer from visibility fields
             privacy_keys = ['profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility']
-            if any(key in validated_data for key in privacy_keys):
+            if any(key in validated_data for key in privacy_keys) and not instance.privacy_completed:
                 instance.privacy_completed = True
+                updated_fields.add('privacy_completed')
             if 'privacy_completed' in validated_data:
-                instance.privacy_completed = bool(validated_data.get('privacy_completed'))
+                desired_privacy_state = bool(validated_data.get('privacy_completed'))
+                if instance.privacy_completed != desired_privacy_state:
+                    instance.privacy_completed = desired_privacy_state
+                    updated_fields.add('privacy_completed')
 
-            # Persist any flag changes
-            instance.save(update_fields=[
-                'basic_info_completed', 'work_preferences_completed', 'skills_completed',
-                'portfolio_completed', 'privacy_completed', 'updated_at'
-            ])
+            if updated_fields:
+                updated_fields.add('updated_at')
+                instance.save(update_fields=list(updated_fields))
 
-            # Sync to user
-            user = instance.user
-            if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
-                user.profile_completed = True
-                user.save(update_fields=['profile_completed', 'updated_at'])
+            # Sync to user if needed
+            try:
+                user = instance.user
+                if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
+                    user.profile_completed = True
+                    user.save(update_fields=['profile_completed', 'updated_at'])
+            except Exception:
+                pass
+
         except Exception:
-            # Don't break creation on sync errors
+            # Don't break serializer flow on sync errors
             pass
 
+    def create(self, validated_data):
+        validated_data['user'] = self.context['request'].user
+        instance = super().create(validated_data)
+        self._update_completion_flags(instance, validated_data)
         return instance
+
+    def update(self, instance, validated_data):
+        updated_instance = super().update(instance, validated_data)
+        self._update_completion_flags(updated_instance, validated_data)
+        return updated_instance
     
     def get_profile_completed(self, obj):
         try:
@@ -289,6 +321,22 @@ class ReferenceRequestSerializer(serializers.ModelSerializer):
         ref_request.status = 'pending'
         ref_request.save()
         return ref_request
+
+class CandidateActionDetailSerializer(serializers.ModelSerializer):
+    """
+    Serializer for candidate actions detail view
+    """
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    full_name = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Candidate
+        fields = [
+            'id', 'user_id', 'full_name', 'title', 'skills', 'location',
+            'work_style', 'availability_type', 'is_available', 'profile_image'
+        ]
+        read_only_fields = fields
+
 
 class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """
