@@ -106,6 +106,11 @@ class Candidate(models.Model):
     
     @property
     def is_profile_complete(self):
+        # If basic info is completed, consider profile as complete
+        if getattr(self, 'basic_info_completed', False):
+            return True
+            
+        # Original logic for backward compatibility
         flags = [
             bool(self.basic_info_completed),
             bool(self.work_preferences_completed),
@@ -113,7 +118,7 @@ class Candidate(models.Model):
             bool(self.portfolio_completed),
             bool(self.privacy_completed),
         ]
-        return sum(flags) >= 2
+        return sum(flags) >= 1
 
 
 class WorkDNAQuestion(models.Model):

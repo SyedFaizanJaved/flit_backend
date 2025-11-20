@@ -11,7 +11,6 @@ from candidates.models import Candidate
 from employers.models import Employer
 from projects.models import Project, ProjectSkill, ProjectMilestone
 from django.db.models import Prefetch
-    
 from applications.models import JobApplication, ProjectApplication
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
@@ -20,7 +19,6 @@ from .serializers import (
 )
 from candidates.models import Candidate, ReferenceRequest
 from applications.models import JobApplication, ProjectApplication
-from django.db.models import Prefetch
 from jobs.models import Job, JobSkill
 
 

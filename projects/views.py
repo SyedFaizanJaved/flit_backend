@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, status, permissions, mixins, authentication
 from rest_framework.decorators import action, authentication_classes
 from rest_framework.response import Response
@@ -13,6 +14,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 import requests
 import time
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PublicAuthentication(authentication.BaseAuthentication):
@@ -84,11 +87,108 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        if response.status_code == status.HTTP_201_CREATED:
-            response.data = {
-                'message': 'Project created successfully',
-                'data': response.data
+        if response.status_code != status.HTTP_201_CREATED:
+            return response
+
+        ml_success = False
+        project_profile_summary = None
+        project_tags = []
+        ml_error = None
+
+        project_id = response.data.get('id')
+        project = None
+
+        if not project_id:
+            ml_error = 'Project ID missing in response; cannot trigger ML sync'
+            logger.error(ml_error)
+        else:
+            try:
+                project = Project.objects.get(id=project_id)
+            except Project.DoesNotExist:
+                ml_error = f'Project with ID {project_id} not found for ML sync'
+                logger.error(ml_error)
+
+        if project:
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_projects/{project.id}"
+            ml_payload = {
+                "title": project.title,
+                "description": project.description,
+                "company_name": project.company.company_name if hasattr(project, 'company') and project.company else "",
+                "category": project.category,
+                "skills": project.skills if hasattr(project, 'skills') else [],
+                "paymentType": project.paymentType,
+                "paymentAmount": project.paymentAmount,
+                "estimatedHours": project.estimatedHours,
+                "deadline": project.deadline.isoformat() if project.deadline else None,
+                "status": project.status
             }
+
+            max_retries = 2
+            timeout_seconds = 30
+            ml_response = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Calling Project create ML API (attempt {attempt + 1}/{max_retries + 1}) for project {project.id}")
+                    ml_response = requests.post(
+                        ml_api_url,
+                        json=ml_payload,
+                        headers={"Content-Type": "application/json"},
+                        timeout=timeout_seconds
+                    )
+                    break
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries:
+                        ml_error = "Project create ML API timed out after retries"
+                        logger.error(ml_error)
+                        break
+                    logger.warning(f"Project create ML API timeout (attempt {attempt + 1}), retrying...")
+                    time.sleep(1)
+                except requests.exceptions.RequestException as exc:
+                    ml_error = f"Project create ML API request failed: {str(exc)}"
+                    logger.error(ml_error, exc_info=True)
+                    break
+
+            if ml_response is not None:
+                if ml_response.status_code in (200, 201):
+                    try:
+                        ml_data = ml_response.json()
+                        project_profile_summary = ml_data.get('project_profile_summary')
+                        project_tags = ml_data.get('project_tags', [])
+
+                        updates = {}
+                        if project_profile_summary is not None:
+                            updates['project_profile_summary'] = project_profile_summary
+                        if project_tags:
+                            updates['project_tags'] = project_tags
+
+                        if updates:
+                            for field, value in updates.items():
+                                setattr(project, field, value)
+                            project.save(update_fields=list(updates.keys()))
+
+                        ml_success = True
+                    except ValueError:
+                        ml_error = "Invalid JSON response from Project create ML API"
+                        logger.error(ml_error)
+                    except Exception as exc:
+                        ml_error = f"Error processing Project create ML API response: {str(exc)}"
+                        logger.error(ml_error, exc_info=True)
+                else:
+                    ml_error = f"Project create ML API returned status code {ml_response.status_code}"
+                    logger.error(f"{ml_error}. Response content: {ml_response.text}")
+
+        response.data = {
+            'message': 'Project created successfully',
+            'ml_success': ml_success,
+            'project_profile_summary': project_profile_summary,
+            'project_tags': project_tags,
+            'data': response.data
+        }
+
+        if ml_error:
+            response.data['ml_error'] = ml_error
+
         return response
         
     def update(self, request, *args, **kwargs):

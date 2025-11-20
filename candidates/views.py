@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import requests
-
 # Set up logging
 logger = logging.getLogger(__name__)
 from django.conf import settings
@@ -42,6 +41,8 @@ from .serializers import (
     ReferenceRequestSerializer,
     WorkDNAQuestionSerializer,
     CompanyWithOpeningsSerializer,
+    CandidateSerializer,
+
 )
 from employers.serializers import EmployerCompanyConversationSummarySerializer
 from chat.models import ChatMessage
@@ -651,7 +652,6 @@ class CandidateLatestProjectsView(DashboardBaseView):
             'ml_success': ml_success
         })
 
-from .serializers import CandidateSerializer
 
 class CandidateViewSet(viewsets.ModelViewSet):
     """ViewSet for candidate endpoints."""
@@ -733,6 +733,122 @@ class CandidateViewSet(viewsets.ModelViewSet):
         queryset = Candidate.objects.filter(profile_visibility="public")
         serializer = CandidateListSerializer(queryset, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if response.status_code != status.HTTP_201_CREATED:
+            return response
+
+        ml_success = False
+        candidate_profile_summary = None
+        candidate_tags = []
+        ml_error = None
+
+        candidate_id = response.data.get('id')
+        candidate = None
+
+        if not candidate_id:
+            ml_error = 'Candidate ID missing in response; cannot trigger ML sync'
+            logger.error(ml_error)
+        else:
+            try:
+                candidate = Candidate.objects.get(id=candidate_id)
+            except Candidate.DoesNotExist:
+                ml_error = f'Candidate with ID {candidate_id} not found for ML sync'
+                logger.error(ml_error)
+
+        if candidate:
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_candidates/{candidate.id}"
+            ml_payload = {
+                "full_name": candidate.full_name,
+                "title": candidate.title,
+                "bio": candidate.bio or "",
+                "location": candidate.location,
+                "work_style": candidate.work_style,
+                "availability_type": candidate.availability_type,
+                "is_available": candidate.is_available,
+                "skills": candidate.skills or [],
+                "superpowers": candidate.superpowers or [],
+                "preferred_roles": candidate.preferred_roles or [],
+                "seniority_level": candidate.seniority_level,
+                "min_salary": candidate.min_salary,
+                "max_salary": candidate.max_salary,
+                "salary_currency": candidate.salary_currency,
+                "portfolio_links": candidate.portfolio_links or [],
+                "resume_url": candidate.resume_url,
+                "video_intro_url": candidate.video_intro_url,
+                "profile_visibility": candidate.profile_visibility,
+                "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
+                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
+            }
+
+            max_retries = 2
+            timeout_seconds = 30
+            ml_response = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Calling Candidate create ML API (attempt {attempt + 1}/{max_retries + 1}) for candidate {candidate.id}")
+                    ml_response = requests.post(
+                        ml_api_url,
+                        json=ml_payload,
+                        headers={"Content-Type": "application/json"},
+                        timeout=timeout_seconds
+                    )
+                    break
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries:
+                        ml_error = "Candidate create ML API timed out after retries"
+                        logger.error(ml_error)
+                        break
+                    logger.warning(f"Candidate create ML API timeout (attempt {attempt + 1}), retrying...")
+                    time.sleep(1)
+                except requests.exceptions.RequestException as exc:
+                    ml_error = f"Candidate create ML API request failed: {str(exc)}"
+                    logger.error(ml_error, exc_info=True)
+                    break
+
+            if ml_response is not None:
+                if ml_response.status_code in (200, 201):
+                    try:
+                        ml_data = ml_response.json()
+                        candidate_profile_summary = ml_data.get('candidate_profile_summary')
+                        candidate_tags = ml_data.get('candidate_tags', [])
+
+                        updates = {}
+                        if candidate_profile_summary is not None:
+                            updates['candidate_profile_summary'] = candidate_profile_summary
+                        if candidate_tags:
+                            updates['candidate_tags'] = candidate_tags
+
+                        if updates:
+                            for field, value in updates.items():
+                                setattr(candidate, field, value)
+                            candidate.save(update_fields=list(updates.keys()))
+
+                        ml_success = True
+                    except ValueError:
+                        ml_error = "Invalid JSON response from Candidate create ML API"
+                        logger.error(ml_error)
+                    except Exception as exc:
+                        ml_error = f"Error processing Candidate create ML API response: {str(exc)}"
+                        logger.error(ml_error, exc_info=True)
+                else:
+                    ml_error = f"Candidate create ML API returned status code {ml_response.status_code}"
+                    logger.error(f"{ml_error}. Response content: {ml_response.text}")
+
+        response.data = {
+            'message': 'Candidate created successfully',
+            'ml_success': ml_success,
+            'candidate_profile_summary': candidate_profile_summary,
+            'candidate_tags': candidate_tags,
+            'data': response.data
+        }
+
+        if ml_error:
+            response.data['ml_error'] = ml_error
+
+        return response
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='views')
     def record_view(self, request, pk=None):
@@ -1389,6 +1505,47 @@ class WorkDNAQuestionView(APIView):
                 {'error': f'An error occurred: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class CandidateAIMatchingView(APIView):
+    """
+    Proxy endpoint for triggering the external AI matching service.
+    Expects `candidate_id` in the URL and optional `total` as a query parameter.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, candidate_id):
+        total = request.query_params.get('total')
+        ml_api_url = f"https://dev-flit-ai.neurooceans.com/ai_matching/{candidate_id}"
+
+        params = {}
+        if total is not None:
+            params['total'] = total
+
+        try:
+            response = requests.get(ml_api_url, params=params, timeout=30)
+        except requests.RequestException as exc:
+            logger.exception("AI matching service request failed")
+            return Response(
+                {'error': 'Unable to reach AI matching service', 'details': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {'raw_response': response.text or ''}
+
+        if response.status_code >= 400:
+            return Response(
+                {
+                    'error': 'AI matching service returned an error',
+                    'details': payload
+                },
+                status=response.status_code
+            )
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):

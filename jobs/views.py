@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, status, permissions, mixins, authentication
 from rest_framework.decorators import action, authentication_classes, permission_classes, api_view
 from rest_framework.response import Response
@@ -16,6 +17,8 @@ from accounts.permissions import IsEmployer
 import requests
 import time
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
         
 
 
@@ -145,11 +148,112 @@ class JobViewSet(viewsets.ModelViewSet):
         
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        if response.status_code == status.HTTP_201_CREATED:
-            response.data = {
-                'message': 'Job created successfully',
-                'data': response.data
+        if response.status_code != status.HTTP_201_CREATED:
+            return response
+
+        ml_success = False
+        job_profile_summary = None
+        job_tags = []
+        ml_error = None
+
+        job_id = response.data.get('id')
+        job = None
+
+        if not job_id:
+            ml_error = 'Job ID missing in response; cannot trigger ML sync'
+            logger.error(ml_error)
+        else:
+            try:
+                job = Job.objects.get(id=job_id)
+            except Job.DoesNotExist:
+                ml_error = f'Job with ID {job_id} not found for ML sync'
+                logger.error(ml_error)
+
+        if job:
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_jobs/{job.id}"
+            ml_payload = {
+                "title": job.title,
+                "description": job.description,
+                "company_name": job.company.company_name if hasattr(job, 'company') and job.company else "",
+                "employment_type": job.employmentType,
+                "experience_level": job.experienceLevel,
+                "work_style": job.workStyle,
+                "category": job.category,
+                "salary_range_min": job.salaryRangeMin,
+                "salary_range_max": job.salaryRangeMax,
+                "benefits": job.benefits or [],
+                "application_deadline": job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+                "status": job.status,
+                "location": job.location,
+                "skills": job.skills or [],
             }
+
+            max_retries = 2
+            timeout_seconds = 30
+            ml_response = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Calling Job create ML API (attempt {attempt + 1}/{max_retries + 1}) for job {job.id}")
+                    ml_response = requests.post(
+                        ml_api_url,
+                        json=ml_payload,
+                        headers={"Content-Type": "application/json"},
+                        timeout=timeout_seconds
+                    )
+                    break
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries:
+                        ml_error = "Job create ML API timed out after retries"
+                        logger.error(ml_error)
+                        break
+                    logger.warning(f"Job create ML API timeout (attempt {attempt + 1}), retrying...")
+                    time.sleep(1)
+                except requests.exceptions.RequestException as exc:
+                    ml_error = f"Job create ML API request failed: {str(exc)}"
+                    logger.error(ml_error, exc_info=True)
+                    break
+
+            if ml_response is not None:
+                if ml_response.status_code in (200, 201):
+                    try:
+                        ml_data = ml_response.json()
+                        job_profile_summary = ml_data.get('job_profile_summary')
+                        job_tags = ml_data.get('job_tags', [])
+
+                        updates = {}
+                        if job_profile_summary is not None:
+                            updates['job_profile_summary'] = job_profile_summary
+                        if job_tags:
+                            updates['job_tags'] = job_tags
+
+                        if updates:
+                            for field, value in updates.items():
+                                setattr(job, field, value)
+                            job.save(update_fields=list(updates.keys()))
+
+                        ml_success = True
+                    except ValueError:
+                        ml_error = "Invalid JSON response from Job create ML API"
+                        logger.error(ml_error)
+                    except Exception as exc:
+                        ml_error = f"Error processing Job create ML API response: {str(exc)}"
+                        logger.error(ml_error, exc_info=True)
+                else:
+                    ml_error = f"Job create ML API returned status code {ml_response.status_code}"
+                    logger.error(f"{ml_error}. Response content: {ml_response.text}")
+
+        response.data = {
+            'message': 'Job created successfully',
+            'ml_success': ml_success,
+            'job_profile_summary': job_profile_summary,
+            'job_tags': job_tags,
+            'data': response.data
+        }
+
+        if ml_error:
+            response.data['ml_error'] = ml_error
+
         return response
         
     def update(self, request, *args, **kwargs):
