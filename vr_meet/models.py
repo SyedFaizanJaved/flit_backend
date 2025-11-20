@@ -22,6 +22,12 @@ class MeetingRoom(models.Model):
         ("casual", "Casual")
     ]
 
+    PURPOSE_CHOICES = [
+        ("interview", "Interview"),
+        ("casual_call", "Casual Call"),
+        ("discussion", "Discussion")
+    ]
+
     ENVIRONMENT_CHOICES =[
         ("office", "Office"),
         ("cafe", "Cafe"),
@@ -40,16 +46,19 @@ class MeetingRoom(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
-    creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    candidates = models.ManyToManyField(settings.AUTH_USER_MODEL,blank=True, related_name="candidate_meetings")
-    
-    room_name = models.CharField(max_length=255)
+    employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="employer_meeting")
+    host_email = models.JSONField(default=list, blank=True)
+
+    candidate = models.ForeignKey(settings.AUTH_USER_MODEL,blank=True, null=True, on_delete=models.CASCADE, related_name="candidate_meeting")
+    candidate_email = models.EmailField(blank=True, null=True)
+
+    meeting_title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     room_type = models.CharField(max_length=30, choices=ROOM_TYPE_CHOICES, default="interview")
+    purpose = models.CharField(max_length=30, choices=PURPOSE_CHOICES, default="interview")
     environment = models.CharField(max_length=30, choices=ENVIRONMENT_CHOICES, default="office")
     privacy = models.CharField(max_length=10, choices=PRIVACY_CHOICES, default="private")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
-    max_participants = models.IntegerField(validators=[MinValueValidator(2), MaxValueValidator(20)], default=2)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
 
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
@@ -61,6 +70,19 @@ class MeetingRoom(models.Model):
     
     is_deleted = models.BooleanField(default=False)
 
+    @property
+    def meeting_date(self):
+        if self.start_time:
+            return self.start_time.date()
+        return None
+    
+    @property
+    def duration(self):
+        if self.start_time and self.end_time:
+            diff = self.end_time - self.start_time
+            return int(diff.total_seconds()//60)
+        return None
+
     class Meta:
         db_table = 'meeting_rooms'
         verbose_name = 'Meeting Room'
@@ -70,5 +92,5 @@ class MeetingRoom(models.Model):
         indexes = [
             models.Index(fields=['room_code']),
             models.Index(fields=['status']),
-            models.Index(fields=['creator']),
+            models.Index(fields=['employer']),
         ]

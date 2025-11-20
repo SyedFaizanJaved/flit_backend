@@ -102,30 +102,52 @@ class MeetingRoomCreateView(generics.CreateAPIView):
         elif start_time and not end_time:
             end_time = start_time + timedelta(minutes=30)
 
-        # Build attendees (creator + all candidates)
-        candidates = data.get("candidates",[])
-        attendees = [self.request.user.email]
-        for candidate in candidates:
-            if candidate.email:
-                attendees.append(candidate.email)
+        # Build attendees (employer + all candidate)
+        attendees = []
+
+        #employer
+        attendees.append(self.request.user.email)
+
+        #candidate
+        candidate = data.get("candidate",None)
+        candidate_email = None
+        if candidate and getattr(candidate, 'email', None):
+            attendees.append(candidate.email)
+            candidate_email = candidate.email
+
+        #extra hosts
+        host_emails = data.get("host_email",[]) or []
+       
+        if host_emails:
+            attendees.extend(host_emails)
+
+        # Remove duplicate emails
+        attendees = list({email for email in attendees if email})
 
         # Create Google Meet event
-        meet_link, event_id = create_google_event(
-            title=data.get("room_name"),
-            description=data.get("description"),
-            start_time=start_time,
-            end_time=end_time,
-            attendees=attendees
-        )
+        try:
+            meet_link, event_id = create_google_event(
+                title=data.get("meeting_title"),
+                description=data.get("description"),
+                start_time=start_time,
+                end_time=end_time,
+                attendees=attendees
+            )
+        except Exception as e:
+            meet_link, event_id= None,None
+
 
         # Save room in DB
         room = serializer.save(
-            creator=self.request.user,
+            employer=self.request.user,
             start_time=start_time,
             end_time=end_time,
-            meet_link=meet_link
+            meet_link=meet_link,
+            candidate=candidate,
+            candidate_email=candidate_email
         )
-        room.candidates.set(candidates)
+
+        return room
 
 
 # ----------------------------
@@ -137,13 +159,13 @@ class MeetingRoomListView(generics.ListAPIView):
 
     """
     return all non-deleted rooms where:
-        - current user is the creator, OR
+        - current user is the employer, OR
         - room is public, OR
         - current user is assigned as candidate
     """
     def get_queryset(self):
         user = self.request.user
-        return MeetingRoom.objects.filter(Q(is_deleted=False) & (Q(creator=user) | Q(privacy='public') | Q(candidates=user))).distinct()
+        return MeetingRoom.objects.filter(Q(is_deleted=False) & (Q(employer=user) | Q(privacy='public') | Q(candidate=user))).distinct()
 
 
 # --------------------------
@@ -160,7 +182,7 @@ class MeetingRoomDetailView(generics.RetrieveAPIView):
         obj = super().get_object()
         user = self.request.user
 
-        # if room is private and user is neither the creator nor the assigned candidate → deny access
-        if obj.privacy == "private" and obj.creator != user and obj.candidates != user:
+        # if room is private and user is neither the employer nor the assigned candidate → deny access
+        if obj.privacy == "private" and obj.employer != user and obj.candidate != user:
             raise PermissionDenied("Unauthorized access denied.")
         return obj

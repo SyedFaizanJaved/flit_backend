@@ -287,16 +287,19 @@ class InterviewRequestListView(generics.ListCreateAPIView):
 
         # Create MeetingRoom entry
         room=MeetingRoom.objects.create(
-            room_name=f"Interview for {title}",
-            creator=user,
+            meeting_title=f"Interview for {title}",
+            employer=user,
+            candidate=candidate,
+            candidate_email=candidate.email,
             room_type="interview",
+            purpose="interview",
+            environment="office",
             start_time=start_time,
             end_time=end_time,
             meet_link=meet_link,
             description="Auto-generated interview room",
             privacy="private"
         )
-        room.candidates.add(candidate)
 
         # attach Meet link to interview request
         interview_request.meetLink = meet_link
