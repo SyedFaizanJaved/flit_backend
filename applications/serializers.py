@@ -202,7 +202,12 @@ class InterviewRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewRequest
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+        read_only_fields = ('created_at', 'updated_at','meetLink')
+
+    def update(self, instance, validated_data):
+        if set(validated_data.keys()) != {'status'}:
+            raise serializers.ValidationError("Only status can be updated.")
+        return super().update(instance, validated_data)
 
     def create(self, validated_data):
         return super().create(validated_data)

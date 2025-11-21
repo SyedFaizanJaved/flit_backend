@@ -249,7 +249,7 @@ class InterviewRequest(models.Model):
     project_application = models.ForeignKey(ProjectApplication, on_delete=models.CASCADE, related_name='interview_requests', blank=True, null=True)
     
     proposedTime = models.DateTimeField(blank=True, null=True)
-    zoomLink = models.URLField(blank=True, null=True)
+    meetLink = models.URLField(blank=True, null=True)
     message = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     

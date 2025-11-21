@@ -19,6 +19,7 @@ urlpatterns = [
     
     # Interview Requests
     path('interview-requests/', views.InterviewRequestListView.as_view(), name='interview-request-list'),
+    path('interview-requests/<int:pk>/', views.InterviewRequestupdateView.as_view(), name='interview-request-update'),
     
     # Application Actions
     path('apply/job/<int:job_id>/', views.apply_to_job, name='apply-to-job'),
