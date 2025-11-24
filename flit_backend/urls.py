@@ -48,6 +48,7 @@ urlpatterns = [
     path('api/projects/', include('projects.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/vr-meet/', include('vr_meet.urls')),
+    path('api/stories/', include('stories.urls')),
 ]
 
 if settings.DEBUG:
