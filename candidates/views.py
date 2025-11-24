@@ -925,7 +925,8 @@ class CandidateViewSet(viewsets.ModelViewSet):
             tuple: (success: bool, message: str, data: dict)
         """
         try:
-            ml_api_url = f"https://dev-flit-ai.neurooceans.com/update_candidate_data/{candidate_id}"
+            # Use the create_candidates endpoint for both create and update operations
+            ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_candidates/{candidate_id}"
             logger.info(f"Sending data to ML API: {ml_api_url}")
             logger.debug(f"Data being sent: {data}")
             
@@ -935,23 +936,13 @@ class CandidateViewSet(viewsets.ModelViewSet):
             }
             
             try:
-                # First try with PATCH
-                response = requests.patch(
+                # Always use POST for the create_candidates endpoint
+                response = requests.post(
                     ml_api_url,
                     json=data,
                     headers=headers,
                     timeout=30  # 30 seconds timeout
                 )
-                
-                # If PATCH is not allowed (405), try with PUT
-                if response.status_code == 405:
-                    logger.info("PATCH not allowed, trying PUT")
-                    response = requests.put(
-                        ml_api_url,
-                        json=data,
-                        headers=headers,
-                        timeout=30
-                    )
                 
                 # Log the raw response for debugging
                 logger.debug(f"ML API response status: {response.status_code}")
@@ -964,7 +955,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     # Consider it successful if we get a 200 status and valid JSON with candidate data
                     if response.status_code == 200 and 'id' in response_data:
                         logger.info(f"ML API update successful for candidate {candidate_id}")
-                        return True, "Profile updated successfully in ML service", response_data
+                        return True, "Profile Updated successfully in ML service", response_data
                     else:
                         error_msg = response_data.get('message', 
                             f"Status: {response.status_code}, Response: {response.text}")
