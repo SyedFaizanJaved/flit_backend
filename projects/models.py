@@ -141,7 +141,7 @@ class Project(models.Model):
 
     project_tags = models.JSONField(default=list,blank=True,null=True)  # List of tags for categorization
     project_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
-    
+    query=models.TextField(blank=True,null=True)
 
 
     
