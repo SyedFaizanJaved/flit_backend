@@ -22,7 +22,7 @@ class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 class CandidateSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
+    full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     viewers_count = serializers.SerializerMethodField()
@@ -53,6 +53,18 @@ class CandidateSerializer(serializers.ModelSerializer):
         ).order_by('-updated_at')
         return ReferenceRequestResponseSerializer(references, many=True).data
     
+    def update(self, instance, validated_data):
+        # Handle full_name update
+        full_name = validated_data.pop('full_name', None)
+        if full_name:
+            # Split the full name into first and last name
+            name_parts = full_name.split(' ', 1)
+            instance.user.first_name = name_parts[0]
+            instance.user.last_name = name_parts[1] if len(name_parts) > 1 else ''
+            instance.user.save()
+        
+        return super().update(instance, validated_data)
+
     def to_internal_value(self, data):
         """
         Ensure empty strings coming from JSON/form submissions are treated as null
