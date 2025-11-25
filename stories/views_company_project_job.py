@@ -422,9 +422,6 @@ class BaseListView(generics.ListAPIView):
         if hasattr(self.model, 'is_active'):
             queryset = queryset.filter(is_active=True)
         
-        # Get the content type for the current model
-        content_type = ContentType.objects.get_for_model(self.model)
-        
         # Get the primary key field name for the model
         pk_field = self.model._meta.pk.name
         
@@ -435,12 +432,13 @@ class BaseListView(generics.ListAPIView):
         # Determine the field name based on the model
         model_name = self.model._meta.model_name
         
-        # For models that support likes (company, project, job)
-        if model_name in ['company', 'project', 'job']:
+        # For models that support likes (company, project, job, candidate)
+        if model_name in ['company', 'project', 'job', 'candidate']:
             field_map = {
                 'company': 'company_id',
                 'project': 'project_id',
-                'job': 'job_id'
+                'job': 'job_id',
+                'candidate': 'candidate_id'
             }
             field_name = field_map[model_name]
             
