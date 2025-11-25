@@ -110,10 +110,10 @@ class CandidateSerializer(serializers.ModelSerializer):
     """
     Candidate serializer with interaction data
     """
-    like_count = serializers.IntegerField(read_only=True)
-    comment_count = serializers.IntegerField(read_only=True)
-    is_liked = serializers.BooleanField(read_only=True)
-    is_saved = serializers.BooleanField(read_only=True)
+    like_count = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
+    is_saved = serializers.SerializerMethodField()
     candidate_id = serializers.IntegerField(source='id', read_only=True)
     
     class Meta:
@@ -125,3 +125,28 @@ class CandidateSerializer(serializers.ModelSerializer):
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
         ]
         read_only_fields = ['created_at']
+    
+    def get_like_count(self, obj):
+        return Like.objects.filter(candidate_id=obj.id).count()
+    
+    def get_comment_count(self, obj):
+        return Comment.objects.filter(candidate_id=obj.id).count()
+    
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return Like.objects.filter(
+                candidate_id=obj.id,
+                user=request.user
+            ).exists()
+        return False
+    
+    def get_is_saved(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return SavedItem.objects.filter(
+                candidate_id=obj.id,
+                user=request.user,
+                item_type='candidate'
+            ).exists()
+        return False

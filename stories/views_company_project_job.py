@@ -2,9 +2,9 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework import generics
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Exists, OuterRef
-from django.contrib.contenttypes.models import ContentType
 
 from .models import Like, Comment, SavedItem
 from .serializers import (
@@ -38,11 +38,109 @@ class BaseInteractionView(APIView):
             return get_object_or_404(self.model, pk=pk, is_active=True)
         return get_object_or_404(self.model, pk=pk)
     
-    def get_content_type(self):
-        return ContentType.objects.get_for_model(self.model)
-
 
 # Company Interaction Views
+class CandidateLikeView(BaseInteractionView):
+    model = Candidate
+    
+    def get(self, request, pk):
+        """Check if the current user has liked the candidate"""
+        candidate = self.get_object(pk)
+        
+        # Check if the current user has liked this candidate
+        has_liked = Like.objects.filter(
+            candidate_id=candidate.id,
+            user=request.user
+        ).exists()
+        
+        return Response({'has_liked': has_liked}, status=status.HTTP_200_OK)
+    
+    def post(self, request, pk):
+        """Like or unlike the candidate"""
+        candidate = self.get_object(pk)
+        
+        # Check if the like already exists
+        like = Like.objects.filter(
+            candidate_id=candidate.id,
+            user=request.user
+        ).first()
+        
+        if like:
+            # Unlike if the like already exists
+            like.delete()
+            likes_count = Like.objects.filter(candidate_id=candidate.id).count()
+            return Response(
+                {'status': 'unliked', 'likes_count': likes_count},
+                status=status.HTTP_200_OK
+            )
+        else:
+            # Create new like
+            Like.objects.create(
+                candidate_id=candidate.id,
+                user=request.user
+            )
+            likes_count = Like.objects.filter(candidate_id=candidate.id).count()
+            return Response(
+                {'status': 'liked', 'likes_count': likes_count},
+                status=status.HTTP_201_CREATED
+            )
+
+
+class CandidateCommentListCreateView(generics.ListCreateAPIView):
+    """
+    View for listing and creating comments on a candidate
+    """
+    serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        candidate_id = self.kwargs['pk']
+        return Comment.objects.filter(
+            candidate_id=candidate_id
+        ).order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        candidate = get_object_or_404(Candidate, pk=self.kwargs['pk'])
+        serializer.save(
+            user=self.request.user,
+            candidate_id=candidate.id
+        )
+
+
+class CandidateSaveView(APIView):
+    """
+    View for saving/unsaving a candidate
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        candidate = get_object_or_404(Candidate, pk=pk)
+        
+        # Check if already saved
+        saved_item, created = SavedItem.objects.get_or_create(
+            user=request.user,
+            candidate_id=candidate.id,
+            defaults={
+                'user': request.user,
+                'candidate_id': candidate.id,
+                'item_type': 'candidate'
+            }
+        )
+        
+        if not created:
+            # If already saved, unsave it
+            saved_item.delete()
+            return Response(
+                {'status': 'unsaved'},
+                status=status.HTTP_200_OK
+            )
+            
+        return Response(
+            {'status': 'saved'},
+            status=status.HTTP_201_CREATED
+        )
+
+
 class CompanyLikeView(BaseInteractionView):
     model = Company
     
@@ -96,25 +194,35 @@ class CompanyCommentListCreateView(generics.ListCreateAPIView):
         )
 
 
-class CompanySaveView(BaseInteractionView):
-    model = Company
+class CompanySaveView(APIView):
+    permission_classes = [IsAuthenticated]
     
     def post(self, request, pk):
-        company = self.get_object(pk)
-        content_type = self.get_content_type()
+        company = get_object_or_404(Company, pk=pk)
         
+        # Check if already saved
         saved_item, created = SavedItem.objects.get_or_create(
             user=request.user,
-            content_type=content_type,
-            object_id=company.id,
-            defaults={'item_type': 'company'}
+            company_id=company.id,
+            defaults={
+                'user': request.user,
+                'company_id': company.id,
+                'item_type': 'company'
+            }
         )
         
         if not created:
+            # If already saved, unsave it
             saved_item.delete()
-            return Response({"detail": "Removed from saved"}, status=status.HTTP_200_OK)
+            return Response(
+                {'status': 'unsaved'},
+                status=status.HTTP_200_OK
+            )
             
-        return Response({"detail": "Saved"}, status=status.HTTP_201_CREATED)
+        return Response(
+            {'status': 'saved'},
+            status=status.HTTP_201_CREATED
+        )
 
 
 # Project Interaction Views (similar to Company)
@@ -171,10 +279,35 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
             project_id=project_id
         )
 
-class ProjectSaveView(CompanySaveView):
-    model = Project
+class ProjectSaveView(APIView):
+    permission_classes = [IsAuthenticated]
     
     def post(self, request, pk):
+        project = get_object_or_404(Project, pk=pk)
+        
+        # Check if already saved
+        saved_item, created = SavedItem.objects.get_or_create(
+            user=request.user,
+            project_id=project.id,
+            defaults={
+                'user': request.user,
+                'project_id': project.id,
+                'item_type': 'project'
+            }
+        )
+        
+        if not created:
+            # If already saved, unsave it
+            saved_item.delete()
+            return Response(
+                {'status': 'unsaved'},
+                status=status.HTTP_200_OK
+            )
+            
+        return Response(
+            {'status': 'saved'},
+            status=status.HTTP_201_CREATED
+        )
         project = self.get_object(pk)
         content_type = self.get_content_type()
         
@@ -246,25 +379,35 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
             job_id=job_id
         )
 
-class JobSaveView(CompanySaveView):
-    model = Job
+class JobSaveView(APIView):
+    permission_classes = [IsAuthenticated]
     
     def post(self, request, pk):
-        job = self.get_object(pk)
-        content_type = self.get_content_type()
+        job = get_object_or_404(Job, pk=pk)
         
+        # Check if already saved
         saved_item, created = SavedItem.objects.get_or_create(
             user=request.user,
-            content_type=content_type,
-            object_id=job.id,
-            defaults={'item_type': 'job'}
+            job_id=job.id,
+            defaults={
+                'user': request.user,
+                'job_id': job.id,
+                'item_type': 'job'
+            }
         )
         
         if not created:
+            # If already saved, unsave it
             saved_item.delete()
-            return Response({"detail": "Removed from saved"}, status=status.HTTP_200_OK)
+            return Response(
+                {'status': 'unsaved'},
+                status=status.HTTP_200_OK
+            )
             
-        return Response({"detail": "Saved"}, status=status.HTTP_201_CREATED)
+        return Response(
+            {'status': 'saved'},
+            status=status.HTTP_201_CREATED
+        )
 
 
 # List views with interaction data

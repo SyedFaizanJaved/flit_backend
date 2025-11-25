@@ -4,6 +4,7 @@ from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.core.validators import FileExtensionValidator
+from django.core.exceptions import ValidationError
 
 
 def story_media_upload_path(instance, filename):
@@ -104,9 +105,9 @@ class Like(models.Model):
     
     def clean(self):
         # Ensure only one of the ID fields is set
-        id_fields = [self.company_id, self.project_id, self.job_id]
+        id_fields = [self.company_id, self.project_id, self.job_id, self.candidate_id]
         if sum(1 for field in id_fields if field is not None) != 1:
-            raise ValidationError('Exactly one of company_id, project_id, or job_id must be set')
+            raise ValidationError('Exactly one of company_id, project_id, job_id, or candidate_id must be set')
     
     def save(self, *args, **kwargs):
         self.clean()
@@ -142,9 +143,9 @@ class Comment(models.Model):
     
     def clean(self):
         # Ensure only one of the ID fields is set
-        id_fields = [self.company_id, self.project_id, self.job_id]
+        id_fields = [self.company_id, self.project_id, self.job_id, self.candidate_id]
         if sum(1 for field in id_fields if field is not None) != 1:
-            raise ValidationError('Exactly one of company_id, project_id, or job_id must be set')
+            raise ValidationError('Exactly one of company_id, project_id, job_id, or candidate_id must be set')
     
     def save(self, *args, **kwargs):
         self.clean()

@@ -77,7 +77,7 @@ class Job(models.Model):
         ('marketing', 'Marketing'),
         ('sales', 'Sales'),
         ('operations', 'Operations'),
-        ('wriing', 'Writing'),
+        ('writing', 'Writing'),
         ('technology/Digital', 'Technology/Digital'),
         ('creative/,media', 'Creative/Media'),
         ('business/finance', 'Business/Finance'),
