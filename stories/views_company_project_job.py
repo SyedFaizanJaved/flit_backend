@@ -15,13 +15,15 @@ from .serializers import (
 from .serializers_company_project_job import (
     CompanySerializer,
     ProjectSerializer,
-    JobSerializer
+    JobSerializer,
+    CandidateSerializer
 )
 
 # Import the models
 from companies.models import Company
 from projects.models import Project
 from jobs.models import Job
+from candidates.models import Candidate
 
 class BaseInteractionView(APIView):
     """
@@ -78,25 +80,19 @@ class CompanyLikeView(BaseInteractionView):
         )
 
 
-class CompanyCommentListCreateView(generics.ListCreateAPIView, BaseInteractionView):
+class CompanyCommentListCreateView(generics.ListCreateAPIView):
     model = Company
     serializer_class = CommentSerializer
-    
+
     def get_queryset(self):
-        company = self.get_object(self.kwargs['pk'])
-        content_type = self.get_content_type()
-        return Comment.objects.filter(
-            content_type=content_type,
-            object_id=company.id
-        ).order_by('-created_at')
-    
+        company_id = self.kwargs['pk']
+        return Comment.objects.filter(company_id=company_id).order_by('-created_at')
+
     def perform_create(self, serializer):
-        company = self.get_object(self.kwargs['pk'])
-        content_type = self.get_content_type()
+        company_id = self.kwargs['pk']
         serializer.save(
             user=self.request.user,
-            content_type=content_type,
-            object_id=company.id
+            company_id=company_id
         )
 
 
@@ -159,8 +155,21 @@ class ProjectLikeView(BaseInteractionView):
         )
 
 
-class ProjectCommentListCreateView(CompanyCommentListCreateView):
+class ProjectCommentListCreateView(generics.ListCreateAPIView):
     model = Project
+    serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        project_id = self.kwargs['pk']
+        return Comment.objects.filter(project_id=project_id).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        project_id = self.kwargs['pk']
+        serializer.save(
+            user=self.request.user,
+            project_id=project_id
+        )
 
 class ProjectSaveView(CompanySaveView):
     model = Project
@@ -221,8 +230,21 @@ class JobLikeView(BaseInteractionView):
         )
 
 
-class JobCommentListCreateView(CompanyCommentListCreateView):
+class JobCommentListCreateView(generics.ListCreateAPIView):
     model = Job
+    serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        job_id = self.kwargs['pk']
+        return Comment.objects.filter(job_id=job_id).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        job_id = self.kwargs['pk']
+        serializer.save(
+            user=self.request.user,
+            job_id=job_id
+        )
 
 class JobSaveView(CompanySaveView):
     model = Job
@@ -268,22 +290,40 @@ class BaseListView(generics.ListAPIView):
         
         # Subquery to check if current user has liked each item
         # Determine the field name based on the model
-        field_map = {
-            'company': 'company_id',
-            'project': 'project_id',
-            'job': 'job_id'
-        }
-        field_name = field_map.get(self.model._meta.model_name)
+        model_name = self.model._meta.model_name
         
-        user_likes = Like.objects.filter(
-            **{field_name: OuterRef(pk_field)},
-            user=self.request.user
-        )
+        # For models that support likes (company, project, job)
+        if model_name in ['company', 'project', 'job']:
+            field_map = {
+                'company': 'company_id',
+                'project': 'project_id',
+                'job': 'job_id'
+            }
+            field_name = field_map[model_name]
+            
+            # Subquery to check if current user has liked each item
+            user_likes = Like.objects.filter(
+                **{field_name: OuterRef(pk_field)},
+                user=self.request.user
+            )
+            
+            # Subquery to get like count for each item
+            like_count_subquery = (
+                Like.objects.filter(
+                    **{field_name: OuterRef(pk_field)}
+                ).values(field_name)
+                .annotate(count=Count('id'))
+                .values('count')
+            )
+        else:
+            # For models that don't support likes (like candidate), return empty querysets
+            user_likes = Like.objects.none()
+            like_count_subquery = Like.objects.none()
         
         # Subquery to check if current user has saved each item
         user_saved = SavedItem.objects.filter(
-            item_type=self.model._meta.model_name,
-            **{f"{self.model._meta.model_name}_id": OuterRef(pk_field)},
+            item_type=model_name,
+            **{f"{model_name}_id": OuterRef(pk_field)},
             user=self.request.user
         )
         
@@ -291,23 +331,20 @@ class BaseListView(generics.ListAPIView):
         from django.db.models.functions import Coalesce
         from django.db.models import Subquery, OuterRef, IntegerField
         
-        # Subquery to count likes
-        like_count_subquery = (
-            Like.objects.filter(
-                **{field_name: OuterRef(pk_field)}
-            ).values(field_name)
-            .annotate(count=Count('id'))
-            .values('count')
-        )
+        # Like count subquery is now defined above based on model type
         
         # Subquery to count comments
-        comment_count_subquery = (
-            Comment.objects.filter(
-                **{field_name: OuterRef(pk_field)}
-            ).values(field_name)
-            .annotate(count=Count('id'))
-            .values('count')[:1]
-        )
+        if model_name in ['company', 'project', 'job']:
+            comment_count_subquery = (
+                Comment.objects.filter(
+                    **{field_name: OuterRef(pk_field)}
+                ).values(field_name)
+                .annotate(count=Count('id'))
+                .values('count')[:1]
+            )
+        else:
+            # For models that don't have comments, return 0
+            comment_count_subquery = Comment.objects.none()
         
         # Annotate the queryset with counts and user-specific flags
         queryset = queryset.annotate(
@@ -322,11 +359,15 @@ class BaseListView(generics.ListAPIView):
 
 class CompanyListView(BaseListView):
     model = Company
-    serializer_class = CompanySerializer  # You'll need to create this serializer
+    serializer_class = CompanySerializer
 
 class ProjectListView(BaseListView):
     model = Project
-    serializer_class = ProjectSerializer  # You'll need to create this serializer
+    serializer_class = ProjectSerializer
+
+class CandidateListView(BaseListView):
+    model = Candidate
+    serializer_class = CandidateSerializer
 
 class JobListView(BaseListView):
     model = Job
