@@ -2,6 +2,7 @@ from rest_framework import serializers
 from companies.models import Company
 from projects.models import Project
 from jobs.models import Job
+from candidates.models import Candidate, Education, Experience, Achievement
 from .models import Comment, Like, SavedItem
 from accounts.serializers import UserListSerializer as UserSerializer
 
@@ -60,8 +61,7 @@ class CompanySerializer(serializers.ModelSerializer):
         model = Company
         fields = [
             'company_id', 'company_name', 'description', 'website', 'logo', 'industry',
-            'size', 'location', 'values', 'is_verified', 'is_active',
-            'total_jobs', 'total_projects', 'total_hires', 'total_employees',
+            'size', 'location', 'values', 'is_verified', 'is_active','total_employees',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'updated_at'
         ]
 
@@ -80,7 +80,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         model = Project
         fields = [
             'project_id', 'title', 'description', 'budget_min', 'budget_max', 'budget_currency',
-            'deadline', 'work_style', 'is_budget_negotiable', 'estimatedHours',
+            'deadline',  'is_budget_negotiable', 'estimatedHours','category',
             'is_timeline_flexible', 'required_skills', 'technologies',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
         ]
@@ -102,5 +102,26 @@ class JobSerializer(serializers.ModelSerializer):
         model = Job
         fields = [
             'job_id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
-            'like_count', 'comment_count', 'is_liked', 'is_saved'
+            'like_count', 'comment_count', 'is_liked', 'is_saved','created_at','skills','applicationDeadline'
         ]
+
+
+class CandidateSerializer(serializers.ModelSerializer):
+    """
+    Candidate serializer with interaction data
+    """
+    like_count = serializers.IntegerField(read_only=True)
+    comment_count = serializers.IntegerField(read_only=True)
+    is_liked = serializers.BooleanField(read_only=True)
+    is_saved = serializers.BooleanField(read_only=True)
+    candidate_id = serializers.IntegerField(source='id', read_only=True)
+    
+    class Meta:
+        model = Candidate
+        fields = [
+            'candidate_id', 'full_name', 'title', 'bio', 'location',
+            'work_style', 'is_available', 'availability_type',
+            'skills', 'seniority_level','min_salary', 'max_salary', 'salary_currency', 'profile_image',
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
+        ]
+        read_only_fields = ['created_at']

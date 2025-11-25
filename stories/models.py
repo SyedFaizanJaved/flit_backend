@@ -75,7 +75,8 @@ class Like(models.Model):
     company_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     project_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     job_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
-    
+    candidate_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
+
     class Meta:
         ordering = ['-created_at']
         constraints = [
@@ -94,6 +95,11 @@ class Like(models.Model):
                 name='unique_user_job_like',
                 condition=models.Q(job_id__isnull=False)
             ),
+            models.UniqueConstraint(
+                fields=['user', 'candidate_id'],
+                name='unique_user_candidate_like',
+                condition=models.Q(candidate_id__isnull=False)
+            ),
         ]
     
     def clean(self):
@@ -111,8 +117,9 @@ class Like(models.Model):
             return f"{self.user.email} likes company {self.company_id}"
         elif self.project_id:
             return f"{self.user.email} likes project {self.project_id}"
-        else:
+        elif self.job_id:
             return f"{self.user.email} likes job {self.job_id}"
+        return f"{self.user.email} likes candidate {self.candidate_id}"
 
 
 class Comment(models.Model):
@@ -128,6 +135,7 @@ class Comment(models.Model):
     company_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     project_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     job_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
+    candidate_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     
     class Meta:
         ordering = ['-created_at']
@@ -147,8 +155,10 @@ class Comment(models.Model):
             return f"{self.user.email} commented on company {self.company_id}"
         elif self.project_id:
             return f"{self.user.email} commented on project {self.project_id}"
-        else:
+        elif self.job_id:
             return f"{self.user.email} commented on job {self.job_id}"
+        else:
+            return f"{self.user.email} commented on candidate {self.candidate_id}"
 
 
 class SavedItem(models.Model):
@@ -159,6 +169,7 @@ class SavedItem(models.Model):
         ('company', 'Company'),
         ('project', 'Project'),
         ('job', 'Job'),
+        ('candidate', 'Candidate'),
     ]
     
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='saved_items')
@@ -169,6 +180,7 @@ class SavedItem(models.Model):
     company_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     project_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     job_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
+    candidate_id = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     
     class Meta:
         verbose_name = 'Saved Item'
@@ -190,6 +202,11 @@ class SavedItem(models.Model):
                 name='unique_user_job_save',
                 condition=models.Q(job_id__isnull=False)
             ),
+            models.UniqueConstraint(
+                fields=['user', 'candidate_id'],
+                name='unique_user_candidate_save',
+                condition=models.Q(candidate_id__isnull=False)
+            ),
         ]
     
     def clean(self):
@@ -200,11 +217,13 @@ class SavedItem(models.Model):
             raise ValidationError('project_id must be set when item_type is project')
         elif self.item_type == 'job' and not self.job_id:
             raise ValidationError('job_id must be set when item_type is job')
+        elif self.item_type == 'candidate' and not self.candidate_id:
+            raise ValidationError('candidate_id must be set when item_type is candidate')
         
         # Ensure only one ID field is set
-        id_fields = [self.company_id, self.project_id, self.job_id]
+        id_fields = [self.company_id, self.project_id, self.job_id, self.candidate_id]
         if sum(1 for field in id_fields if field is not None) != 1:
-            raise ValidationError('Exactly one of company_id, project_id, or job_id must be set')
+            raise ValidationError('Exactly one of company_id, project_id, job_id, or candidate_id must be set')
     
     def save(self, *args, **kwargs):
         self.clean()
@@ -215,5 +234,7 @@ class SavedItem(models.Model):
             return f"{self.user.email} saved company {self.company_id}"
         elif self.project_id:
             return f"{self.user.email} saved project {self.project_id}"
-        else:
+        elif self.job_id:
             return f"{self.user.email} saved job {self.job_id}"
+        else:
+            return f"{self.user.email} saved candidate {self.candidate_id}"
