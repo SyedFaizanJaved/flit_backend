@@ -1514,7 +1514,9 @@ class CandidateAIMatchingView(APIView):
             params['total'] = total
 
         try:
-            response = requests.get(ml_api_url, params=params, timeout=30)
+            # Removed timeout to allow the request to wait indefinitely
+            response = requests.get(ml_api_url, params=params, timeout=None)
+
         except requests.RequestException as exc:
             logger.exception("AI matching service request failed")
             return Response(
