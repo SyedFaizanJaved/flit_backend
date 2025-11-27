@@ -1,54 +1,121 @@
-from rest_framework import generics, status, permissions
+from rest_framework import status, generics, permissions
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import PermissionDenied
 from .models import Story, Like, Comment, SavedItem
-from .serializers import (
-    StorySerializer, LikeSerializer, 
-    CommentSerializer, SavedItemSerializer
-)
+from .serializers import StorySerializer, LikeSerializer, CommentSerializer, SavedItemSerializer
+from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class StoryListCreateView(generics.ListCreateAPIView):
     """
     View to list all stories or create a new story
     """
+    queryset = Story.objects.all()
     serializer_class = StorySerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        # Filter active stories and order by creation date (newest first)
-        return Story.objects.filter(is_active=True).order_by('-created_at')
-    
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_serializer_context(self):
+        """
+        Add request context to serializer
+        """
+        context = super().get_serializer_context()
+        context.update({
+            'request': self.request
+        })
+        return context
+
     def perform_create(self, serializer):
-        # Set the user to the current user when creating a story
-        serializer.save(user=self.request.user)
+        user = self.request.user
+        user_type = None
+        company_id = None
+        candidate_id = None
         
-        # Handle content type and object ID if provided
-        content_type_str = self.request.data.get('content_type')
-        object_id = self.request.data.get('object_id')
+        # Determine user_type based on user's profile
+        if hasattr(user, 'employer_profile'):
+            user_type = 'employer'
+            # Get company from employer profile if not provided
+            company_id = self.request.data.get('company') or (
+                user.employer_profile.company.id if user.employer_profile.company else None
+            )
+        elif hasattr(user, 'candidate_profile'):
+            user_type = 'candidate'
+            candidate_id = self.request.data.get('candidate') or user.candidate_profile.id
+        else:
+            raise serializers.ValidationError({
+                'user': 'User must be either an employer or a candidate to create a story.'
+            })
         
-        if content_type_str and object_id:
-            try:
-                content_type = ContentType.objects.get(model=content_type_str.lower())
-                serializer.instance.content_type = content_type
-                serializer.instance.object_id = object_id
-                serializer.instance.save()
-            except ContentType.DoesNotExist:
-                pass
+        # Validate required fields based on user type
+        if user_type == 'employer' and not company_id:
+            raise serializers.ValidationError({
+                'company': 'Company is required for employer stories. Please ensure your employer profile has a company associated.'
+            })
+            
+        if user_type == 'candidate' and not candidate_id:
+            raise serializers.ValidationError({
+                'candidate': 'Candidate profile is required for candidate stories'
+            })
+        
+        # Prepare data for saving
+        data = {
+            'user': user,
+            'user_type': user_type,
+        }
+        
+        # Only set company_id if user is employer
+        if user_type == 'employer' and company_id:
+            data['company_id'] = company_id
+        # Only set candidate_id if user is candidate
+        elif user_type == 'candidate' and candidate_id:
+            data['candidate_id'] = candidate_id
+        
+        # Save the story
+        serializer.save(**data)
+
+    def get_queryset(self):
+        queryset = Story.objects.filter(is_active=True)
+        request = self.request
+        
+        # Filter by user type if provided
+        user_type = request.query_params.get('user_type')
+        if user_type in ['employer', 'candidate']:
+            queryset = queryset.filter(user_type=user_type)
+        
+        # Filter by current user's type if no specific type is requested
+        elif hasattr(request.user, 'employer'):
+            queryset = queryset.filter(user_type='employer')
+        elif hasattr(request.user, 'candidate'):
+            queryset = queryset.filter(user_type='candidate')
+        
+        # Filter by specific user if requested
+        user_id = request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        return queryset.order_by('-created_at')
+            
+        return queryset.order_by('-created_at')
 
 
 class StoryDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    View to retrieve, update or delete a story
-    """
     queryset = Story.objects.all()
     serializer_class = StorySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+    
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.user != self.request.user:
+            raise PermissionDenied("You do not have permission to update this story.")
+        serializer.save()
     
     def perform_destroy(self, instance):
-        # Soft delete by setting is_active to False
+        if instance.user != self.request.user and not self.request.user.is_staff:
+            raise PermissionDenied("You do not have permission to delete this story.")
         instance.is_active = False
         instance.save()
 
@@ -57,20 +124,18 @@ class LikeStoryView(APIView):
     """
     View to like or unlike a story
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     
     def post(self, request, story_id):
         story = get_object_or_404(Story, id=story_id, is_active=True)
-        like, created = Like.objects.get_or_create(
-            user=request.user,
-            story=story
-        )
+        user = request.user
         
-        if not created:
-            like.delete()
-            return Response("Story unliked successfully", status=status.HTTP_200_OK)
-            
-        return Response("Story liked successfully", status=status.HTTP_201_CREATED)
+        if story.likes.filter(id=user.id).exists():
+            story.likes.remove(user)
+            return Response({"status": "unliked"}, status=status.HTTP_200_OK)
+        else:
+            story.likes.add(user)
+            return Response({"status": "liked"}, status=status.HTTP_201_CREATED)
 
 
 class CommentCreateView(generics.CreateAPIView):

@@ -98,10 +98,14 @@ class Candidate(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
     class Meta:
         db_table = 'candidates'
         verbose_name = 'Candidate'
         verbose_name_plural = 'Candidates'
+        ordering = ['-created_at']
     
     def __str__(self):
         return self.full_name

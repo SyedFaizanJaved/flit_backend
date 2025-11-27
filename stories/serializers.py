@@ -23,24 +23,110 @@ class StorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Story
         fields = [
-            'id', 'user', 'content_type', 'content', 'media_file', 'is_active',
-            'created_at', 'updated_at', 'like_count', 'comment_count',
-            'is_liked', 'is_saved', 'target_content_type', 'target_object_id'
+            'id', 'user', 'user_type', 'content_type', 
+            'text_content', 'image_content', 'video_content',
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at',
+            'target_content_type', 'target_object_id', 'company', 'candidate'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'user']
+        read_only_fields = ['user', 'created_at', 'like_count', 'comment_count', 'is_liked', 'is_saved']
+        extra_kwargs = {
+            'text_content': {'required': False, 'allow_blank': True},
+            'image_content': {'required': False, 'allow_null': True},
+            'video_content': {'required': False, 'allow_null': True},
+            'content_type': {'required': False},  # Made not required for GET requests
+            'user_type': {'required': False}     # Made not required for GET requests
+        }
+    
+    def validate(self, data):
+        content_type = data.get('content_type')
+        text_content = data.get('text_content')
+        image_content = data.get('image_content')
+        video_content = data.get('video_content')
+        user_type = data.get('user_type')
+        company = data.get('company')
+        candidate = data.get('candidate')
+        
+        # Validate content based on content_type
+        if content_type == 'text' and not text_content:
+            raise serializers.ValidationError({
+                'text_content': 'Text content is required for text stories'
+            })
+            
+        if content_type == 'image' and not image_content:
+            raise serializers.ValidationError({
+                'image_content': 'Image file is required for image stories'
+            })
+            
+        if content_type == 'video' and not video_content:
+            raise serializers.ValidationError({
+                'video_content': 'Video file is required for video stories'
+            })
+            
+        # Ensure only the relevant content field is provided
+        if content_type == 'text' and (image_content or video_content):
+            raise serializers.ValidationError({
+                'content_type': 'Only text content should be provided for text stories'
+            })
+            
+        if content_type == 'image' and (text_content or video_content):
+            raise serializers.ValidationError({
+                'content_type': 'Only image content should be provided for image stories'
+            })
+            
+        if content_type == 'video' and (text_content or image_content):
+            raise serializers.ValidationError({
+                'content_type': 'Only video content should be provided for video stories'
+            })
+            
+        # Validate company/candidate based on user_type
+        if user_type == 'employer' and not company:
+            raise serializers.ValidationError({
+                'company': 'Company is required for employer stories'
+            })
+            
+        if user_type == 'candidate' and not candidate:
+            raise serializers.ValidationError({
+                'candidate': 'Candidate is required for candidate stories'
+            })
+            
+        # Clean up data
+        if 'media_file' in data and content_type == 'text':
+            data['media_file'] = None
+            
+        return data
         
     def create(self, validated_data):
         target_content_type = validated_data.pop('target_content_type', None)
         target_object_id = validated_data.pop('target_object_id', None)
         
-        story = Story.objects.create(**validated_data)
+        # Get company and candidate from validated_data if they exist
+        company = validated_data.pop('company', None)
+        candidate = validated_data.pop('candidate', None)
         
-        if target_content_type and target_object_id:
-            story.target_content_type = target_content_type
-            story.target_object_id = target_object_id
-            story.save()
+        # Clean up content fields based on content_type
+        content_type = validated_data.get('content_type')
+        if content_type == 'text':
+            validated_data['image_content'] = None
+            validated_data['video_content'] = None
+        elif content_type == 'image':
+            validated_data['text_content'] = None
+            validated_data['video_content'] = None
+        elif content_type == 'video':
+            validated_data['text_content'] = None
+            validated_data['image_content'] = None
             
-        return story
+        if target_content_type and target_object_id:
+            validated_data['content_type'] = target_content_type.model
+            validated_data['object_id'] = target_object_id
+        
+        # Set company and candidate based on user_type
+        user_type = validated_data.get('user_type')
+        if user_type == 'employer' and company:
+            validated_data['company'] = company
+        elif user_type == 'candidate' and candidate:
+            validated_data['candidate'] = candidate
+            
+        return super().create(validated_data)
     
     def get_like_count(self, obj):
         return obj.likes.count()
@@ -51,13 +137,13 @@ class StorySerializer(serializers.ModelSerializer):
     def get_is_liked(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return obj.likes.filter(user=request.user).exists()
+            return obj.likes.filter(id=request.user.id).exists()
         return False
     
     def get_is_saved(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return obj.saved_by.filter(user=request.user).exists()
+            return obj.saved_by.filter(id=request.user.id).exists()
         return False
 
 
