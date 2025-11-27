@@ -994,27 +994,54 @@ class CandidateViewSet(viewsets.ModelViewSet):
     def _parse_form_data(self, data):
         """Helper method to parse form data"""
         if not data:
-            return data
+            return {}
             
-        if isinstance(data, dict):
-            # Handle list fields
-            for key in ['skills', 'languages', 'preferred_locations']:
-                if key in data:
-                    data[key] = self._parse_json_list(data.get(key))
-            
-            # Handle boolean fields
-            for key in ['is_remote', 'is_available']:
-                if key in data:
-                    data[key] = self._parse_bool(data.get(key))
-            
-            # Handle numeric fields
-            for key in ['min_salary', 'max_salary']:
-                if key in data and data.get(key) not in [None, '']:
-                    parsed = self._parse_int(data.get(key))
-                    if parsed is not None:
-                        data[key] = parsed
+        # Create a mutable copy if it's a QueryDict
+        if hasattr(data, 'copy') and not isinstance(data, dict):
+            data = data.copy()
         
-        return data
+        # Convert QueryDict to regular dict if needed
+        if hasattr(data, 'dict'):
+            data = data.dict()
+        
+        # Make sure we're working with a dictionary
+        if not isinstance(data, dict):
+            return {}
+        
+        # Create a new dictionary to store the parsed data
+        parsed_data = {}
+        
+        # Handle list fields
+        for key in ['skills', 'languages', 'preferred_locations', 'superpowers', 'preferred_roles', 'portfolio_links']:
+            if key in data:
+                value = data.get(key)
+                if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+                    try:
+                        parsed_value = json.loads(value)
+                        parsed_data[key] = parsed_value if isinstance(parsed_value, list) else [parsed_value]
+                    except json.JSONDecodeError:
+                        parsed_data[key] = [value] if value.strip() else []
+                else:
+                    parsed_data[key] = self._parse_json_list(value)
+        
+        # Handle boolean fields
+        for key in ['is_remote', 'is_available']:
+            if key in data:
+                parsed_data[key] = self._parse_bool(data.get(key))
+        
+        # Handle numeric fields
+        for key in ['min_salary', 'max_salary']:
+            if key in data and data.get(key) not in [None, '']:
+                parsed = self._parse_int(data.get(key))
+                if parsed is not None:
+                    parsed_data[key] = parsed
+        
+        # Copy all other fields
+        for key, value in data.items():
+            if key not in parsed_data:
+                parsed_data[key] = value
+        
+        return parsed_data
         
     def _parse_json_list(self, value):
         """Parse a JSON list from string if needed"""
@@ -1095,13 +1122,16 @@ class CandidateViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(candidate)
             return Response(serializer.data)
             
-        # Create a new dictionary for the data
-        data = {}
+        # Parse the request data to handle JSON fields and other special types
+        data = self._parse_form_data(request.data)
         
-        # Copy all non-file data from request.data
-        for key, value in request.data.items():
+        # Create a new dictionary for the final data
+        final_data = {}
+        
+        # Copy all non-file data from parsed data
+        for key, value in data.items():
             if key not in request.FILES:  # Skip file fields
-                data[key] = value
+                final_data[key] = value
         
         # Handle profile picture upload
         if 'profile_image' in request.FILES:
@@ -1179,11 +1209,32 @@ class CandidateViewSet(viewsets.ModelViewSet):
         
         # Now handle the data with the serializer
         partial = request.method == 'PATCH'
-        serializer = self.get_serializer(candidate, data=data, partial=partial)
-        serializer.is_valid(raise_exception=True)
         
-        # Save the updated profile
-        self.perform_update(serializer)
+        # Log the data being passed to the serializer for debugging
+        logger.info(f"Data being passed to serializer: {final_data}")
+        
+        # Update the candidate instance with the new data
+        for key, value in final_data.items():
+            if hasattr(candidate, key):
+                setattr(candidate, key, value)
+        
+        # Save the candidate instance
+        candidate.save()
+        
+        # Get the updated data using the serializer
+        serializer = self.get_serializer(candidate)
+        
+        # Update ML service with the final data
+        ml_success, ml_message, _ = self._update_ml_candidate_data(candidate.id, final_data)
+        if not ml_success:
+            logger.warning(f"Failed to update ML service: {ml_message}")
+        
+        # Add ML update status to response
+        response_data = serializer.data
+        response_data['ml_update_status'] = {
+            'success': ml_success,
+            'message': ml_message
+        }
         
         # Initialize response data with updated candidate data
         response_data = serializer.data
