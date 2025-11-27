@@ -1,3 +1,4 @@
+import json
 from rest_framework import serializers
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from companies.models import Company
@@ -29,6 +30,30 @@ class CandidateSerializer(serializers.ModelSerializer):
     profile_views_display = serializers.SerializerMethodField()
     reference_responses = serializers.SerializerMethodField()
     passion_projects = serializers.SerializerMethodField()
+    superpowers = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    portfolio_links = serializers.SerializerMethodField()
+    preferred_roles = serializers.SerializerMethodField()
+    
+    def _parse_json_field(self, value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        return value or []
+    
+    def get_superpowers(self, obj):
+        return self._parse_json_field(obj.superpowers)
+        
+    def get_skills(self, obj):
+        return self._parse_json_field(obj.skills)
+        
+    def get_portfolio_links(self, obj):
+        return self._parse_json_field(obj.portfolio_links)
+        
+    def get_preferred_roles(self, obj):
+        return self._parse_json_field(obj.preferred_roles)
     
     def get_profile_image(self, obj):
         if obj.profile_image:
