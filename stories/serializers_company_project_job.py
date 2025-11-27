@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.contrib.contenttypes.models import ContentType
 from companies.models import Company
 from projects.models import Project
 from jobs.models import Job
@@ -130,7 +131,19 @@ class CandidateSerializer(serializers.ModelSerializer):
         return Like.objects.filter(candidate_id=obj.id).count()
     
     def get_comment_count(self, obj):
-        return Comment.objects.filter(candidate_id=obj.id).count()
+        # Comments are associated with stories, so we need to check if there are any stories
+        # from this candidate that have comments
+        from django.contrib.contenttypes.models import ContentType
+        from .models import Story
+        
+        # Get the content type for the Story model
+        story_content_type = ContentType.objects.get_for_model(Story)
+        
+        # Count comments on stories where the user is the candidate and user_type is 'candidate'
+        return Comment.objects.filter(
+            story__user=obj.user,
+            story__user_type='candidate'
+        ).count()
     
     def get_is_liked(self, obj):
         request = self.context.get('request')

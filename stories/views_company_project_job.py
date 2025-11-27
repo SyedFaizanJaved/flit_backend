@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework import generics
+from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Exists, OuterRef
 
@@ -560,17 +561,25 @@ class BaseListView(generics.ListAPIView):
         
         # Like count subquery is now defined above based on model type
         
-        # Subquery to count comments
-        if model_name in ['company', 'project', 'job']:
+        # Subquery to count comments through Story model
+        if model_name == 'company':
             comment_count_subquery = (
                 Comment.objects.filter(
-                    **{field_name: OuterRef(pk_field)}
-                ).values(field_name)
+                    story__company_id=OuterRef(pk_field)
+                ).values('story__company_id')
+                .annotate(count=Count('id'))
+                .values('count')[:1]
+            )
+        elif model_name == 'candidate':
+            comment_count_subquery = (
+                Comment.objects.filter(
+                    story__candidate_id=OuterRef(pk_field)
+                ).values('story__candidate_id')
                 .annotate(count=Count('id'))
                 .values('count')[:1]
             )
         else:
-            # For models that don't have comments, return 0
+            # For models that don't have direct comment relationships, return 0
             comment_count_subquery = Comment.objects.none()
         
         # Annotate the queryset with counts and user-specific flags
