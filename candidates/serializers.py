@@ -24,11 +24,19 @@ class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
 class CandidateSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     profile_completed = serializers.SerializerMethodField()
-    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    profile_image = serializers.SerializerMethodField()
     viewers_count = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
     reference_responses = serializers.SerializerMethodField()
     passion_projects = serializers.SerializerMethodField()
+    
+    def get_profile_image(self, obj):
+        if obj.profile_image:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(obj.profile_image.url)
+            return obj.profile_image.url
+        return None
     
     class Meta:
         model = Candidate

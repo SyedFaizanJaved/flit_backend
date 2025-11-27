@@ -6,7 +6,8 @@ from .views_company_project_job import (
     ProjectLikeView, ProjectCommentListCreateView, ProjectSaveView,
     JobLikeView, JobCommentListCreateView, JobSaveView,
     CompanyListView, ProjectListView, JobListView, CandidateListView,
-    CandidateLikeView, CandidateCommentListCreateView, CandidateSaveView
+    CandidateLikeView, CandidateCommentListCreateView, CandidateSaveView,
+    AllSavedItemsView
 )
 
 app_name = 'stories'
@@ -60,4 +61,5 @@ urlpatterns = [
     path('projects/', include((project_urlpatterns, 'projects'))),
     path('jobs/', include((job_urlpatterns, 'jobs'))),
     path('candidates/', include((candidate_urlpatterns, 'candidates'))),
+    path('saved-items/', AllSavedItemsView.as_view(), name='all-saved-items'),
 ]
