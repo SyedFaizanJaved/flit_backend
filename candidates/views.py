@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import requests
+import boto3
 # Set up logging
 logger = logging.getLogger(__name__)
 from django.conf import settings
@@ -1094,19 +1095,92 @@ class CandidateViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(candidate)
             return Response(serializer.data)
             
-        # Handle PUT/PATCH requests
-        partial = request.method == 'PATCH'
-        serializer = self.get_serializer(candidate, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
+        # Create a new dictionary for the data
+        data = {}
         
-        # Handle file uploads
-        if 'profile_picture' in request.FILES:
-            serializer.validated_data['profile_picture'] = request.FILES['profile_picture']
-            
+        # Copy all non-file data from request.data
+        for key, value in request.data.items():
+            if key not in request.FILES:  # Skip file fields
+                data[key] = value
+        
+        # Handle profile picture upload
+        if 'profile_image' in request.FILES:
+            try:
+                # Get the file from request
+                profile_image = request.FILES['profile_image']
+                
+                # Generate a unique filename
+                file_ext = os.path.splitext(profile_image.name)[1]
+                filename = f"{request.user.id}_{int(time.time())}{file_ext}"
+                filepath = f"candidates/profile_images/{filename}"
+                
+                # Save the file to S3
+                s3 = boto3.client('s3',
+                                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                                region_name=settings.AWS_S3_REGION_NAME)
+                
+                s3.upload_fileobj(
+                    profile_image,
+                    settings.AWS_STORAGE_BUCKET_NAME,
+                    filepath,
+                    ExtraArgs={
+                        'ContentType': profile_image.content_type
+                    }
+                )
+                
+                # Generate the full URL
+                file_url = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/{filepath}"
+                
+                # Update the candidate's profile_image field directly
+                candidate.profile_image = file_url
+                candidate.save(update_fields=['profile_image'])
+                
+            except Exception as e:
+                logger.error(f"Error saving profile image: {str(e)}", exc_info=True)
+                return Response(
+                    {"error": f"Failed to process profile image: {str(e)}"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Handle resume file upload
         if 'resume_file' in request.FILES:
-            resume_url = self._save_file(request.FILES['resume_file'], 'candidates/resumes', request)
-            if resume_url:
-                serializer.validated_data['resume_url'] = resume_url
+            try:
+                resume_url = self._save_file(
+                    request.FILES['resume_file'], 
+                    'candidates/resumes', 
+                    request
+                )
+                if resume_url:
+                    data['resume_url'] = resume_url
+            except Exception as e:
+                logger.error(f"Error saving resume: {str(e)}")
+                return Response(
+                    {"error": "Failed to process resume file"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Handle video file upload
+        if 'video_file' in request.FILES:
+            try:
+                video_url = self._save_file(
+                    request.FILES['video_file'],
+                    'candidates/videos',
+                    request
+                )
+                if video_url:
+                    data['video_intro_url'] = video_url
+            except Exception as e:
+                logger.error(f"Error saving video: {str(e)}")
+                return Response(
+                    {"error": "Failed to process video file"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Now handle the data with the serializer
+        partial = request.method == 'PATCH'
+        serializer = self.get_serializer(candidate, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
         
         # Save the updated profile
         self.perform_update(serializer)

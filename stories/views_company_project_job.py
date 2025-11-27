@@ -12,6 +12,16 @@ from .serializers import (
     CommentSerializer, 
     SavedItemSerializer
 )
+from companies.models import Company
+from projects.models import Project
+from jobs.models import Job
+from candidates.models import Candidate
+from .serializers_company_project_job import (
+    CompanySerializer,
+    ProjectSerializer,
+    JobSerializer,
+    CandidateSerializer
+)
 from .serializers_company_project_job import (
     CompanySerializer,
     ProjectSerializer,
@@ -24,6 +34,54 @@ from companies.models import Company
 from projects.models import Project
 from jobs.models import Job
 from candidates.models import Candidate
+
+class AllSavedItemsView(APIView):
+    """
+    View to list all saved items (projects, jobs, candidates, companies) for the current user
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, *args, **kwargs):
+        # Get all saved items for the current user
+        saved_items = SavedItem.objects.filter(user=request.user).order_by('-created_at')
+        
+        # Initialize response data
+        response_data = {
+            'projects': [],
+            'jobs': [],
+            'candidates': [],
+            'companies': []
+        }
+        
+        # Get IDs for each type
+        project_ids = [item.project_id for item in saved_items if item.item_type == 'project' and item.project_id]
+        job_ids = [item.job_id for item in saved_items if item.item_type == 'job' and item.job_id]
+        candidate_ids = [item.candidate_id for item in saved_items if item.item_type == 'candidate' and item.candidate_id]
+        company_ids = [item.company_id for item in saved_items if item.item_type == 'company' and item.company_id]
+        
+        # Fetch all items in bulk for better performance
+        # Note: Removed is_active filter as it's not present in all models
+        projects = Project.objects.filter(id__in=project_ids) if project_ids else []
+        jobs = Job.objects.filter(id__in=job_ids) if job_ids else []
+        candidates = Candidate.objects.filter(id__in=candidate_ids) if candidate_ids else []
+        companies = Company.objects.filter(id__in=company_ids) if company_ids else []
+        
+        # Serialize each type of item
+        project_serializer = ProjectSerializer(projects, many=True, context={'request': request})
+        job_serializer = JobSerializer(jobs, many=True, context={'request': request})
+        candidate_serializer = CandidateSerializer(candidates, many=True, context={'request': request})
+        company_serializer = CompanySerializer(companies, many=True, context={'request': request})
+        
+        # Add to response data
+        response_data.update({
+            'projects': project_serializer.data,
+            'jobs': job_serializer.data,
+            'candidates': candidate_serializer.data,
+            'companies': company_serializer.data
+        })
+        
+        return Response(response_data)
+
 
 class BaseInteractionView(APIView):
     """
@@ -282,7 +340,21 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
 class ProjectSaveView(APIView):
     permission_classes = [IsAuthenticated]
     
+    def get(self, request, pk):
+        """Check if the project is saved by the current user"""
+        is_saved = SavedItem.objects.filter(
+            user=request.user,
+            project_id=pk,
+            item_type='project'
+        ).exists()
+        
+        return Response({
+            'is_saved': is_saved,
+            'project_id': pk
+        })
+    
     def post(self, request, pk):
+        """Save or unsave the project"""
         project = get_object_or_404(Project, pk=pk)
         
         # Check if already saved
@@ -382,7 +454,21 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
 class JobSaveView(APIView):
     permission_classes = [IsAuthenticated]
     
+    def get(self, request, pk):
+        """Check if the job is saved by the current user"""
+        is_saved = SavedItem.objects.filter(
+            user=request.user,
+            job_id=pk,
+            item_type='job'
+        ).exists()
+        
+        return Response({
+            'is_saved': is_saved,
+            'job_id': pk
+        })
+    
     def post(self, request, pk):
+        """Save or unsave the job"""
         job = get_object_or_404(Job, pk=pk)
         
         # Check if already saved
