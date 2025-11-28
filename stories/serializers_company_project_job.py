@@ -71,40 +71,99 @@ class ProjectSerializer(serializers.ModelSerializer):
     """
     Project serializer with interaction data
     """
-    like_count = serializers.IntegerField(read_only=True)
-    comment_count = serializers.IntegerField(read_only=True)
-    is_liked = serializers.BooleanField(read_only=True)
-    is_saved = serializers.BooleanField(read_only=True)
+    like_count = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
+    is_saved = serializers.SerializerMethodField()
     project_id = serializers.IntegerField(source='id', read_only=True)
     
     class Meta:
         model = Project
         fields = [
-            'project_id', 'title', 'description', 'budget_min', 'budget_max', 'budget_currency',
-            'deadline',  'is_budget_negotiable', 'estimatedHours','category',
-            'is_timeline_flexible', 'required_skills', 'technologies',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
+            'project_id', 'title', 'description', 'category', 'paymentType', 'paymentAmount',
+            'estimatedHours', 'deadline', 'status', 'company', 'created_at',
+            'like_count', 'comment_count', 'is_liked', 'is_saved'
         ]
         read_only_fields = ['created_at']
         depth = 1
+    
+    def get_like_count(self, obj):
+        from stories.models import Like
+        return Like.objects.filter(project_id=obj.id).count()
+    
+    def get_comment_count(self, obj):
+        # Get the story directly through the relationship
+        story = obj.stories.filter(content_type='text').first()
+        return story.story_comments.count() if story else 0
+    
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from stories.models import Like
+            return Like.objects.filter(
+                project_id=obj.id,
+                user=request.user
+            ).exists()
+        return False
+    
+    def get_is_saved(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from stories.models import SavedItem
+            return SavedItem.objects.filter(
+                project_id=obj.id,
+                user=request.user,
+                item_type='project'
+            ).exists()
+        return False
 
 
 class JobSerializer(serializers.ModelSerializer):
     """
     Job serializer with interaction data
     """
-    like_count = serializers.IntegerField(read_only=True)
-    comment_count = serializers.IntegerField(read_only=True)
-    is_liked = serializers.BooleanField(read_only=True)
-    is_saved = serializers.BooleanField(read_only=True)
+    like_count = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
+    is_saved = serializers.SerializerMethodField()
     job_id = serializers.IntegerField(source='id', read_only=True)
     
     class Meta:
         model = Job
         fields = [
             'job_id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
-            'like_count', 'comment_count', 'is_liked', 'is_saved','created_at','skills','applicationDeadline'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'skills', 'applicationDeadline'
         ]
+    
+    def get_like_count(self, obj):
+        from stories.models import Like
+        return Like.objects.filter(job_id=obj.id).count()
+    
+    def get_comment_count(self, obj):
+        # Get the story directly through the relationship
+        story = obj.stories.filter(content_type='text').first()
+        return story.story_comments.count() if story else 0
+    
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from stories.models import Like
+            return Like.objects.filter(
+                job_id=obj.id,
+                user=request.user
+            ).exists()
+        return False
+    
+    def get_is_saved(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from stories.models import SavedItem
+            return SavedItem.objects.filter(
+                job_id=obj.id,
+                user=request.user,
+                item_type='job'
+            ).exists()
+        return False
 
 
 class CandidateSerializer(serializers.ModelSerializer):
@@ -131,18 +190,9 @@ class CandidateSerializer(serializers.ModelSerializer):
         return Like.objects.filter(candidate_id=obj.id).count()
     
     def get_comment_count(self, obj):
-        # Comments are associated with stories, so we need to check if there are any stories
-        # from this candidate that have comments
-        from django.contrib.contenttypes.models import ContentType
-        from .models import Story
-        
-        # Get the content type for the Story model
-        story_content_type = ContentType.objects.get_for_model(Story)
-        
-        # Count comments on stories where the user is the candidate and user_type is 'candidate'
+        # Count comments on stories that are associated with this candidate
         return Comment.objects.filter(
-            story__user=obj.user,
-            story__user_type='candidate'
+            story__candidate_id=obj.id
         ).count()
     
     def get_is_liked(self, obj):

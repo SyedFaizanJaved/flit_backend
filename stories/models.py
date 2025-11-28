@@ -29,9 +29,11 @@ class Story(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='stories')
     user_type = models.CharField(max_length=10, default='candidate', editable=False, help_text="Automatically set to 'employer' or 'candidate' based on user's profile")
     
-    # Reference to either company (for employer) or candidate profile
+    # Reference to company, candidate, project, or job
     company = models.ForeignKey('companies.Company', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
     candidate = models.ForeignKey('candidates.Candidate', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
+    project = models.ForeignKey('projects.Project', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
+    job = models.ForeignKey('jobs.Job', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
     
     # Content type - determines which content field is used
     content_type = models.CharField(max_length=10, choices=CONTENT_TYPE_CHOICES, default='text')
