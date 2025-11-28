@@ -1182,11 +1182,15 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     request
                 )
                 if resume_url:
+                    # Update both data and final_data with the resume_url
                     data['resume_url'] = resume_url
+                    final_data['resume_url'] = resume_url
+                    # Mark portfolio as completed since we have a resume
+                    candidate.portfolio_completed = True
             except Exception as e:
-                logger.error(f"Error saving resume: {str(e)}")
+                logger.error(f"Error saving resume: {str(e)}", exc_info=True)
                 return Response(
-                    {"error": "Failed to process resume file"}, 
+                    {"error": f"Failed to process resume file: {str(e)}"}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
