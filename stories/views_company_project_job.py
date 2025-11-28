@@ -2,12 +2,10 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework import generics
-from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Exists, OuterRef
 
-from .models import Like, Comment, SavedItem
+from .models import Story, Comment, SavedItem, Like
 from .serializers import (
     LikeSerializer, 
     CommentSerializer, 
@@ -147,22 +145,49 @@ class CandidateLikeView(BaseInteractionView):
 
 class CandidateCommentListCreateView(generics.ListCreateAPIView):
     """
-    View for listing and creating comments on a candidate
+    View for listing and creating comments on a candidate's story.
+    Creates a story for the candidate if one doesn't exist.
     """
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         candidate_id = self.kwargs['pk']
-        return Comment.objects.filter(
-            candidate_id=candidate_id
-        ).order_by('-created_at')
+        # Get the candidate
+        candidate = get_object_or_404(Candidate, id=candidate_id)
+        
+        # Get or create a story for this candidate
+        story, created = Story.objects.get_or_create(
+            candidate=candidate,
+            user_type='candidate',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Candidate: {candidate.user.get_full_name() or candidate.user.email}'
+            }
+        )
+        
+        return story.story_comments.all().order_by('-created_at')
     
     def perform_create(self, serializer):
-        candidate = get_object_or_404(Candidate, pk=self.kwargs['pk'])
+        candidate_id = self.kwargs['pk']
+        candidate = get_object_or_404(Candidate, id=candidate_id)
+        
+        # Get or create a story for this candidate
+        story, created = Story.objects.get_or_create(
+            candidate=candidate,
+            user_type='candidate',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Candidate: {candidate.user.get_full_name() or candidate.user.email}'
+            }
+        )
+        
         serializer.save(
             user=self.request.user,
-            candidate_id=candidate.id
+            story=story,
+            content=serializer.validated_data.get('content', '')
         )
 
 
@@ -323,19 +348,55 @@ class ProjectLikeView(BaseInteractionView):
 
 
 class ProjectCommentListCreateView(generics.ListCreateAPIView):
-    model = Project
+    """
+    View for listing and creating comments on a project's story.
+    Creates a story for the project's company if one doesn't exist.
+    """
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         project_id = self.kwargs['pk']
-        return Comment.objects.filter(project_id=project_id).order_by('-created_at')
+        # Get the project and its company
+        project = get_object_or_404(Project, id=project_id)
+        if not project.company:
+            return Comment.objects.none()
+            
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=project.company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Project: {project.title}'
+            }
+        )
+        
+        return story.story_comments.all().order_by('-created_at')
 
     def perform_create(self, serializer):
         project_id = self.kwargs['pk']
+        project = get_object_or_404(Project, id=project_id)
+        
+        if not project.company:
+            raise ValidationError("Cannot comment on a project without a company")
+            
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=project.company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Project: {project.title}'
+            }
+        )
+        
         serializer.save(
             user=self.request.user,
-            project_id=project_id
+            story=story,
+            content=serializer.validated_data.get('content', '')
         )
 
 class ProjectSaveView(APIView):
@@ -437,19 +498,55 @@ class JobLikeView(BaseInteractionView):
 
 
 class JobCommentListCreateView(generics.ListCreateAPIView):
-    model = Job
+    """
+    View for listing and creating comments on a job's story.
+    Creates a story for the job's company if one doesn't exist.
+    """
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         job_id = self.kwargs['pk']
-        return Comment.objects.filter(job_id=job_id).order_by('-created_at')
+        # Get the job and its company
+        job = get_object_or_404(Job, id=job_id)
+        if not job.company:
+            return Comment.objects.none()
+            
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=job.company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Job: {job.title}'
+            }
+        )
+        
+        return story.story_comments.all().order_by('-created_at')
 
     def perform_create(self, serializer):
         job_id = self.kwargs['pk']
+        job = get_object_or_404(Job, id=job_id)
+        
+        if not job.company:
+            raise ValidationError("Cannot comment on a job without a company")
+            
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=job.company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,  # Use the request user as the story author
+                'text_content': f'Job: {job.title}'
+            }
+        )
+        
         serializer.save(
             user=self.request.user,
-            job_id=job_id
+            story=story,
+            content=serializer.validated_data.get('content', '')
         )
 
 class JobSaveView(APIView):

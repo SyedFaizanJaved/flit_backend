@@ -1213,6 +1213,22 @@ class CandidateViewSet(viewsets.ModelViewSet):
         # Log the data being passed to the serializer for debugging
         logger.info(f"Data being passed to serializer: {final_data}")
         
+        # Check which sections are being updated and update completion flags
+        if 'full_name' in final_data or 'title' in final_data or 'bio' in final_data or 'location' in final_data:
+            candidate.basic_info_completed = True
+        
+        if 'work_style' in final_data or 'availability_type' in final_data or 'is_available' in final_data:
+            candidate.work_preferences_completed = True
+            
+        if 'skills' in final_data or 'superpowers' in final_data or 'preferred_roles' in final_data:
+            candidate.skills_completed = True
+            
+        if 'portfolio_links' in final_data or 'resume_url' in final_data or 'video_intro_url' in final_data:
+            candidate.portfolio_completed = True
+            
+        if 'profile_visibility' in final_data or 'video_visibility' in final_data or 'contact_visibility' in final_data or 'salary_visibility' in final_data:
+            candidate.privacy_completed = True
+        
         # Update the candidate instance with the new data
         for key, value in final_data.items():
             if hasattr(candidate, key):
