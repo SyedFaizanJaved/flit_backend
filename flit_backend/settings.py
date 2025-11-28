@@ -257,3 +257,55 @@ BASE_DIR = os.path.dirname(BASE_DIR)
 
 CREDENTIALS_FILE = os.path.join(BASE_DIR, config('GOOGLE_CLIENT_SECRET_FILE'))
 TOKEN_FILE = os.path.join(BASE_DIR, config('GOOGLE_TOKEN_FILE'))
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+
+    'formatters': {
+    'pretty_format': {
+        'format': '[{asctime}] [{levelname}] {message}',
+        'style': '{',
+        }
+    },
+
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+        'API_access_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'logs/API_access.log',
+            'formatter': 'pretty_format'
+        },
+        'security_warnings_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'logs/security_warnings.log',
+            'formatter': 'pretty_format'
+        },
+        'exceptions_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'logs/exceptions.log',
+            'formatter': 'pretty_format'
+        },
+    },
+
+    'loggers': {
+        'django.server': {
+            'handlers': ['console', 'API_access_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console', 'security_warnings_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'exceptions': {
+            'handlers': ['exceptions_file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    }
+}

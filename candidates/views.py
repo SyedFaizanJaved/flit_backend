@@ -58,6 +58,7 @@ from django.http import JsonResponse
 import requests
 from rest_framework.reverse import reverse as drf_reverse
 from applications.models import ProjectApplication
+exception_logger = logging.getLogger("exceptions")
 
 
 class PublicProjectListAPIView(ListAPIView):
@@ -112,6 +113,7 @@ class DashboardBaseView(APIView):
         try:
             return user.candidate_profile
         except Candidate.DoesNotExist:
+            exception_logger.error("Candidate.DoesNotExist: Candidate profile not found")
             raise Http404('Candidate profile not found')
 
 
@@ -274,6 +276,7 @@ class CandidateApplicationsView(DashboardBaseView):
             })
             
         except Exception as e:
+            exception_logger.exception("Error fetching applications")
             logger.error(f"Error fetching applications: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'An error occurred while fetching applications'},
@@ -351,6 +354,7 @@ class CandidateLatestJobsView(DashboardBaseView):
                                     break
                             
                             except Exception as e:
+                                exception_logger.exception("Error processing job from ML data")
                                 logger.error(f"Error processing job from ML data: {str(e)}", exc_info=True)
                         
                         if latest_jobs:
@@ -361,14 +365,17 @@ class CandidateLatestJobsView(DashboardBaseView):
                     else:
                         logger.warning("No ranked_opportunities found or empty in ML response")
                 except ValueError as e:
+                    exception_logger.exception("Invalid JSON in ML response")
                     logger.error(f"Invalid JSON in ML response: {str(e)}")
             else:
                 logger.warning(f"ML service returned status code: {ml_response.status_code}")
                 logger.warning(f"Response content: {ml_response.text}")
                 
         except requests.exceptions.RequestException as e:
+            exception_logger.exception("Network error calling ML service")
             logger.error(f"Network error calling ML service: {str(e)}", exc_info=True)
         except Exception as e:
+            exception_logger.exception("Unexpected error calling ML service")
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
         # Fallback to original logic if ML fails or no results
@@ -445,12 +452,14 @@ class CandidateLatestProjectsView(DashboardBaseView):
                         
                 except requests.exceptions.Timeout:
                     if attempt == max_retries:
+                        exception_logger.error(f"ML service timed out after {max_retries + 1}attempts")
                         logger.error(f"ML service timed out after {max_retries + 1} attempts")
                         raise
                     logger.warning(f"ML service timed out, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
                     time.sleep(retry_delay)
                 except requests.exceptions.RequestException as e:
                     if attempt == max_retries:
+                        exception_logger.exception(f"Failed to call ML service after {max_retries + 1} attempts")
                         logger.error(f"Failed to call ML service after {max_retries + 1} attempts: {str(e)}")
                         raise
                     logger.warning(f"Error calling ML service, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries}): {str(e)}")
@@ -486,6 +495,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                     project_ids.append(project_id)
                                     project_data_map[project_id] = project_data
                             except (ValueError, TypeError) as e:
+                                exception_logger.exception(f"Invalid project ID in ML response: {project_data.get('project_id') or project_data.get('id')}")
                                 logger.warning(f"Invalid project ID in ML response: {project_data.get('project_id') or project_data.get('id')}")
                     
                     # If no project IDs found in opportunities, try the root level ranked_opportunity_ids
@@ -496,6 +506,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                 project_id = int(project_id)
                                 project_ids.append(project_id)
                             except (ValueError, TypeError):
+                                exception_logger.exception(f"Invalid project ID in ranked_opportunity_ids: {project_id}")
                                 logger.warning(f"Invalid project ID in ranked_opportunity_ids: {project_id}")
                     
                     # If we still don't have project IDs, check if we have direct project data
@@ -513,6 +524,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                                 project_ids.append(project_id)
                                                 project_data_map[project_id] = item
                                         except (ValueError, TypeError):
+                                            exception_logger.exception(f"Invalid project ID in {key}: {item.get('project_id') or item.get('id')}")
                                             logger.warning(f"Invalid project ID in {key}: {item.get('project_id') or item.get('id')}")
                     
                     if project_ids:
@@ -546,6 +558,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                     latest_projects.append(project)
                                     continue
                                 except Project.DoesNotExist:
+                                    exception_logger.error(f"Project.DoesNotExist: Active project not found for project_id={project_id}")
                                     pass
                                 
                                 # If not in database, create a new project from ML data
@@ -573,6 +586,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                 logger.info(f"Created project from ML data: {project_id} with skills: {project_data.get('skills', [])}")
                                 
                             except Exception as e:
+                                exception_logger.exception(f"Error processing project with project_id={project_id}")
                                 logger.error(f"Error processing project {project_id}: {str(e)}", exc_info=True)
                     
                     # If we still don't have projects, try to get them from the database as fallback
@@ -589,15 +603,18 @@ class CandidateLatestProjectsView(DashboardBaseView):
                         logger.warning("No projects found in ML response")
                         
                 except json.JSONDecodeError as e:
+                    exception_logger.exception("Failed to parse ML service response as JSON")
                     logger.error(f"Failed to parse ML service response as JSON: {e}")
                     logger.info(f"Raw response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
                 except Exception as e:
+                    exception_logger.exception("Unexpected error processing ML response")
                     logger.error(f"Unexpected error processing ML response: {str(e)}", exc_info=True)
             else:
                 logger.warning(f"ML service returned status code: {ml_response.status_code}")
                 logger.warning(f"Response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
                 
         except requests.RequestException as e:
+            exception_logger.exception("Request to ML service failed")
             error_msg = f"Request to ML service failed: {str(e)}"
             if hasattr(e, 'response') and e.response is not None:
                 error_msg += f"\nResponse status: {e.response.status_code}"
@@ -607,6 +624,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                     pass
             logger.error(error_msg, exc_info=True)
         except Exception as e:
+            exception_logger.exception("Unexpected error calling ML service")
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
         # Fallback to original logic if ML fails or no results
@@ -679,6 +697,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
         try:
             return user.candidate_profile
         except Candidate.DoesNotExist:
+            exception_logger.error("Candidate.DoesNotExist: Candidate profile not found for this request")
             return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def _save_file(self, file_obj, storage_path_prefix, request):
@@ -688,6 +707,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             public_url = default_storage.url(storage_path)
             return request.build_absolute_uri(public_url)
         except Exception:
+            exception_logger.exception("File saving failed in _save_file")
             return None
 
     def retrieve(self, request, pk=None):
@@ -699,6 +719,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             candidate = Candidate.objects.get(user__id=pk, profile_visibility="public")
             viewed_publicly = True
         except Candidate.DoesNotExist:
+            exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
             candidate = None
         # 2) If not found, try by candidate PK with public visibility
         if candidate is None:
@@ -706,6 +727,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 candidate = Candidate.objects.get(pk=pk, profile_visibility="public")
                 viewed_publicly = True
             except Candidate.DoesNotExist:
+                exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
                 candidate = None
         # 3) If still not found, allow owner to view their own profile regardless of visibility (by either key)
         if candidate is None and getattr(request.user, 'is_authenticated', False):
@@ -713,6 +735,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 candidate = Candidate.objects.get(Q(pk=pk) | Q(user__id=pk), user=request.user)
                 viewed_publicly = False
             except Candidate.DoesNotExist:
+                exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
                 candidate = None
         if candidate is None:
             return Response(
@@ -755,6 +778,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             try:
                 candidate = Candidate.objects.get(id=candidate_id)
             except Candidate.DoesNotExist:
+                exception_logger.error("Candidate.DoesNotExist: Candidate with ID {candidate_id} not found for ML sync")
                 ml_error = f'Candidate with ID {candidate_id} not found for ML sync'
                 logger.error(ml_error)
 
@@ -799,12 +823,14 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     break
                 except requests.exceptions.Timeout:
                     if attempt == max_retries:
+                        exception_logger.error("Candidate create ML API timed out after maximum retries")
                         ml_error = "Candidate create ML API timed out after retries"
                         logger.error(ml_error)
                         break
                     logger.warning(f"Candidate create ML API timeout (attempt {attempt + 1}), retrying...")
                     time.sleep(1)
                 except requests.exceptions.RequestException as exc:
+                    exception_logger.exception("Candidate create ML API request failed")
                     ml_error = f"Candidate create ML API request failed: {str(exc)}"
                     logger.error(ml_error, exc_info=True)
                     break
@@ -829,9 +855,11 @@ class CandidateViewSet(viewsets.ModelViewSet):
 
                         ml_success = True
                     except ValueError:
+                        exception_logger.exception("Invalid JSON response from Candidate create ML API")
                         ml_error = "Invalid JSON response from Candidate create ML API"
                         logger.error(ml_error)
                     except Exception as exc:
+                        exception_logger.exception("Error processing Candidate create ML API response")
                         ml_error = f"Error processing Candidate create ML API response: {str(exc)}"
                         logger.error(ml_error, exc_info=True)
                 else:
@@ -856,10 +884,12 @@ class CandidateViewSet(viewsets.ModelViewSet):
         try:
             employer = request.user.employer_profile
         except Exception:
+            exception_logger.exception("Not Employer or Unexpected error while accessing employer_profile in record_view")
             raise PermissionDenied("Only employers can record candidate profile views.")
         try:
             candidate = Candidate.objects.get(pk=pk)
         except Candidate.DoesNotExist:
+            exception_logger.error(f"Candidate.DoesNotExist: Candidate with ID {pk} not found")
             return Response({"error": "Candidate not found"}, status=status.HTTP_404_NOT_FOUND)
         candidate.refresh_from_db(fields=['profile_views', 'viewers'])
         viewers_list = list(candidate.viewers or [])
@@ -912,6 +942,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             limit_param = request.query_params.get('limit')
             limit = int(limit_param) if limit_param is not None else 12
         except ValueError:
+            exception_logger.error(f"Invalid 'limit' query param: Defaulting to 12.")
             limit = 12
         jobs_qs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
         projects_qs = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
@@ -969,24 +1000,29 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     if response.status_code == 200:
                         logger.info(f"ML API update successful (non-JSON response) for candidate {candidate_id}")
                         return True, "Profile updated successfully in ML service", {}
+                    exception_logger.exception(f"ML API returned non-JSON response with status {response.status_code} for candidate {candidate_id}")
                     raise  # Re-raise if not 200
                 
             except requests.exceptions.HTTPError as e:
+                exception_logger.exception(f"HTTP error while updating ML service for candidate {candidate_id}")
                 error_msg = f"HTTP Error: {str(e)}"
                 logger.error(f"{error_msg} for candidate {candidate_id}")
                 return False, error_msg, None
                 
         except requests.exceptions.RequestException as e:
+            exception_logger.exception(f"Connection error while calling ML service for candidate {candidate_id}")
             error_msg = f"Error connecting to ML service: {str(e)}"
             logger.error(f"{error_msg} for candidate {candidate_id}")
             return False, error_msg, None
             
         except json.JSONDecodeError as e:
+            exception_logger.exception(f"Invalid JSON response from ML service for candidate {candidate_id}")
             error_msg = f"Invalid JSON response from ML service: {str(e)}"
             logger.error(f"{error_msg} for candidate {candidate_id}")
             return False, error_msg, None
             
         except Exception as e:
+            exception_logger.exception(f"Unexpected error updating ML service for candidate {candidate_id}")
             error_msg = f"Unexpected error updating ML service: {str(e)}"
             logger.error(f"{error_msg} for candidate {candidate_id}", exc_info=True)
             return False, error_msg, None
@@ -1020,6 +1056,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                         parsed_value = json.loads(value)
                         parsed_data[key] = parsed_value if isinstance(parsed_value, list) else [parsed_value]
                     except json.JSONDecodeError:
+                        exception_logger.error(f"Invalid JSON format for key '{key}' with value: {value}")
                         parsed_data[key] = [value] if value.strip() else []
                 else:
                     parsed_data[key] = self._parse_json_list(value)
@@ -1051,6 +1088,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             try:
                 return json.loads(value)
             except json.JSONDecodeError:
+                exception_logger.error(f"Invalid JSON string encountered: {value}")
                 return [value] if value.strip() else []
         if isinstance(value, (list, tuple)):
             return list(value)
@@ -1069,6 +1107,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
         try:
             return int(value)
         except (ValueError, TypeError):
+            exception_logger.error(f"Invalid integer value: {value}")
             return None
             
     def _prepare_ml_data(self, candidate):
@@ -1167,6 +1206,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 candidate.save(update_fields=['profile_image'])
                 
             except Exception as e:
+                exception_logger.exception("Error saving profile image")
                 logger.error(f"Error saving profile image: {str(e)}", exc_info=True)
                 return Response(
                     {"error": f"Failed to process profile image: {str(e)}"}, 
@@ -1188,6 +1228,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     # Mark portfolio as completed since we have a resume
                     candidate.portfolio_completed = True
             except Exception as e:
+                exception_logger.exception("Error saving resume")
                 logger.error(f"Error saving resume: {str(e)}", exc_info=True)
                 return Response(
                     {"error": f"Failed to process resume file: {str(e)}"}, 
@@ -1205,6 +1246,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 if video_url:
                     data['video_intro_url'] = video_url
             except Exception as e:
+                exception_logger.exception("Error saving video")
                 logger.error(f"Error saving video: {str(e)}")
                 return Response(
                     {"error": "Failed to process video file"},
@@ -1268,6 +1310,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             if ml_data:
                 ml_success, ml_message, _ = self._update_ml_candidate_data(candidate.id, ml_data)
         except Exception as e:
+            exception_logger.exception("Error updating ML service")
             logger.error(f"Error updating ML service: {str(e)}")
             ml_success = False
             ml_message = f"Error updating ML service: {str(e)}"
@@ -1335,6 +1378,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                                         'has_transcription': bool(transcription)
                                     })
                     except Exception as e:
+                        exception_logger.exception("Error during video analysis")
                         logger.error(f"Error during video analysis: {str(e)}")
                         if isinstance(response_data, dict):
                             if 'video_analysis' not in response_data:
@@ -1344,6 +1388,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                                 'message': str(e)
                             })
             except Exception as e:
+                exception_logger.exception("Error processing video file")
                 logger.error(f"Error processing video file: {str(e)}")
                 if isinstance(response_data, dict):
                     if 'video_analysis' not in response_data:
@@ -1393,6 +1438,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     Q(experience__description__icontains=search_text)
                 ).distinct()
         except Exception as e:
+            exception_logger.exception("Error calling ML service")
             logger = logging.getLogger(__name__)
             logger.error(f"Error calling ML service: {str(e)}")
             matched_qs = Candidate.objects.filter(profile_visibility="public").filter(
@@ -1461,6 +1507,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     else:
                         companies_qs = Company.objects.none()
                 except Employer.DoesNotExist:
+                    exception_logger.error("Employer.DoesNotExist: Employer not found while fetching companies")
                     companies_qs = Company.objects.none()
         companies_qs = companies_qs.distinct().order_by('-created_at')
         serializer = CompanyWithOpeningsSerializer(companies_qs, many=True, context={'request': request})
@@ -1491,6 +1538,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 user.profile_completed = candidate.is_profile_complete
                 user.save(update_fields=['profile_completed'])
         except Exception:
+            exception_logger.exception("Error syncing profile_completed flag for candidate")
             pass
         return Response({
             'message': f'{section} section marked as complete',
@@ -1523,6 +1571,7 @@ class WorkDNAQuestionView(APIView):
             return self.fetch_work_dna_questions(candidate)
             
         except Exception as e:
+            exception_logger.exception("Unhandled error in get() while fetching work DNA questions")
             return Response(
                 {'error': f'An error occurred: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1592,6 +1641,7 @@ class WorkDNAQuestionView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
+            exception_logger.exception("Error while saving Work DNA answers")
             return Response(
                 {'error': f'An error occurred while saving answers: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1632,11 +1682,13 @@ class WorkDNAQuestionView(APIView):
                 )
                 
         except requests.RequestException as e:
+            exception_logger.exception("Error connecting to ML service")
             return Response(
                 {'error': f'Error connecting to ML service: {str(e)}'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         except Exception as e:
+            exception_logger.exception("Unhandled error in ML service handler")
             return Response(
                 {'error': f'An error occurred: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1663,6 +1715,7 @@ class CandidateAIMatchingView(APIView):
             response = requests.get(ml_api_url, params=params, timeout=None)
 
         except requests.RequestException as exc:
+            exception_logger.exception("AI matching service request failed")
             logger.exception("AI matching service request failed")
             return Response(
                 {'error': 'Unable to reach AI matching service', 'details': str(exc)},
@@ -1672,6 +1725,7 @@ class CandidateAIMatchingView(APIView):
         try:
             payload = response.json()
         except ValueError:
+            exception_logger.error("Invalid JSON response while parsing AI matching service payload")
             payload = {'raw_response': response.text or ''}
 
         if response.status_code >= 400:

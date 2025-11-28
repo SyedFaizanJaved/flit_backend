@@ -20,6 +20,8 @@ from .serializers import (
 from candidates.models import Candidate, ReferenceRequest
 from applications.models import JobApplication, ProjectApplication
 from jobs.models import Job, JobSkill
+import logging
+logger = logging.getLogger("exceptions")
 
 
 class UserRegistrationView(generics.CreateAPIView):
@@ -95,7 +97,8 @@ def user_login(request):
                 employer_company_completed = Company.objects.filter(
                     created_by=user, is_active=True, is_completed=True
                 ).exists()
-        except Exception:
+        except Exception as e:
+            logger.exception(e)
             employer_company_completed = Company.objects.filter(
                 created_by=user, is_active=True, is_completed=True
             ).exists()
@@ -107,6 +110,7 @@ def user_login(request):
                 candidate_profile = user.candidate_profile
                 profile_completed = candidate_profile.is_profile_complete
             except Candidate.DoesNotExist:
+                logger.error('Candidate.DoesNotExist: Candidate profile does not exist')
                 profile_completed = False
 
         # Persist the latest computed state on the user for quick access elsewhere
@@ -287,6 +291,7 @@ def admin_employer_detail(request, pk):
         return Response(data, status=status.HTTP_200_OK)
         
     except Employer.DoesNotExist:
+        logger.error('Employer.DoesNotExist: Employer not found')
         return Response({'detail': 'Employer not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -386,6 +391,7 @@ def admin_candidate_detail(request, pk):
         }
         return Response(data, status=status.HTTP_200_OK)
     except Candidate.DoesNotExist:
+        logger.error('Candidate.DoesNotExist: Candidate not found')
         return Response({'detail': 'Candidate not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -410,6 +416,7 @@ def admin_job_detail(request, pk):
             try:
                 employer = Employer.objects.get(user=job.employer)
             except Employer.DoesNotExist:
+                logger.error("Employer.DoesNotExist: Employer object not found for job.employer")
                 pass
         
         # Get required skills with details
@@ -451,6 +458,7 @@ def admin_job_detail(request, pk):
         }
         return Response(data, status=status.HTTP_200_OK)
     except Job.DoesNotExist:
+        logger.error("Job.DoesNotExist: Job record not found for the given identifier")
         return Response({'detail': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
 
 @api_view(['GET'])
@@ -477,6 +485,7 @@ def admin_project_detail(request, pk):
             try:
                 employer = Employer.objects.get(user=project.employer)
             except Employer.DoesNotExist:
+                logger.error("Employer.DoesNotExist: Employer not found for project.employer")
                 pass
         
         # Get required skills with details
@@ -525,6 +534,7 @@ def admin_project_detail(request, pk):
         }
         return Response(data, status=status.HTTP_200_OK)
     except Project.DoesNotExist:
+        logger.error("Project.DoesNotExist: Project record not found for the given identifier")
         return Response({'detail': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
 
 

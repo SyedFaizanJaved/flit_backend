@@ -15,6 +15,7 @@ import requests
 import time
 from django.conf import settings
 
+exception_logger = logging.getLogger("exceptions")
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +106,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             try:
                 project = Project.objects.get(id=project_id)
             except Project.DoesNotExist:
+                exception_logger.error(f"Project.DoesNotExist: Project with ID {project_id} not found for ML sync")
                 ml_error = f'Project with ID {project_id} not found for ML sync'
                 logger.error(ml_error)
 
@@ -139,12 +141,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     break
                 except requests.exceptions.Timeout:
                     if attempt == max_retries:
+                        exception_logger.error("Project create ML API timed out after retries")
                         ml_error = "Project create ML API timed out after retries"
                         logger.error(ml_error)
                         break
                     logger.warning(f"Project create ML API timeout (attempt {attempt + 1}), retrying...")
                     time.sleep(1)
                 except requests.exceptions.RequestException as exc:
+                    exception_logger.exception("Project create ML API request failed")
                     ml_error = f"Project create ML API request failed: {str(exc)}"
                     logger.error(ml_error, exc_info=True)
                     break
@@ -169,9 +173,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
                         ml_success = True
                     except ValueError:
+                        exception_logger.error("Invalid JSON response from Project create ML API")
                         ml_error = "Invalid JSON response from Project create ML API"
                         logger.error(ml_error)
                     except Exception as exc:
+                        exception_logger.exception("Error processing Project create ML API response")
                         ml_error = f"Error processing Project create ML API response: {str(exc)}"
                         logger.error(ml_error, exc_info=True)
                 else:
@@ -231,10 +237,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
                         break  # If successful, exit the retry loop
                     except requests.exceptions.Timeout:
                         if attempt == max_retries:
+                            exception_logger.error("Project ML API timed out after retries")
                             raise  # Re-raise the timeout if we've exhausted all retries
                         print(f"Project ML API timeout (attempt {attempt + 1}), retrying...")
                         time.sleep(1)
                     except requests.exceptions.RequestException as e:
+                        exception_logger.exception("Project ML API request failed")
                         print(f"Project ML API request failed: {str(e)}")
                         raise
                 
@@ -257,6 +265,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                             'data': response.data
                         }
                     except Exception as e:
+                        exception_logger.exception("Error processing Project ML API response")
+                        exception_logger.error(f"ML raw response: {ml_response.text}")
                         print(f"Error processing Project ML API response: {str(e)}")
                         print(f"Response content: {ml_response.text}")
                         response.data = {
@@ -279,9 +289,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     }
                     
             except Exception as e:
+                exception_logger.exception("Error calling Project ML API")
                 error_msg = f"Error calling Project ML API: {str(e)}"
                 print(error_msg)
                 if 'ml_response' in locals():
+                    exception_logger.error(f"ML API response status: {getattr(ml_response, 'status_code', 'N/A')}")
+                    exception_logger.error(f"ML API raw response: {getattr(ml_response, 'text', 'N/A')}")
                     print(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
                     print(f"Response content: {getattr(ml_response, 'text', 'N/A')}")
                 
@@ -333,6 +346,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         try:
             project = Project.objects.get(id=pk, employer=request.user)
         except Project.DoesNotExist:
+            exception_logger.error("Project.DoesNotExist: Project not found")
             return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         applications = project.applications.all()
         data = {
@@ -360,6 +374,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         try:
             project = Project.objects.get(id=pk, employer=request.user)
         except Project.DoesNotExist:
+            exception_logger.error("Project.DoesNotExist: Project not found")
             return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
         if new_status not in ['draft', 'active', 'paused', 'closed', 'in-progress', 'completed']:
@@ -374,8 +389,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
             project = Project.objects.get(id=pk, employer=request.user)
             application = project.applications.get(id=application_id)
         except Project.DoesNotExist:
+            exception_logger.error("Project.DoesNotExist: Project not found")
             return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception:
+            exception_logger.exception("Application not found")
             return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_shortlisted = True
         application.is_rejected = False
@@ -389,8 +406,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
             project = Project.objects.get(id=pk, employer=request.user)
             application = project.applications.get(id=application_id)
         except Project.DoesNotExist:
+            exception_logger.error("Project.DoesNotExist: Project not found")
             return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception:
+            exception_logger.exception("Application not found")
             return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_rejected = True
         application.is_shortlisted = False

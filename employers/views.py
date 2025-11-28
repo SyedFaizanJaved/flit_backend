@@ -45,6 +45,8 @@ from accounts.views import BaseRoleRegistrationView
 from django.urls import reverse
 import requests
 from rest_framework.reverse import reverse as drf_reverse
+
+exception_logger = logging.getLogger("exceptions")
         
 
 User = get_user_model()
@@ -59,6 +61,7 @@ class EmployerDashboardBaseView(APIView):
         try:
             return user.employer_profile
         except Employer.DoesNotExist:
+            exception_logger.error("Employer.DoesNotExist: Employer profile not found")
             raise Http404('Employer profile not found')
 
 
@@ -115,6 +118,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             return Response(detail_serializer.data)
             
         except CandidateAction.DoesNotExist:
+            exception_logger.error("CandidateAction.DoesNotExist: Candidate action not found or you don't have permission to update it")
             return Response(
                 {"detail": "Candidate action not found or you don't have permission to update it"},
                 status=status.HTTP_404_NOT_FOUND
@@ -141,6 +145,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(action, context={'request': request})
             return Response(serializer.data)
         except CandidateAction.DoesNotExist:
+            exception_logger.error("CandidateAction.DoesNotExist: No action found for this candidate.")
             return Response(
                 {"detail": "No action found for this candidate."}, 
                 status=status.HTTP_404_NOT_FOUND
@@ -178,6 +183,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             return Response(detail_serializer.data)
             
         except CandidateAction.DoesNotExist:
+            exception_logger.error("CandidateAction.DoesNotExist: Candidate action not found or you don't have permission to update it")
             return Response(
                 {"detail": "Candidate action not found or you don't have permission to update it"},
                 status=status.HTTP_404_NOT_FOUND
@@ -252,6 +258,7 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
                         'match_score': app.overall_match_score if hasattr(app, 'overall_match_score') else None
                     })
                 except Exception as app_err:
+                    exception_logger.exception(f"Error processing job application {app.id}")
                     logger.error(f"Error processing job application {app.id}: {str(app_err)}", exc_info=True)
                     continue  # Skip this application but continue with others
             
@@ -262,6 +269,7 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
             })
             
         except Exception as e:
+            exception_logger.exception("Error fetching job applications")
             logger.error(f"Error in EmployerJobApplicationsView: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'An error occurred while fetching job applications'},
@@ -306,6 +314,7 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
                         'match_score': app.overall_match_score if hasattr(app, 'overall_match_score') else None
                     })
                 except Exception as app_err:
+                    exception_logger.exception(f"Error processing project application {app.id}")
                     logger.error(f"Error processing project application {app.id}: {str(app_err)}", exc_info=True)
                     continue  # Skip this application but continue with others
             
@@ -316,6 +325,7 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
             })
             
         except Exception as e:
+            exception_logger.exception("Error fetching project applications")
             logger.error(f"Error in EmployerProjectApplicationsView: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'An error occurred while fetching project applications'},
@@ -402,6 +412,7 @@ class EmployerViewSet(viewsets.ViewSet):
         try:
             employer = request.user.employer_profile
         except Employer.DoesNotExist:
+            exception_logger.error("Employer.DoesNotExist: Employer profile not found")
             return Response({'error': 'Employer profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
         section_fields = {
@@ -422,6 +433,7 @@ class EmployerViewSet(viewsets.ViewSet):
                 user.profile_completed = employer.is_profile_complete
                 user.save(update_fields=['profile_completed'])
         except Exception:
+            exception_logger.exception("Error syncing profile_completed flag for employer")
             pass
 
         return Response({
@@ -444,6 +456,7 @@ class EmployerPreferenceView(generics.RetrieveUpdateAPIView):
         try:
             return self.request.user.employer_profile.preferences
         except EmployerPreference.DoesNotExist:
+            exception_logger.error("EmployerPreference.DoesNotExist: Employer preferences not found")
             return None
     
     def perform_create(self, serializer):
@@ -462,6 +475,7 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
         try:
             return self.request.user.employer_profile.compliance
         except EmployerCompliance.DoesNotExist:
+            exception_logger.error("EmployerCompliance.DoesNotExist: Employer compliance not found")
             return None
     
     def perform_create(self, serializer):
@@ -489,6 +503,7 @@ def get_flitpass_data(request, company_id):
         
     except requests.exceptions.RequestException as e:
         # Log the error for debugging
+        exception_logger.exception(f"Error calling ML API")
         logger.error(f"Error calling ML API: {str(e)}")
         
         # Return an error response

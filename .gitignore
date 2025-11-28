@@ -22,3 +22,6 @@ google_secret
 # OS
 .DS_Store
 Thumbs.db
+
+# logs
+logs/*.log

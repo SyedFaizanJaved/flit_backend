@@ -10,6 +10,8 @@ from googleapiclient.discovery import build
 import random
 from django.utils import timezone
 from datetime import timedelta
+import logging
+logger = logging.getLogger("exceptions")
 
 
 # ----------------------------
@@ -74,6 +76,7 @@ def create_google_event(title, description, start_time, end_time, attendees=None
             )
             print(f"Email sent successfully to {', '.join(attendees)}")
         except Exception as e:
+            logger.exception("Email sending failed")
             print(f"Email sending failed: {e}")
             pass
 
@@ -134,6 +137,7 @@ class MeetingRoomCreateView(generics.CreateAPIView):
                 attendees=attendees
             )
         except Exception as e:
+            logger.exception("Failed to create Google Meet event")
             meet_link, event_id= None,None
 
 
