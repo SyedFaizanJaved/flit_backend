@@ -101,16 +101,18 @@ class CandidateLikeView(BaseInteractionView):
     model = Candidate
     
     def get(self, request, pk):
-        """Check if the current user has liked the candidate"""
+        """Check if the current user has liked the candidate and get like count"""
         candidate = self.get_object(pk)
         
-        # Check if the current user has liked this candidate
-        has_liked = Like.objects.filter(
-            candidate_id=candidate.id,
-            user=request.user
-        ).exists()
+        # Get like count and check if current user has liked
+        likes = Like.objects.filter(candidate_id=candidate.id)
+        likes_count = likes.count()
+        is_liked = likes.filter(user=request.user).exists()
         
-        return Response({'has_liked': has_liked}, status=status.HTTP_200_OK)
+        return Response({
+            'is_liked': is_liked,
+            'like_count': likes_count
+        }, status=status.HTTP_200_OK)
     
     def post(self, request, pk):
         """Like or unlike the candidate"""
@@ -125,22 +127,23 @@ class CandidateLikeView(BaseInteractionView):
         if like:
             # Unlike if the like already exists
             like.delete()
-            likes_count = Like.objects.filter(candidate_id=candidate.id).count()
-            return Response(
-                {'status': 'unliked', 'likes_count': likes_count},
-                status=status.HTTP_200_OK
-            )
+            is_liked = False
         else:
             # Create new like
             Like.objects.create(
                 candidate_id=candidate.id,
                 user=request.user
             )
-            likes_count = Like.objects.filter(candidate_id=candidate.id).count()
-            return Response(
-                {'status': 'liked', 'likes_count': likes_count},
-                status=status.HTTP_201_CREATED
-            )
+            is_liked = True
+            
+        # Get updated like count
+        likes_count = Like.objects.filter(candidate_id=candidate.id).count()
+        
+        return Response({
+            'is_liked': is_liked,
+            'like_count': likes_count,
+            'message': 'Candidate liked successfully' if is_liked else 'Candidate unliked successfully'
+        }, status=status.HTTP_200_OK if like else status.HTTP_201_CREATED)
 
 
 class CandidateCommentListCreateView(generics.ListCreateAPIView):
@@ -162,12 +165,25 @@ class CandidateCommentListCreateView(generics.ListCreateAPIView):
             user_type='candidate',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': candidate.user,  # Use the candidate's user as the story author
                 'text_content': f'Candidate: {candidate.user.get_full_name() or candidate.user.email}'
             }
         )
         
         return story.story_comments.all().order_by('-created_at')
+    
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        candidate_id = self.kwargs['pk']
+        
+        # Get updated comment count
+        comment_count = Comment.objects.filter(
+            story__candidate_id=candidate_id
+        ).count()
+        
+        # Add comment count to the response
+        response.data['comment_count'] = comment_count
+        return response
     
     def perform_create(self, serializer):
         candidate_id = self.kwargs['pk']
@@ -179,7 +195,7 @@ class CandidateCommentListCreateView(generics.ListCreateAPIView):
             user_type='candidate',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': candidate.user,  # Use the candidate's user as the story author
                 'text_content': f'Candidate: {candidate.user.get_full_name() or candidate.user.email}'
             }
         )
@@ -263,18 +279,50 @@ class CompanyLikeView(BaseInteractionView):
 
 
 class CompanyCommentListCreateView(generics.ListCreateAPIView):
-    model = Company
+    """
+    View for listing and creating comments on a company's story.
+    Creates a story for the company if one doesn't exist.
+    """
     serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         company_id = self.kwargs['pk']
-        return Comment.objects.filter(company_id=company_id).order_by('-created_at')
+        # Get the company
+        company = get_object_or_404(Company, id=company_id)
+        
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,
+                'text_content': f'Company: {company.name}'
+            }
+        )
+        
+        return story.story_comments.all().order_by('-created_at')
 
     def perform_create(self, serializer):
         company_id = self.kwargs['pk']
+        company = get_object_or_404(Company, id=company_id)
+        
+        # Get or create a story for this company
+        story, created = Story.objects.get_or_create(
+            company=company,
+            user_type='employer',
+            content_type='text',
+            defaults={
+                'user': self.request.user,
+                'text_content': f'Company: {company.name}'
+            }
+        )
+        
         serializer.save(
             user=self.request.user,
-            company_id=company_id
+            story=story,
+            content=serializer.validated_data.get('content', '')
         )
 
 
@@ -328,23 +376,29 @@ class ProjectLikeView(BaseInteractionView):
         """Like or unlike the project"""
         project = self.get_object(pk)
         
-        like, created = Like.objects.get_or_create(
+        # First check if the like exists
+        like = Like.objects.filter(
             user=request.user,
-            project_id=project.id,
-            defaults={'project_id': project.id}
-        )
+            project_id=project.id
+        ).first()
         
-        if not created:
+        if like:
+            # Unlike if already liked
             like.delete()
             return Response(
                 {"message": "Project unliked successfully"}, 
                 status=status.HTTP_200_OK
             )
-            
-        return Response(
-            {"message": "Project liked successfully"}, 
-            status=status.HTTP_201_CREATED
-        )
+        else:
+            # Create new like
+            Like.objects.create(
+                user=request.user,
+                project_id=project.id
+            )
+            return Response(
+                {"message": "Project liked successfully"}, 
+                status=status.HTTP_201_CREATED
+            )
 
 
 class ProjectCommentListCreateView(generics.ListCreateAPIView):
@@ -357,18 +411,16 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         project_id = self.kwargs['pk']
-        # Get the project and its company
         project = get_object_or_404(Project, id=project_id)
-        if not project.company:
-            return Comment.objects.none()
-            
-        # Get or create a story for this company
+        
+        # Get or create a story for this project
         story, created = Story.objects.get_or_create(
-            company=project.company,
+            project=project,
             user_type='employer',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': self.request.user,
+                'company': project.company,
                 'text_content': f'Project: {project.title}'
             }
         )
@@ -382,13 +434,14 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
         if not project.company:
             raise ValidationError("Cannot comment on a project without a company")
             
-        # Get or create a story for this company
+        # Get or create a story for this project
         story, created = Story.objects.get_or_create(
-            company=project.company,
+            project=project,
             user_type='employer',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': self.request.user,
+                'company': project.company,
                 'text_content': f'Project: {project.title}'
             }
         )
@@ -478,23 +531,29 @@ class JobLikeView(BaseInteractionView):
         """Like or unlike the job"""
         job = self.get_object(pk)
         
-        like, created = Like.objects.get_or_create(
+        # First check if the like exists
+        like = Like.objects.filter(
             user=request.user,
-            job_id=job.id,
-            defaults={'job_id': job.id}
-        )
+            job_id=job.id
+        ).first()
         
-        if not created:
+        if like:
+            # Unlike if already liked
             like.delete()
             return Response(
                 {"message": "Job unliked successfully"}, 
                 status=status.HTTP_200_OK
             )
-            
-        return Response(
-            {"message": "Job liked successfully"}, 
-            status=status.HTTP_201_CREATED
-        )
+        else:
+            # Create new like
+            Like.objects.create(
+                user=request.user,
+                job_id=job.id
+            )
+            return Response(
+                {"message": "Job liked successfully"}, 
+                status=status.HTTP_201_CREATED
+            )
 
 
 class JobCommentListCreateView(generics.ListCreateAPIView):
@@ -507,18 +566,16 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         job_id = self.kwargs['pk']
-        # Get the job and its company
         job = get_object_or_404(Job, id=job_id)
-        if not job.company:
-            return Comment.objects.none()
-            
-        # Get or create a story for this company
+        
+        # Get or create a story for this job
         story, created = Story.objects.get_or_create(
-            company=job.company,
+            job=job,
             user_type='employer',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': self.request.user,
+                'company': job.company,
                 'text_content': f'Job: {job.title}'
             }
         )
@@ -532,13 +589,14 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
         if not job.company:
             raise ValidationError("Cannot comment on a job without a company")
             
-        # Get or create a story for this company
+        # Get or create a story for this job
         story, created = Story.objects.get_or_create(
-            company=job.company,
+            job=job,
             user_type='employer',
             content_type='text',
             defaults={
-                'user': self.request.user,  # Use the request user as the story author
+                'user': self.request.user,
+                'company': job.company,
                 'text_content': f'Job: {job.title}'
             }
         )
@@ -638,7 +696,7 @@ class BaseListView(generics.ListAPIView):
                     **{field_name: OuterRef(pk_field)}
                 ).values(field_name)
                 .annotate(count=Count('id'))
-                .values('count')
+                .values('count')[:1]
             )
         else:
             # For models that don't support likes (like candidate), return empty querysets
@@ -653,7 +711,7 @@ class BaseListView(generics.ListAPIView):
         )
         
         # Get counts of likes and comments for each item
-        from django.db.models.functions import Coalesce
+        from django.db.models.functions import Coalesce, Concat
         from django.db.models import Subquery, OuterRef, IntegerField
         
         # Like count subquery is now defined above based on model type
@@ -668,6 +726,7 @@ class BaseListView(generics.ListAPIView):
                 .values('count')[:1]
             )
         elif model_name == 'candidate':
+            # For candidates, we need to count comments on the story associated with the candidate
             comment_count_subquery = (
                 Comment.objects.filter(
                     story__candidate_id=OuterRef(pk_field)
@@ -675,8 +734,37 @@ class BaseListView(generics.ListAPIView):
                 .annotate(count=Count('id'))
                 .values('count')[:1]
             )
+            
+            # For candidates, also ensure we're using the correct field for likes
+            like_count_subquery = (
+                Like.objects.filter(
+                    candidate_id=OuterRef(pk_field)
+                ).values('candidate_id')
+                .annotate(count=Count('id'))
+                .values('count')[:1]
+            )
+        elif model_name == 'project':
+            # For projects, we'll handle the comment count in the serializer
+            # since the subquery with text matching is complex
+            from django.db.models import Value, IntegerField
+            comment_count_subquery = Subquery(
+                Project.objects.filter(id=OuterRef('id'))
+                .annotate(dummy=Value(0, output_field=IntegerField()))
+                .values('dummy')[:1],
+                output_field=IntegerField()
+            )
+        elif model_name == 'job':
+            # For jobs, we'll handle the comment count in the serializer
+            # since the subquery with text matching is complex
+            from django.db.models import Value, IntegerField
+            comment_count_subquery = Subquery(
+                Job.objects.filter(id=OuterRef('id'))
+                .annotate(dummy=Value(0, output_field=IntegerField()))
+                .values('dummy')[:1],
+                output_field=IntegerField()
+            )
         else:
-            # For models that don't have direct comment relationships, return 0
+            # For models that don't have comment relationships, return 0
             comment_count_subquery = Comment.objects.none()
         
         # Annotate the queryset with counts and user-specific flags
