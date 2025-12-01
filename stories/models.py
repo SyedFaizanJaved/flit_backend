@@ -229,10 +229,11 @@ class Like(models.Model):
 
 class Comment(models.Model):
     """
-    Model to store comments on stories
+    Model to store comments on stories and other entities
     """
     story = models.ForeignKey('Story', on_delete=models.CASCADE, related_name='story_comments', null=True, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_comments')
+    candidate = models.ForeignKey('candidates.Candidate', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -241,7 +242,11 @@ class Comment(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.user.email} commented on story {self.story.id}"
+        if self.story:
+            return f"{self.user.email} commented on story {self.story.id}"
+        elif self.candidate:
+            return f"{self.user.email} commented on candidate {self.candidate.id}"
+        return f"{self.user.email} comment"
 
 
 class SavedItem(models.Model):
