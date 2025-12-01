@@ -67,6 +67,14 @@ class CompanySerializer(serializers.ModelSerializer):
         ]
 
 
+class CompanyBasicSerializer(serializers.ModelSerializer):
+    """
+    Basic company serializer that only includes id and name
+    """
+    class Meta:
+        model = Company
+        fields = ['id', 'company_name']
+
 class ProjectSerializer(serializers.ModelSerializer):
     """
     Project serializer with interaction data
@@ -76,6 +84,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     is_liked = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
     project_id = serializers.IntegerField(source='id', read_only=True)
+    company = CompanyBasicSerializer()
     
     class Meta:
         model = Project
@@ -85,7 +94,6 @@ class ProjectSerializer(serializers.ModelSerializer):
             'like_count', 'comment_count', 'is_liked', 'is_saved'
         ]
         read_only_fields = ['created_at']
-        depth = 1
     
     def get_like_count(self, obj):
         from stories.models import Like
