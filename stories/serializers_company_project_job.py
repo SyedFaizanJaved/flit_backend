@@ -74,7 +74,7 @@ class CompanySerializer(serializers.ModelSerializer):
     Company serializer with interaction data
     """
     like_count = serializers.IntegerField(read_only=True)
-    comment_count = serializers.IntegerField(read_only=True)
+    comment_count = serializers.SerializerMethodField()
     is_liked = serializers.BooleanField(read_only=True)
     is_saved = serializers.BooleanField(read_only=True)
     company_id = serializers.IntegerField(source='id', read_only=True)
@@ -86,6 +86,13 @@ class CompanySerializer(serializers.ModelSerializer):
             'size', 'location', 'values', 'is_verified', 'is_active','total_employees',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'updated_at'
         ]
+        
+    def get_comment_count(self, obj):
+        from stories.models import Comment
+        # Count both direct comments and story comments
+        direct_comments = Comment.objects.filter(company=obj).count()
+        story_comments = Comment.objects.filter(story__company=obj).count()
+        return direct_comments + story_comments
 
 
 class CompanyBasicSerializer(serializers.ModelSerializer):
