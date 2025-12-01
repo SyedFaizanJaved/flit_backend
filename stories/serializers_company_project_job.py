@@ -9,7 +9,7 @@ from accounts.serializers import UserListSerializer as UserSerializer
 
 class CommentSerializer(serializers.ModelSerializer):
     """
-    Serializer for comments on companies, projects, and jobs
+    Serializer for comments on companies, projects, jobs, and candidates
     """
     user = UserSerializer(read_only=True)
     user_id = serializers.PrimaryKeyRelatedField(
@@ -21,9 +21,30 @@ class CommentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Comment
         fields = [
-            'id', 'user', 'user_id', 'content', 'created_at', 'updated_at'
+            'id', 'user', 'user_id', 'content', 'created_at', 'updated_at',
+            'company', 'project', 'job', 'candidate'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'user']
+        extra_kwargs = {
+            'company': {'write_only': True, 'required': False},
+            'project': {'write_only': True, 'required': False},
+            'job': {'write_only': True, 'required': False},
+            'candidate': {'write_only': True, 'required': False},
+        }
+    
+    def validate(self, data):
+        # Ensure only one entity is being commented on
+        entity_count = sum([
+            'company' in data,
+            'project' in data,
+            'job' in data,
+            'candidate' in data
+        ])
+        
+        if entity_count != 1:
+            raise serializers.ValidationError("A comment must reference exactly one entity (company, project, job, or candidate)")
+        
+        return data
 
 
 class LikeSerializer(serializers.ModelSerializer):
@@ -100,9 +121,12 @@ class ProjectSerializer(serializers.ModelSerializer):
         return Like.objects.filter(project_id=obj.id).count()
     
     def get_comment_count(self, obj):
-        # Get the story directly through the relationship
-        story = obj.stories.filter(content_type='text').first()
-        return story.story_comments.count() if story else 0
+        from stories.models import Comment
+        from django.db.models import Q
+        # Count both direct comments and story comments
+        direct_comments = Comment.objects.filter(project=obj).count()
+        story_comments = Comment.objects.filter(story__project=obj).count()
+        return direct_comments + story_comments
     
     def get_is_liked(self, obj):
         request = self.context.get('request')
@@ -148,9 +172,12 @@ class JobSerializer(serializers.ModelSerializer):
         return Like.objects.filter(job_id=obj.id).count()
     
     def get_comment_count(self, obj):
-        # Get the story directly through the relationship
-        story = obj.stories.filter(content_type='text').first()
-        return story.story_comments.count() if story else 0
+        from stories.models import Comment
+        from django.db.models import Q
+        # Count both direct comments and story comments
+        direct_comments = Comment.objects.filter(job=obj).count()
+        story_comments = Comment.objects.filter(story__job=obj).count()
+        return direct_comments + story_comments
     
     def get_is_liked(self, obj):
         request = self.context.get('request')
@@ -198,10 +225,11 @@ class CandidateSerializer(serializers.ModelSerializer):
         return Like.objects.filter(candidate_id=obj.id).count()
     
     def get_comment_count(self, obj):
-        # Count comments on stories that are associated with this candidate
-        return Comment.objects.filter(
-            story__candidate_id=obj.id
-        ).count()
+        from stories.models import Comment
+        # Count both direct comments and story comments
+        direct_comments = Comment.objects.filter(candidate=obj).count()
+        story_comments = Comment.objects.filter(story__candidate=obj).count()
+        return direct_comments + story_comments
     
     def get_is_liked(self, obj):
         request = self.context.get('request')

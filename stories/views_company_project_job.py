@@ -162,17 +162,29 @@ class CandidateCommentListCreateView(generics.ListCreateAPIView):
         ).order_by('-created_at')
         
     def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
         candidate_id = self.kwargs['pk']
         
-        # Get updated comment count (including comments without stories)
-        comment_count = Comment.objects.filter(
+        # First get the current count before creating the comment
+        current_count = Comment.objects.filter(
             Q(story__candidate_id=candidate_id) | 
             Q(candidate_id=candidate_id)
         ).count()
         
-        # Add comment count to the response
-        response.data['comment_count'] = comment_count
+        # Create the comment
+        response = super().create(request, *args, **kwargs)
+        
+        # The new count should be current_count + 1
+        response.data['comment_count'] = current_count + 1
+        
+        # Also update the candidate's comment count if needed
+        try:
+            candidate = Candidate.objects.get(id=candidate_id)
+            if hasattr(candidate, 'comment_count'):
+                candidate.comment_count = F('comment_count') + 1
+                candidate.save(update_fields=['comment_count'])
+        except Candidate.DoesNotExist:
+            pass
+            
         return response
     
     def perform_create(self, serializer):
@@ -282,36 +294,56 @@ class CompanyCommentListCreateView(generics.ListCreateAPIView):
         company_id = self.kwargs['pk']
         company = get_object_or_404(Company, id=company_id)
         
-        # Return all comments for this company, regardless of story association
+        # Return all comments for this company, both direct and via stories
         return Comment.objects.filter(
-            Q(story__company=company) | 
-            Q(story__isnull=True, company=company)
+            Q(company=company) | Q(story__company=company)
         ).order_by('-created_at')
     
     def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
         company_id = self.kwargs['pk']
+        company = get_object_or_404(Company, id=company_id)
         
-        # Get updated comment count (including comments without stories)
-        comment_count = Comment.objects.filter(
-            Q(story__company_id=company_id) | 
-            Q(story__isnull=True, company_id=company_id)
+        # Get the current count of comments for this company
+        current_count = Comment.objects.filter(
+            Q(company=company) | Q(story__company=company)
         ).count()
         
-        # Add comment count to the response
-        response.data['comment_count'] = comment_count
+        # Create the comment
+        response = super().create(request, *args, **kwargs)
+        
+        # The new count should be current_count + 1
+        response.data['comment_count'] = current_count + 1
+        
+        # Also update the company's comment count if the field exists
+        if hasattr(company, 'comment_count'):
+            company.comment_count = F('comment_count') + 1
+            company.save(update_fields=['comment_count'])
+            
         return response
     
     def perform_create(self, serializer):
         company_id = self.kwargs['pk']
         company = get_object_or_404(Company, id=company_id)
         
-        # Save comment without requiring a story
-        serializer.save(
+        # Ensure no story is created when making a comment
+        if 'story' in serializer.validated_data:
+            del serializer.validated_data['story']
+        
+        # Save comment without any story association
+        comment = serializer.save(
             user=self.request.user,
-            story=None,  # Don't associate with any story
+            story=None,  # Explicitly set to None
+            company=company,
             content=serializer.validated_data.get('content', '')
         )
+        
+        # Double-check that no story was created
+        if hasattr(comment, 'story') and comment.story is not None:
+            # If a story was somehow created, delete it
+            story = comment.story
+            comment.story = None
+            comment.save()
+            story.delete()
 
 
 class CompanySaveView(APIView):
@@ -396,6 +428,34 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
     
+    def create(self, request, *args, **kwargs):
+        project_id = self.kwargs['pk']
+        project = get_object_or_404(Project, id=project_id)
+        
+        if not project.company:
+            return Response(
+                {"error": "Cannot comment on a project without a company"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the current count of comments for this project (both direct and via story)
+        current_count = Comment.objects.filter(
+            Q(project=project) | Q(story__project=project)
+        ).count()
+        
+        # Create the comment
+        response = super().create(request, *args, **kwargs)
+        
+        # The new count should be current_count + 1
+        response.data['comment_count'] = current_count + 1
+        
+        # Also update the project's comment count if the field exists
+        if hasattr(project, 'comment_count'):
+            project.comment_count = F('comment_count') + 1
+            project.save(update_fields=['comment_count'])
+            
+        return response
+    
     def get_queryset(self):
         project_id = self.kwargs['pk']
         project = get_object_or_404(Project, id=project_id)
@@ -403,10 +463,9 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
         if not project.company:
             return Comment.objects.none()
             
-        # Return all comments for this project, regardless of story association
+        # Return both direct comments and those associated with stories for this project
         return Comment.objects.filter(
-            Q(story__project=project) | 
-            Q(story__isnull=True, project=project)
+            Q(project=project) | Q(story__project=project)
         ).order_by('-created_at')
     
     def perform_create(self, serializer):
@@ -415,13 +474,26 @@ class ProjectCommentListCreateView(generics.ListCreateAPIView):
         
         if not project.company:
             raise serializers.ValidationError("Cannot comment on a project without a company")
+        
+        # Ensure no story is created when making a comment
+        if 'story' in serializer.validated_data:
+            del serializer.validated_data['story']
             
-        # Save comment without requiring a story
-        serializer.save(
+        # Save the comment without any story association
+        comment = serializer.save(
             user=self.request.user,
-            story=None,  # Don't associate with any story
+            story=None,  # Explicitly set to None
+            project=project,
             content=serializer.validated_data.get('content', '')
         )
+        
+        # Double-check that no story was created
+        if hasattr(comment, 'story') and comment.story is not None:
+            # If a story was somehow created, delete it
+            story = comment.story
+            comment.story = None
+            comment.save()
+            story.delete()
 
 class ProjectSaveView(APIView):
     permission_classes = [IsAuthenticated]
@@ -534,6 +606,34 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
     
+    def create(self, request, *args, **kwargs):
+        job_id = self.kwargs['pk']
+        job = get_object_or_404(Job, id=job_id)
+        
+        if not job.company:
+            return Response(
+                {"error": "Cannot comment on a job without a company"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the current count of comments for this job (both direct and via story)
+        current_count = Comment.objects.filter(
+            Q(job=job) | Q(story__job=job)
+        ).count()
+        
+        # Create the comment
+        response = super().create(request, *args, **kwargs)
+        
+        # The new count should be current_count + 1
+        response.data['comment_count'] = current_count + 1
+        
+        # Also update the job's comment count if the field exists
+        if hasattr(job, 'comment_count'):
+            job.comment_count = F('comment_count') + 1
+            job.save(update_fields=['comment_count'])
+            
+        return response
+    
     def get_queryset(self):
         job_id = self.kwargs['pk']
         job = get_object_or_404(Job, id=job_id)
@@ -541,10 +641,9 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
         if not job.company:
             return Comment.objects.none()
             
-        # Return all comments for this job, regardless of story association
+        # Return both direct comments and those associated with stories for this job
         return Comment.objects.filter(
-            Q(story__job=job) | 
-            Q(story__isnull=True, job=job)
+            Q(job=job) | Q(story__job=job)
         ).order_by('-created_at')
     
     def perform_create(self, serializer):
@@ -553,13 +652,26 @@ class JobCommentListCreateView(generics.ListCreateAPIView):
         
         if not job.company:
             raise serializers.ValidationError("Cannot comment on a job without a company")
+        
+        # Ensure no story is created when making a comment
+        if 'story' in serializer.validated_data:
+            del serializer.validated_data['story']
             
-        # Save comment without requiring a story
-        serializer.save(
+        # Save comment without any story association
+        comment = serializer.save(
             user=self.request.user,
-            story=None,  # Don't associate with any story
+            story=None,  # Explicitly set to None
+            job=job,
             content=serializer.validated_data.get('content', '')
         )
+        
+        # Double-check that no story was created
+        if hasattr(comment, 'story') and comment.story is not None:
+            # If a story was somehow created, delete it
+            story = comment.story
+            comment.story = None
+            comment.save()
+            story.delete()
 
 class JobSaveView(APIView):
     permission_classes = [IsAuthenticated]
