@@ -5,10 +5,12 @@ from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Exists, OuterRef
 
+
 from .models import Story, Comment, SavedItem, Like
 from .serializers import (
     LikeSerializer, 
     CommentSerializer, 
+    StorySerializer,
     SavedItemSerializer
 )
 from companies.models import Company
@@ -858,4 +860,28 @@ class CandidateListView(BaseListView):
 
 class JobListView(BaseListView):
     model = Job
-    serializer_class = JobSerializer  # You'll need to create this serializer
+    serializer_class = JobSerializer
+
+
+class UserStoriesView(generics.ListAPIView):
+    """
+    View to get all stories for a specific user
+    """
+    serializer_class = StorySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user_id = self.kwargs.get('user_id')
+        return Story.objects.filter(user_id=user_id).order_by('-created_at')
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'status': 'success',
+            'count': len(serializer.data),
+            'data': serializer.data
+        })  # You'll need to create this serializer
+
+
+

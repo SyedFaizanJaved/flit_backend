@@ -7,7 +7,7 @@ from .views_company_project_job import (
     JobLikeView, JobCommentListCreateView, JobSaveView,
     CompanyListView, ProjectListView, JobListView, CandidateListView,
     CandidateLikeView, CandidateCommentListCreateView, CandidateSaveView,
-    AllSavedItemsView
+    AllSavedItemsView,UserStoriesView
 )
 
 app_name = 'stories'
@@ -21,6 +21,10 @@ urlpatterns = [
     path('<int:story_id>/comments/create/', views.CommentCreateView.as_view(), name='comment-create'),
     path('<int:story_id>/save/', views.SaveStoryView.as_view(), name='save-story'),
     path('saved/', views.SavedStoriesListView.as_view(), name='saved-stories'),
+
+    # User stories
+    path('<int:user_id>/stories/', UserStoriesView.as_view(), name='user-stories'),
+
     
     # Company interaction endpoints
     path('companies/', CompanyListView.as_view(), name='company-list'),

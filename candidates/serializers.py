@@ -56,12 +56,25 @@ class CandidateSerializer(serializers.ModelSerializer):
         return self._parse_json_field(obj.preferred_roles)
     
     def get_profile_image(self, obj):
-        if obj.profile_image:
-            request = self.context.get('request')
-            if request is not None:
-                return request.build_absolute_uri(obj.profile_image.url)
-            return obj.profile_image.url
-        return None
+        if not obj.profile_image:
+            return None
+            
+        # Get the URL from the file field
+        url = obj.profile_image.url
+        
+        # If the URL is already a full URL, return it as is
+        if url.startswith(('http://', 'https://')):
+            return url
+            
+        # Otherwise, construct the proper S3 URL
+        from django.conf import settings
+        base_url = f'https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com'
+        
+        # Remove any leading slashes from the path
+        path = url.lstrip('/')
+        
+        # Combine the base URL with the path
+        return f'{base_url}/{path}'
     
     class Meta:
         model = Candidate
@@ -70,7 +83,8 @@ class CandidateSerializer(serializers.ModelSerializer):
             "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "resume_url", "profile_views", "viewers_count", "profile_views_display",
-            "passion_projects","reference_responses" ,"portfolio_links","seniority_level","is_available" 
+            "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
+            "resume_data" 
         ]
         read_only_fields = ("user", "created_at", "updated_at")
     
