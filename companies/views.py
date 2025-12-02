@@ -7,6 +7,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from .models import Company
 from .serializers import CompanySerializer, CompanyListSerializer, CompanyUpdateSerializer
 from employers.models import Employer
+import logging
+logger = logging.getLogger("exceptions")
 
 class CompanyViewSet(viewsets.ViewSet):
     """
@@ -44,6 +46,7 @@ class CompanyViewSet(viewsets.ViewSet):
                     request.user.save(update_fields=['profile_completed'])
 
             except Employer.DoesNotExist:
+                logger.error("Employer.DoesNotExist: Employer profile not found, creating new one")
                 # If employer profile doesn't exist, create it
                 employer = Employer.objects.create(
                     user=request.user,
@@ -67,6 +70,7 @@ class CompanyViewSet(viewsets.ViewSet):
             serializer = CompanySerializer(company)
             return Response(serializer.data)
         except Company.DoesNotExist:
+            logger.exception("Company lookup failed")
             return Response({"message": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
 
     def partial_update(self, request, pk=None):
@@ -78,6 +82,7 @@ class CompanyViewSet(viewsets.ViewSet):
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Company.DoesNotExist:
+            logger.exception("Company not found")
             return Response(status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'], url_path='my-companies')
@@ -134,6 +139,7 @@ class CompanyViewSet(viewsets.ViewSet):
             
             return Response(data, status=status.HTTP_200_OK)
         except Company.DoesNotExist:
+            logger.exception("Company not found")
             return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=True, methods=['post'], url_path='verify')
@@ -151,4 +157,5 @@ class CompanyViewSet(viewsets.ViewSet):
                 'company': CompanySerializer(company).data
             }, status=status.HTTP_200_OK)
         except Company.DoesNotExist:
+            logger.exception("Company not found")
             return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)

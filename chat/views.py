@@ -17,6 +17,8 @@ from .serializers import (
 )
 from candidates.models import Candidate
 from employers.models import Employer
+import logging
+logger = logging.getLogger("exceptions")
 
 User = get_user_model()
 
@@ -363,6 +365,7 @@ def send_message(request, recipient_id):
             'chat_message': ChatMessageSerializer(message).data
         }, status=status.HTTP_201_CREATED)
     except User.DoesNotExist:
+        logger.error("User.DoesNotExist: Recipient not found")
         return Response({'error': 'Recipient not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -387,6 +390,7 @@ def add_participant(request, room_id):
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     except ChatRoom.DoesNotExist:
+        logger.error("ChatRoom.DoesNotExist: Room not found")
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -408,8 +412,10 @@ def remove_participant(request, room_id, participant_id):
             'room': ChatRoomSerializer(room).data
         }, status=status.HTTP_200_OK)
     except ChatRoom.DoesNotExist:
+        logger.error("ChatRoom.DoesNotExist: Room not found")
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
     except User.DoesNotExist:
+        logger.error("User.DoesNotExist: Participant not found")
         return Response({'error': 'Participant not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -429,6 +435,7 @@ def mark_message_read(request, message_id):
             'chat_message': ChatMessageSerializer(message).data
         }, status=status.HTTP_200_OK)
     except ChatMessage.DoesNotExist:
+        logger.error("ChatMessage.DoesNotExist: Message not found")
         return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -439,6 +446,7 @@ def mark_messages_from_sender_read(request, sender_id):
         from accounts.models import User
         User.objects.get(id=sender_id)
     except Exception:
+        logger.error("User.DoesNotExist: Sender not found")
         return Response({'error': 'Sender not found'}, status=status.HTTP_404_NOT_FOUND)
 
     updated_count = ChatMessage.objects.filter(

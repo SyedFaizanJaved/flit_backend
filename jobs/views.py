@@ -19,6 +19,7 @@ import time
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+exception_logger = logging.getLogger("exceptions")
         
 
 
@@ -109,6 +110,7 @@ class JobViewSet(viewsets.ModelViewSet):
                     )
                 queryset = self.filter_queryset(Job.objects.filter(company_id=company_id))
             except Company.DoesNotExist:
+                exception_logger.error(f"Company.DoesNotExist: Company not found for ID {company_id}")
                 return Response(
                     {'error': 'Company not found'},
                     status=status.HTTP_404_NOT_FOUND
@@ -166,6 +168,7 @@ class JobViewSet(viewsets.ModelViewSet):
             try:
                 job = Job.objects.get(id=job_id)
             except Job.DoesNotExist:
+                exception_logger.error(f"Job.DoesNotExist: Job with ID {job_id} not found for ML sync")
                 ml_error = f'Job with ID {job_id} not found for ML sync'
                 logger.error(ml_error)
 
@@ -204,12 +207,14 @@ class JobViewSet(viewsets.ModelViewSet):
                     break
                 except requests.exceptions.Timeout:
                     if attempt == max_retries:
+                        exception_logger.error("Job create ML API timed out after retries")
                         ml_error = "Job create ML API timed out after retries"
                         logger.error(ml_error)
                         break
                     logger.warning(f"Job create ML API timeout (attempt {attempt + 1}), retrying...")
                     time.sleep(1)
                 except requests.exceptions.RequestException as exc:
+                    exception_logger.exception("Job create ML API request failed")
                     ml_error = f"Job create ML API request failed: {str(exc)}"
                     logger.error(ml_error, exc_info=True)
                     break
@@ -234,9 +239,11 @@ class JobViewSet(viewsets.ModelViewSet):
 
                         ml_success = True
                     except ValueError:
+                        exception_logger.error("Invalid JSON response from Job create ML API")
                         ml_error = "Invalid JSON response from Job create ML API"
                         logger.error(ml_error)
                     except Exception as exc:
+                        exception_logger.exception("Error processing Job create ML API response")
                         ml_error = f"Error processing Job create ML API response: {str(exc)}"
                         logger.error(ml_error, exc_info=True)
                 else:
@@ -298,11 +305,14 @@ class JobViewSet(viewsets.ModelViewSet):
                         break  # If successful, exit the retry loop
                     except requests.exceptions.Timeout:
                         if attempt == max_retries:
+                            exception_logger.error("ML API timed out after retries")
                             raise  # Re-raise the timeout if we've exhausted all retries
+                        exception_logger.error(f"ML API timeout (attempt {attempt + 1}), retrying...")
                         print(f"ML API timeout (attempt {attempt + 1}), retrying...")
                         time.sleep(1)  # Wait 1 second before retry
                     except requests.exceptions.RequestException as e:
                         # For other request exceptions, log and re-raise
+                        exception_logger.exception("ML API request failed")
                         print(f"ML API request failed: {str(e)}")
                         raise
                 
@@ -346,6 +356,7 @@ class JobViewSet(viewsets.ModelViewSet):
                         # Update the response with the formatted data
                         response.data = response_data
                     except Exception as e:
+                        exception_logger.exception("Error processing ML API response")
                         print(f"Error processing ML API response: {str(e)}")
                         print(f"Response content: {ml_response.text}")
                         # Return the original response data with success message
@@ -407,9 +418,11 @@ class JobViewSet(viewsets.ModelViewSet):
                     
             except Exception as e:
                 # If any error occurs with ML API, still return success but log the error
+                exception_logger.exception("Error calling ML API")
                 error_msg = f"Error calling ML API: {str(e)}"
                 print(error_msg)
                 if 'ml_response' in locals():
+                    exception_logger.error(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
                     print(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
                     print(f"Response content: {getattr(ml_response, 'text', 'N/A')}")
                 
@@ -487,6 +500,7 @@ class JobViewSet(viewsets.ModelViewSet):
         try:
             job = Job.objects.get(id=pk, employer=request.user)
         except Job.DoesNotExist:
+            exception_logger.error("Job.DoesNotExist: Job not found")
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         applications = job.applications.all()
         data = {
@@ -514,6 +528,7 @@ class JobViewSet(viewsets.ModelViewSet):
         try:
             job = Job.objects.get(id=pk, employer=request.user)
         except Job.DoesNotExist:
+            exception_logger.error("Job.DoesNotExist: Job not found")
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
         if new_status not in ['draft', 'active', 'paused', 'closed', 'filled']:
@@ -528,8 +543,10 @@ class JobViewSet(viewsets.ModelViewSet):
             job = Job.objects.get(id=pk, employer=request.user)
             application = job.applications.get(id=application_id)
         except Job.DoesNotExist:
+            exception_logger.error("Job.DoesNotExist: Job not found")
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception:
+            exception_logger.exception("Application not found")
             return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_shortlisted = True
         application.is_rejected = False
@@ -543,8 +560,10 @@ class JobViewSet(viewsets.ModelViewSet):
             job = Job.objects.get(id=pk, employer=request.user)
             application = job.applications.get(id=application_id)
         except Job.DoesNotExist:
+            exception_logger.error("Job.DoesNotExist: Job not found")
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception:
+            exception_logger.exception("Application not found")
             return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
         application.is_rejected = True
         application.is_shortlisted = False

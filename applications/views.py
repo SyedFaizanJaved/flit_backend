@@ -28,6 +28,8 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from vr_meet.views import create_google_event
 from vr_meet.models import MeetingRoom
+import logging
+logger = logging.getLogger("exceptions")
 
 class JobApplicationListView(generics.ListCreateAPIView):
     """
@@ -282,6 +284,7 @@ class InterviewRequestListView(generics.ListCreateAPIView):
                 attendees=[candidate.email, user.email]
             )
         except Exception as e:
+            logger.exception("Google Calendar event creation failed")
             print("GOOGLE CALENDAR ERROR:", e)
             meet_link = None
 
@@ -379,8 +382,10 @@ def apply_to_job(request, job_id):
             status=status.HTTP_201_CREATED,
         )
     except Job.DoesNotExist:
+        logger.error("Job.DoesNotExist: Job not found while applying")
         return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
+        logger.exception("Unexpected error in job apply flow")
         return Response(
             {"error": "Failed to apply"}, status=status.HTTP_400_BAD_REQUEST
         )
@@ -421,10 +426,12 @@ def apply_to_project(request, project_id):
             status=status.HTTP_201_CREATED,
         )
     except Project.DoesNotExist:
+        logger.error("Project.DoesNotExist: Project not found while applying")
         return Response(
             {"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND
         )
     except Exception as e:
+        logger.exception("Unexpected error in project apply flow")
         return Response(
             {"error": "Failed to apply"}, status=status.HTTP_400_BAD_REQUEST
         )
@@ -467,6 +474,7 @@ def withdraw_application(request, application_id, application_type):
             status=status.HTTP_200_OK,
         )
     except Exception as e:
+        logger.exception("Unexpected error while fetching application")
         return Response(
             {"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND
         )
