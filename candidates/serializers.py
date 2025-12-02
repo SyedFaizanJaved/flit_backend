@@ -6,6 +6,82 @@ from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
 
 
+class DiscoverTalentSerializer(serializers.ModelSerializer):
+    """
+    Serializer for discover_talent endpoint with minimal required fields
+    """
+    fullName = serializers.CharField(source='full_name', read_only=True)
+    title = serializers.CharField(required=False, allow_blank=True)
+    bio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    skills = serializers.SerializerMethodField()
+    availability = serializers.SerializerMethodField()
+    lastSeen = serializers.SerializerMethodField()
+    profile_views_display = serializers.SerializerMethodField()
+    minSalary = serializers.SerializerMethodField()
+    maxSalary = serializers.SerializerMethodField()
+    profileImage = serializers.SerializerMethodField()
+    userId = serializers.IntegerField(source='user.id', read_only=True)
+
+    class Meta:
+        model = Candidate
+        fields = [
+            'id', 'fullName', 'title', 'bio', 'skills', 'location',
+            'availability', 'lastSeen', 'profile_views_display',
+            'minSalary', 'maxSalary', 'profileImage', 'userId'
+        ]
+
+    def get_skills(self, obj):
+        # Return a list of skill names if skills field exists, otherwise empty list
+        if hasattr(obj, 'skills') and obj.skills:
+            # Handle both list and queryset cases
+            if hasattr(obj.skills, 'all'):  # It's a queryset
+                return [skill.name for skill in obj.skills.all()]
+            elif isinstance(obj.skills, list):  # It's already a list
+                return [skill.name if hasattr(skill, 'name') else skill for skill in obj.skills]
+            elif isinstance(obj.skills, str):  # It's a JSON string
+                try:
+                    skills_list = json.loads(obj.skills)
+                    if isinstance(skills_list, list):
+                        return skills_list
+                except json.JSONDecodeError:
+                    pass
+        return []
+
+    def get_availability(self, obj):
+        # Return only the availability type
+        return getattr(obj, 'availability_type', None)
+
+    def get_lastSeen(self, obj):
+        # Return last login time if user exists and has last_login
+        if hasattr(obj, 'user') and hasattr(obj.user, 'last_login') and obj.user.last_login:
+            return obj.user.last_login.isoformat()
+        return None
+
+    def get_profile_views_display(self, obj):
+        # Return profile views count if exists, otherwise 0
+        return getattr(obj, 'profile_views', 0)
+
+    def get_minSalary(self, obj):
+        # Return minimum salary if exists, otherwise None
+        return getattr(obj, 'min_salary', None)
+
+    def get_maxSalary(self, obj):
+        # Return maximum salary if exists, otherwise None
+        return getattr(obj, 'max_salary', None)
+
+    def get_profileImage(self, obj):
+        # Return profile image URL if exists, otherwise None
+        if hasattr(obj, 'profile_image') and obj.profile_image:
+            try:
+                # Check if the file exists in storage
+                if obj.profile_image.storage.exists(obj.profile_image.name):
+                    return obj.profile_image.url
+            except (ValueError, AttributeError):
+                pass
+        return None
+
+
+
 
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
     """
@@ -401,7 +477,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating candidate profile sections
     """
-    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    profile_image = serializers.ImageField(required=False, use_url=True)
     class Meta:
         model = Candidate
         # include privacy_completed so frontend can explicitly mark the privacy section complete

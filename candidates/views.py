@@ -30,7 +30,6 @@ from jobs.models import Job
 from .models import ReferenceRequest
 from .serializers import CandidateSerializer, CandidateProfileUpdateSerializer
 from jobs.serializers import JobListSerializer
-from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from companies.models import Company
 from employers.models import Employer
@@ -43,7 +42,7 @@ from .serializers import (
     WorkDNAQuestionSerializer,
     CompanyWithOpeningsSerializer,
     CandidateSerializer,
-
+    DiscoverTalentSerializer,
 )
 from employers.serializers import EmployerCompanyConversationSummarySerializer
 from chat.models import ChatMessage
@@ -1996,6 +1995,42 @@ class CandidateAIMatchingView(APIView):
             )
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class DiscoverTalentView(APIView):
+    """
+    API endpoint to discover talent with minimal required fields
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        # Get all active candidates
+        candidates = Candidate.objects.select_related('user').filter(
+            user__is_active=True
+        )
+        
+        # Apply filters if provided in query params
+        skills = request.query_params.getlist('skills', [])
+        if skills:
+            candidates = candidates.filter(skills__name__in=skills).distinct()
+            
+        location = request.query_params.get('location')
+        if location:
+            candidates = candidates.filter(
+                Q(current_location__icontains=location) | 
+                Q(user__city__icontains=location) |
+                Q(user__country__icontains=location)
+            )
+            
+        availability = request.query_params.get('availability')
+        if availability:
+            candidates = candidates.filter(availability=availability)
+            
+        # Serialize all candidates without pagination
+        serializer = DiscoverTalentSerializer(candidates, many=True)
+        
+        # Return all results directly
+        return Response(serializer.data)
 
 
 class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
