@@ -6,6 +6,7 @@ from .views_reference import (
     ReferenceResponseView,
     ReferenceResponsesView
 )
+from .views import DiscoverTalentView
 
 router = DefaultRouter()
 router.register(r'', views.CandidateViewSet, basename='candidates')
@@ -33,6 +34,9 @@ urlpatterns = [
     path('respond-to-reference/', ReferenceResponseView.as_view(), name='respond-to-reference'),
     path('reference-responses/', ReferenceResponsesView.as_view(), name='reference-responses'),
    
+    # Talent discovery endpoint
+    path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
+    
     # Router-based endpoints for list/profile/dashboard/complete-section
     path('', include(router.urls)),
 ]

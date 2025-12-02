@@ -224,7 +224,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             'candidate_id', 'full_name', 'title', 'bio', 'location',
             'work_style', 'is_available', 'availability_type',
             'skills', 'seniority_level','min_salary', 'max_salary', 'salary_currency', 'profile_image',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','user_id'
         ]
         read_only_fields = ['created_at']
     
