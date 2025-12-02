@@ -782,6 +782,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 logger.error(ml_error)
 
         if candidate:
+            # Prepare ML API URL and payload
             ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_candidates/{candidate.id}"
             ml_payload = {
                 "full_name": candidate.full_name,
@@ -804,22 +805,58 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 "profile_visibility": candidate.profile_visibility,
                 "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
                 "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
+                "resume_data": getattr(candidate, 'resume_data', None),  # Include resume data if available
             }
 
-            max_retries = 2
-            timeout_seconds = 30
+            max_retries = 3  # Increased retries for better reliability
+            timeout_seconds = 45  # Increased timeout for ML processing
             ml_response = None
 
+            # Configure headers with content type
+            headers = {
+                "Content-Type": "application/json",
+                # Uncomment and update if API key is required
+                # "Authorization": f"Bearer {settings.ML_API_KEY}"
+            }
+
+            # Make the API call with retry logic
             for attempt in range(max_retries + 1):
                 try:
                     logger.info(f"Calling Candidate create ML API (attempt {attempt + 1}/{max_retries + 1}) for candidate {candidate.id}")
+                    logger.debug(f"ML API URL: {ml_api_url}")
+                    logger.debug(f"ML Payload: {json.dumps(ml_payload, indent=2)}")
+                    
                     ml_response = requests.post(
                         ml_api_url,
                         json=ml_payload,
-                        headers={"Content-Type": "application/json"},
+                        headers=headers,
                         timeout=timeout_seconds
                     )
-                    break
+                    
+                    # Log the response status and content for debugging
+                    logger.info(f"ML API Response Status: {ml_response.status_code}")
+                    logger.debug(f"ML API Response: {ml_response.text}")
+                    
+                    # If we get a successful response, break out of the retry loop
+                    if ml_response.status_code in (200, 201):
+                        break
+                        
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries:
+                        exception_logger.error("Candidate create ML API timed out after maximum retries")
+                        ml_error = "Candidate create ML API timed out after retries"
+                        logger.error(ml_error)
+                        break
+                    logger.warning(f"Candidate create ML API timeout (attempt {attempt + 1}), retrying...")
+                    time.sleep(1)  # Wait before retry
+                except requests.exceptions.RequestException as exc:
+                    if attempt == max_retries:
+                        exception_logger.exception("Candidate create ML API request failed after all retries")
+                        ml_error = f"Candidate create ML API request failed: {str(exc)}"
+                        logger.error(ml_error, exc_info=True)
+                        break
+                    logger.warning(f"Candidate create ML API request failed (attempt {attempt + 1}), retrying...")
+                    time.sleep(1)  # Wait before retry
                 except requests.exceptions.Timeout:
                     if attempt == max_retries:
                         exception_logger.error("Candidate create ML API timed out after maximum retries")
@@ -834,44 +871,79 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     logger.error(ml_error, exc_info=True)
                     break
 
-            if ml_response is not None:
-                if ml_response.status_code in (200, 201):
-                    try:
-                        ml_data = ml_response.json()
-                        candidate_profile_summary = ml_data.get('candidate_profile_summary')
-                        candidate_tags = ml_data.get('candidate_tags', [])
-
-                        updates = {}
-                        if candidate_profile_summary is not None:
-                            updates['candidate_profile_summary'] = candidate_profile_summary
-                        if candidate_tags:
-                            updates['candidate_tags'] = candidate_tags
-
-                        if updates:
+            # Process the ML API response
+            if ml_response is not None and ml_response.status_code in (200, 201):
+                try:
+                    ml_data = ml_response.json()
+                    logger.info(f"Successfully received data from ML API for candidate {candidate.id}")
+                    
+                    # Extract data from ML API response
+                    candidate_profile_summary = ml_data.get('candidate_profile_summary')
+                    candidate_tags = ml_data.get('candidate_tags', [])
+                    
+                    # You can add more fields from ML response as needed
+                    updates = {}
+                    if candidate_profile_summary is not None:
+                        updates['candidate_profile_summary'] = candidate_profile_summary
+                    if candidate_tags:
+                        updates['candidate_tags'] = candidate_tags
+                    
+                    # Update candidate with ML data if any updates are available
+                    if updates:
+                        try:
                             for field, value in updates.items():
                                 setattr(candidate, field, value)
                             candidate.save(update_fields=list(updates.keys()))
+                            logger.info(f"Successfully updated candidate {candidate.id} with ML data")
+                            ml_success = True
+                        except Exception as save_exc:
+                            exception_logger.exception(f"Error saving ML data to candidate {candidate.id}")
+                            ml_error = f"Error saving ML data: {str(save_exc)}"
+                            logger.error(ml_error)
+                    else:
+                        logger.info("No updates to save from ML API response")
+                        ml_success = True  # Still mark as success if no updates needed
+                        
+                except json.JSONDecodeError:
+                    ml_error = "Invalid JSON response from Candidate create ML API"
+                    exception_logger.exception(ml_error)
+                    logger.error(f"Response content: {ml_response.text}")
+                except Exception as exc:
+                    ml_error = f"Error processing ML API response: {str(exc)}"
+                    exception_logger.exception(ml_error)
+            elif ml_response is not None:
+                # Handle non-200/201 responses
+                ml_error = f"Candidate create ML API returned status code {ml_response.status_code}"
+                logger.error(f"{ml_error}. Response content: {ml_response.text}")
+                
+                # Try to extract more detailed error message if available
+                try:
+                    error_data = ml_response.json()
+                    if 'detail' in error_data:
+                        ml_error = f"ML API Error: {error_data['detail']}"
+                except:
+                    pass  # If we can't parse the error, use the default message
 
-                        ml_success = True
-                    except ValueError:
-                        exception_logger.exception("Invalid JSON response from Candidate create ML API")
-                        ml_error = "Invalid JSON response from Candidate create ML API"
-                        logger.error(ml_error)
-                    except Exception as exc:
-                        exception_logger.exception("Error processing Candidate create ML API response")
-                        ml_error = f"Error processing Candidate create ML API response: {str(exc)}"
-                        logger.error(ml_error, exc_info=True)
-                else:
-                    ml_error = f"Candidate create ML API returned status code {ml_response.status_code}"
-                    logger.error(f"{ml_error}. Response content: {ml_response.text}")
-
-        response.data = {
+        # Prepare the response data
+        response_data = {
             'message': 'Candidate created successfully',
             'ml_success': ml_success,
             'candidate_profile_summary': candidate_profile_summary,
             'candidate_tags': candidate_tags,
-            'data': response.data
+            'data': response.data,
+            'ml_api': {
+                'called': True,
+                'status': 'success' if ml_success else 'failed',
+                'message': 'ML API processed successfully' if ml_success else (ml_error or 'ML API processing failed')
+            }
         }
+        
+        # If there was an ML API error but the candidate was created successfully,
+        # we still want to return a 201 status but include the ML API error details
+        if not ml_success and response.status_code == 201:
+            response_data['warning'] = 'Candidate created but ML processing failed'
+            
+        response.data = response_data
 
         if ml_error:
             response.data['ml_error'] = ml_error
@@ -969,8 +1041,17 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 logger.error(error_msg)
                 return False, error_msg, None
             
-            # Prepare the basic candidate data
+            # Prepare the ML API URL with the correct endpoint
+            base_url = "https://dev-flit-ai.neurooceans.com"
+            endpoint = f"create_candidates/{candidate_id}"  # Removed trailing slash to match the working endpoint
+            ml_api_url = f"{base_url}/{endpoint}"
+            
+            logger.info(f"Preparing to update ML service for candidate {candidate_id}")
+            logger.debug(f"ML API URL: {ml_api_url}")
+            
+            # Prepare the candidate data for ML service
             ml_payload = {
+                "id": candidate_id,
                 "full_name": candidate.full_name or "",
                 "title": candidate.title or "",
                 "bio": candidate.bio or "",
@@ -984,100 +1065,64 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 "seniority_level": candidate.seniority_level or "",
                 "min_salary": getattr(candidate, 'min_salary', None),
                 "max_salary": getattr(candidate, 'max_salary', None),
-                "salary_currency": getattr(candidate, 'salary_currency', 'USD') or 'USD',
-                "portfolio_links": getattr(candidate, 'portfolio_links', []) or [],
-                "resume_url": getattr(candidate, 'resume_url', '') or "",
-                "video_intro_url": getattr(candidate, 'video_intro_url', '') or "",
-                "profile_visibility": getattr(candidate, 'profile_visibility', 'public') or 'public',
+                "resume_url": getattr(candidate, 'resume_url', ''),
+                "video_intro_url": getattr(candidate, 'video_intro_url', ''),
+                "profile_visibility": getattr(candidate, 'profile_visibility', 'public'),
                 "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
-                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else ""
+                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
+                "resume_data": getattr(candidate, 'resume_data', None)
             }
             
-            # Only include resume_data if it exists and is not empty
-            if hasattr(candidate, 'resume_data') and candidate.resume_data:
-                ml_payload["resume_data"] = candidate.resume_data
-            
-            # Update with any additional data passed in
-            ml_payload.update(data)
-            
-            # Use the create_candidates endpoint for both create and update operations
-            ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_candidates/{candidate_id}"
-            logger.info(f"Sending data to ML API: {ml_api_url}")
-            logger.debug(f"Data being sent: {ml_payload}")
-            
-            # Check if ML API key is configured
-            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
-            if not api_key:
-                logger.warning("ML API key not configured - skipping ML service update")
-                return True, "ML service update skipped (no API key configured)", None
-                
+            # Set up headers
             headers = {
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
                 'Accept': 'application/json'
             }
             
-            # Make the request with detailed error handling
+            # Make the API request
             try:
-                logger.info(f"Sending request to ML API: {ml_api_url}")
-                logger.debug(f"Request payload: {ml_payload}")
+                logger.info(f"Sending candidate data to ML service: {ml_api_url}")
+                logger.debug(f"Request payload: {json.dumps(ml_payload, indent=2, default=str)}")
                 
-                response = requests.put(
+# Using POST instead of PUT as per the endpoint expectation
+                response = requests.post(
                     ml_api_url,
                     json=ml_payload,
                     headers=headers,
                     timeout=30  # 30 seconds timeout
                 )
                 
-                # Log the response details
-                logger.info(f"ML API Response Status: {response.status_code}")
-                logger.debug(f"ML API Response Headers: {dict(response.headers)}")
+                # Log the raw response for debugging
+                logger.debug(f"ML service response status: {response.status_code}")
+                logger.debug(f"ML service response content: {response.text}")
                 
-                try:
-                    response_data = response.json()
-                    # Consider it successful if we get a 200 status and valid JSON with candidate data
-                    if response.status_code == 200 and 'id' in response_data:
-                        logger.info(f"ML API update successful for candidate {candidate_id}")
-                        return True, "Profile Updated successfully in ML service", response_data
-                    else:
-                        error_msg = response_data.get('message', 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                        logger.error(f"ML API error for candidate {candidate_id}: {error_msg}")
-                        logger.debug(f"Full response headers: {dict(response.headers)}")
-                        return False, f"ML service error: {error_msg}", response_data
-                        
-                except json.JSONDecodeError:
-                    # If response is not JSON, but status is 200, consider it a success
-                    if response.status_code == 200:
-                        logger.info(f"ML API update successful (non-JSON response) for candidate {candidate_id}")
-                        return True, "Profile updated successfully in ML service", {}
-                    exception_logger.exception(f"ML API returned non-JSON response with status {response.status_code} for candidate {candidate_id}")
-                    raise  # Re-raise if not 200
+                # Check response status
+                if response.status_code in (200, 201):
+                    try:
+                        response_data = response.json()
+                        logger.info(f"Successfully updated ML service for candidate {candidate_id}")
+                        return True, "Successfully updated ML service", response_data
+                    except json.JSONDecodeError as e:
+                        error_msg = f"Invalid JSON response from ML service: {str(e)}. Response: {response.text[:500]}"
+                        logger.error(error_msg)
+                        return False, "Invalid response from ML service", None
+                elif response.status_code == 404:
+                    error_msg = f"ML service endpoint not found (404). Please check the URL: {ml_api_url}"
+                    logger.error(error_msg)
+                    return False, "ML service endpoint not found", None
+                else:
+                    error_msg = f"ML service returned status {response.status_code}: {response.text[:500]}"
+                    logger.error(error_msg)
+                    return False, f"ML service error: {response.status_code}", None
+                    
+            except requests.exceptions.RequestException as e:
+                logger.exception(f"Error calling ML API for candidate {candidate_id}")
+                return False, f"Error connecting to ML service: {str(e)}", None
                 
-            except requests.exceptions.HTTPError as e:
-                exception_logger.exception(f"HTTP error while updating ML service for candidate {candidate_id}")
-                error_msg = f"HTTP Error: {str(e)}"
-                logger.error(f"{error_msg} for candidate {candidate_id}")
-                return False, error_msg, None
-                
-        except requests.exceptions.RequestException as e:
-            exception_logger.exception(f"Connection error while calling ML service for candidate {candidate_id}")
-            error_msg = f"Error connecting to ML service: {str(e)}"
-            logger.error(f"{error_msg} for candidate {candidate_id}")
-            return False, error_msg, None
-            
-        except json.JSONDecodeError as e:
-            exception_logger.exception(f"Invalid JSON response from ML service for candidate {candidate_id}")
-            error_msg = f"Invalid JSON response from ML service: {str(e)}"
-            logger.error(f"{error_msg} for candidate {candidate_id}")
-            return False, error_msg, None
-            
         except Exception as e:
-            exception_logger.exception(f"Unexpected error updating ML service for candidate {candidate_id}")
-            error_msg = f"Unexpected error updating ML service: {str(e)}"
-            logger.error(f"{error_msg} for candidate {candidate_id}", exc_info=True)
-            return False, error_msg, None
-            
+            logger.exception(f"Unexpected error in _update_ml_candidate_data for candidate {candidate_id}")
+            return False, f"Unexpected error: {str(e)}", None
+
     def _parse_form_data(self, data):
         """Helper method to parse form data"""
         if not data:
@@ -1086,18 +1131,18 @@ class CandidateViewSet(viewsets.ModelViewSet):
         # Create a mutable copy if it's a QueryDict
         if hasattr(data, 'copy') and not isinstance(data, dict):
             data = data.copy()
-        
+            
         # Convert QueryDict to regular dict if needed
         if hasattr(data, 'dict'):
             data = data.dict()
-        
+            
         # Make sure we're working with a dictionary
         if not isinstance(data, dict):
             return {}
-        
+            
         # Create a new dictionary to store the parsed data
         parsed_data = {}
-        
+            
         # Handle list fields
         for key in ['skills', 'languages', 'preferred_locations', 'superpowers', 'preferred_roles', 'portfolio_links']:
             if key in data:
@@ -1124,7 +1169,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 if parsed is not None:
                     parsed_data[key] = parsed
         
-        # Copy all other fields
+        # Copy remaining fields
         for key, value in data.items():
             if key not in parsed_data:
                 parsed_data[key] = value
