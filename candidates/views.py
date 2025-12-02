@@ -1041,13 +1041,18 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 logger.error(error_msg)
                 return False, error_msg, None
             
-            # Prepare the ML API URL with the correct endpoint
+            # Prepare the ML API URLs
             base_url = "https://dev-flit-ai.neurooceans.com"
-            endpoint = f"create_candidates/{candidate_id}"  # Removed trailing slash to match the working endpoint
-            ml_api_url = f"{base_url}/{endpoint}"
+            
+            # First try to update existing candidate
+            update_endpoint = f"update_candidate_data/{candidate_id}"
+            update_url = f"{base_url}/{update_endpoint}"
+            
+            # Fallback to create if update fails
+            create_endpoint = f"create_candidates/{candidate_id}"
+            create_url = f"{base_url}/{create_endpoint}"
             
             logger.info(f"Preparing to update ML service for candidate {candidate_id}")
-            logger.debug(f"ML API URL: {ml_api_url}")
             
             # Prepare the candidate data for ML service
             ml_payload = {
@@ -1067,10 +1072,13 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 "max_salary": getattr(candidate, 'max_salary', None),
                 "resume_url": getattr(candidate, 'resume_url', ''),
                 "video_intro_url": getattr(candidate, 'video_intro_url', ''),
+                "video_transcription": getattr(candidate, 'video_transcription', ''),
                 "profile_visibility": getattr(candidate, 'profile_visibility', 'public'),
                 "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
                 "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
-                "resume_data": getattr(candidate, 'resume_data', None)
+                "resume_data": getattr(candidate, 'resume_data', {}) or {},
+                "profile_completed": getattr(candidate, 'profile_completed', False),
+                "passion_projects": getattr(candidate, 'passion_projects', '') or ''
             }
             
             # Set up headers
@@ -1079,45 +1087,65 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 'Accept': 'application/json'
             }
             
-            # Make the API request
+            # Try to update first
+            response = None
             try:
-                logger.info(f"Sending candidate data to ML service: {ml_api_url}")
-                logger.debug(f"Request payload: {json.dumps(ml_payload, indent=2, default=str)}")
+                logger.info(f"Attempting to update candidate at: {update_url}")
+                logger.debug(f"Update payload: {json.dumps(ml_payload, indent=2, default=str)}")
                 
-# Using POST instead of PUT as per the endpoint expectation
-                response = requests.post(
-                    ml_api_url,
+                # First try PATCH to update
+                response = requests.patch(
+                    update_url,
                     json=ml_payload,
                     headers=headers,
-                    timeout=30  # 30 seconds timeout
+                    timeout=30
                 )
+                logger.debug(f"Update response: {response.status_code} - {response.text}")
                 
-                # Log the raw response for debugging
-                logger.debug(f"ML service response status: {response.status_code}")
-                logger.debug(f"ML service response content: {response.text}")
-                
-                # Check response status
-                if response.status_code in (200, 201):
-                    try:
-                        response_data = response.json()
-                        logger.info(f"Successfully updated ML service for candidate {candidate_id}")
-                        return True, "Successfully updated ML service", response_data
-                    except json.JSONDecodeError as e:
-                        error_msg = f"Invalid JSON response from ML service: {str(e)}. Response: {response.text[:500]}"
-                        logger.error(error_msg)
-                        return False, "Invalid response from ML service", None
-                elif response.status_code == 404:
-                    error_msg = f"ML service endpoint not found (404). Please check the URL: {ml_api_url}"
-                    logger.error(error_msg)
-                    return False, "ML service endpoint not found", None
-                else:
-                    error_msg = f"ML service returned status {response.status_code}: {response.text[:500]}"
-                    logger.error(error_msg)
-                    return False, f"ML service error: {response.status_code}", None
+                # If update fails with 404, try to create
+                if response.status_code == 404:
+                    logger.info(f"Update endpoint not found, trying create at: {create_url}")
+                    response = requests.post(
+                        create_url,
+                        json=ml_payload,
+                        headers=headers,
+                        timeout=30
+                    )
+                    logger.debug(f"Create response: {response.status_code} - {response.text}")
                     
             except requests.exceptions.RequestException as e:
-                logger.exception(f"Error calling ML API for candidate {candidate_id}")
-                return False, f"Error connecting to ML service: {str(e)}", None
+                error_msg = f"Error calling ML service: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                return False, error_msg, None
+            
+            # Check if we got a valid response
+            if response is None:
+                error_msg = "No response received from ML service"
+                logger.error(error_msg)
+                return False, error_msg, None
+                
+            # Log the raw response for debugging
+            logger.debug(f"ML service response status: {response.status_code}")
+            logger.debug(f"ML service response content: {response.text}")
+            
+            # Check response status for success
+            if response.status_code in (200, 201, 204):
+                try:
+                    response_data = response.json()
+                    logger.info(f"Successfully updated ML service for candidate {candidate_id}")
+                    return True, "Successfully updated ML service", response_data
+                except json.JSONDecodeError as e:
+                    error_msg = f"Invalid JSON response from ML service: {str(e)}. Response: {response.text[:500]}"
+                    logger.error(error_msg)
+                    return False, "Invalid response from ML service", None
+            elif response.status_code == 404:
+                error_msg = f"ML service endpoint not found (404). Please check the URL: {update_url}"
+                logger.error(error_msg)
+                return False, error_msg, None
+            else:
+                error_msg = f"ML service returned status {response.status_code}: {response.text[:500]}"
+                logger.error(error_msg)
+                return False, f"ML service error: {response.status_code}", None
                 
         except Exception as e:
             logger.exception(f"Unexpected error in _update_ml_candidate_data for candidate {candidate_id}")
