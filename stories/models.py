@@ -29,9 +29,11 @@ class Story(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='stories')
     user_type = models.CharField(max_length=10, default='candidate', editable=False, help_text="Automatically set to 'employer' or 'candidate' based on user's profile")
     
-    # Reference to either company (for employer) or candidate profile
+    # Reference to company, candidate, project, or job
     company = models.ForeignKey('companies.Company', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
     candidate = models.ForeignKey('candidates.Candidate', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
+    project = models.ForeignKey('projects.Project', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
+    job = models.ForeignKey('jobs.Job', on_delete=models.SET_NULL, null=True, blank=True, related_name='stories')
     
     # Content type - determines which content field is used
     content_type = models.CharField(max_length=10, choices=CONTENT_TYPE_CHOICES, default='text')
@@ -227,19 +229,53 @@ class Like(models.Model):
 
 class Comment(models.Model):
     """
-    Model to store comments on stories
+    Model to store comments on stories and other entities
     """
     story = models.ForeignKey('Story', on_delete=models.CASCADE, related_name='story_comments', null=True, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_comments')
+    
+    # Entity references - only one of these should be set
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
+    job = models.ForeignKey('jobs.Job', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
+    candidate = models.ForeignKey('candidates.Candidate', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
+    
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-created_at']
+        
+    def clean(self):
+        # Ensure only one entity is referenced
+        entity_count = sum([
+            bool(self.story_id),
+            bool(self.company_id),
+            bool(self.project_id),
+            bool(self.job_id),
+            bool(self.candidate_id)
+        ])
+        
+        if entity_count != 1:
+            raise ValidationError('A comment must reference exactly one entity (story, company, project, job, or candidate)')
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.user.email} commented on story {self.story.id}"
+        if self.story:
+            return f"{self.user.email} commented on story {self.story.id}"
+        elif self.company:
+            return f"{self.user.email} commented on company {self.company.company_name}"
+        elif self.project:
+            return f"{self.user.email} commented on project {self.project.title}"
+        elif self.job:
+            return f"{self.user.email} commented on job {self.job.title}"
+        elif self.candidate:
+            return f"{self.user.email} commented on candidate {self.candidate.id}"
+        return f"{self.user.email} comment"
 
 
 class SavedItem(models.Model):

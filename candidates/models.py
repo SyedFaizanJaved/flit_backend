@@ -91,13 +91,11 @@ class Candidate(models.Model):
     # Ml Endpoints
     candidate_tags = models.JSONField(default=list,blank=True, null=True)  # List of tags for categorization
     candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
-    query=models.TextField(blank=True,null=True)
+    query = models.TextField(blank=True, null=True)
+    resume_data = models.JSONField(blank=True, null=True)  # Store parsed resume data from ML API
 
 
     # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

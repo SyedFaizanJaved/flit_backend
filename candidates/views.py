@@ -953,34 +953,86 @@ class CandidateViewSet(viewsets.ModelViewSet):
     def _update_ml_candidate_data(self, candidate_id, data):
         """
         Update candidate data in the ML service
+        
+        Args:
+            candidate_id: ID of the candidate to update
+            data: Dictionary containing candidate data
+            
         Returns:
             tuple: (success: bool, message: str, data: dict)
         """
         try:
+            # Get the candidate instance
+            try:
+                candidate = Candidate.objects.get(id=candidate_id)
+            except Candidate.DoesNotExist:
+                error_msg = f"Candidate with ID {candidate_id} not found"
+                logger.error(error_msg)
+                return False, error_msg, None
+            
+            # Prepare the basic candidate data
+            ml_payload = {
+                "full_name": candidate.full_name or "",
+                "title": candidate.title or "",
+                "bio": candidate.bio or "",
+                "location": candidate.location or "",
+                "work_style": candidate.work_style or "",
+                "availability_type": candidate.availability_type or "",
+                "is_available": getattr(candidate, 'is_available', False),
+                "skills": getattr(candidate, 'skills', []) or [],
+                "superpowers": getattr(candidate, 'superpowers', []) or [],
+                "preferred_roles": getattr(candidate, 'preferred_roles', []) or [],
+                "seniority_level": candidate.seniority_level or "",
+                "min_salary": getattr(candidate, 'min_salary', None),
+                "max_salary": getattr(candidate, 'max_salary', None),
+                "salary_currency": getattr(candidate, 'salary_currency', 'USD') or 'USD',
+                "portfolio_links": getattr(candidate, 'portfolio_links', []) or [],
+                "resume_url": getattr(candidate, 'resume_url', '') or "",
+                "video_intro_url": getattr(candidate, 'video_intro_url', '') or "",
+                "profile_visibility": getattr(candidate, 'profile_visibility', 'public') or 'public',
+                "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
+                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else ""
+            }
+            
+            # Only include resume_data if it exists and is not empty
+            if hasattr(candidate, 'resume_data') and candidate.resume_data:
+                ml_payload["resume_data"] = candidate.resume_data
+            
+            # Update with any additional data passed in
+            ml_payload.update(data)
+            
             # Use the create_candidates endpoint for both create and update operations
             ml_api_url = f"https://dev-flit-ai.neurooceans.com/create_candidates/{candidate_id}"
             logger.info(f"Sending data to ML API: {ml_api_url}")
-            logger.debug(f"Data being sent: {data}")
+            logger.debug(f"Data being sent: {ml_payload}")
             
-            # Prepare headers without API key
+            # Check if ML API key is configured
+            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
+            if not api_key:
+                logger.warning("ML API key not configured - skipping ML service update")
+                return True, "ML service update skipped (no API key configured)", None
+                
             headers = {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'Accept': 'application/json'
             }
             
+            # Make the request with detailed error handling
             try:
-                # Always use POST for the create_candidates endpoint
-                response = requests.post(
+                logger.info(f"Sending request to ML API: {ml_api_url}")
+                logger.debug(f"Request payload: {ml_payload}")
+                
+                response = requests.put(
                     ml_api_url,
-                    json=data,
+                    json=ml_payload,
                     headers=headers,
                     timeout=30  # 30 seconds timeout
                 )
                 
-                # Log the raw response for debugging
-                logger.debug(f"ML API response status: {response.status_code}")
-                logger.debug(f"ML API response content: {response.text}")
-                
-                response.raise_for_status()
+                # Log the response details
+                logger.info(f"ML API Response Status: {response.status_code}")
+                logger.debug(f"ML API Response Headers: {dict(response.headers)}")
                 
                 try:
                     response_data = response.json()
@@ -1198,11 +1250,8 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     }
                 )
                 
-                # Generate the full URL
-                file_url = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/{filepath}"
-                
-                # Update the candidate's profile_image field directly
-                candidate.profile_image = file_url
+                # Store just the file path, not the full URL
+                candidate.profile_image = filepath
                 candidate.save(update_fields=['profile_image'])
                 
             except Exception as e:
@@ -1213,20 +1262,142 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
-        # Handle resume file upload
+        # Handle resume file upload and parsing
         if 'resume_file' in request.FILES:
             try:
-                resume_url = self._save_file(
-                    request.FILES['resume_file'], 
-                    'candidates/resumes', 
-                    request
+                # First save the resume file
+                resume_file = request.FILES['resume_file']
+                
+                # Parse the resume using the ML API
+                try:
+                    # Save the resume file temporarily
+                    temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_resumes')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    temp_path = os.path.join(temp_dir, resume_file.name)
+                    
+                    with open(temp_path, 'wb+') as destination:
+                        for chunk in resume_file.chunks():
+                            destination.write(chunk)
+                    
+                    # Call the ML API to parse the resume
+                    ml_api_url = "https://dev-flit-ai.neurooceans.com/parse_cv"
+                    
+                    try:
+                        with open(temp_path, 'rb') as f:
+                            # Log file info for debugging
+                            file_size = os.path.getsize(temp_path)
+                            file_extension = os.path.splitext(resume_file.name)[1].lower()
+                            logger.info(f"Sending file to ML API - Name: {resume_file.name}, Size: {file_size} bytes, Type: {file_extension}")
+                            
+                            # Set appropriate content type based on file extension
+                            content_type = 'application/pdf'
+                            if file_extension in ['.doc', '.docx']:
+                                content_type = 'application/msword' if file_extension == '.doc' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                            
+                            # Use 'resume_file' as the field name to match the ML API's expected field
+                            files = {'resume_file': (resume_file.name, f, content_type)}
+                            headers = {'accept': 'application/json'}
+                            
+                            # Log the request
+                            logger.info(f"Sending request to ML API: {ml_api_url}")
+                            
+                            # Make the request with timeout
+                            response = requests.post(
+                                ml_api_url, 
+                                files=files, 
+                                headers=headers,
+                                timeout=30  # 30 seconds timeout
+                            )
+                            
+                            # Log response status and headers
+                            logger.info(f"ML API Response - Status: {response.status_code}, Headers: {dict(response.headers)}")
+                            
+                            # For non-200 responses, log the response body for debugging
+                            if response.status_code != 200:
+                                logger.error(f"ML API Error Response: {response.text}")
+                    
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Error calling ML API: {str(e)}", exc_info=True)
+                        return Response(
+                            {"error": f"Error connecting to resume parsing service: {str(e)}"}, 
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE
+                        )
+                    finally:
+                        # Always remove the temporary file
+                        try:
+                            os.remove(temp_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to remove temporary file {temp_path}: {str(e)}")
+                    
+                    if response.status_code == 200:
+                        try:
+                            data = response.json()
+                            if data.get('success', False):
+                                # Save the parsed resume data
+                                candidate.resume_data = data.get('data', {})
+                                logger.info(f"Successfully parsed resume for candidate {candidate.id}")
+                                
+                                # Save the resume file to media storage
+                                resume_url = self._save_file(
+                                    resume_file, 
+                                    'candidates/resumes', 
+                                    request
+                                )
+                                
+                                if resume_url:
+                                    # Update the resume URL in the candidate's profile
+                                    final_data['resume_url'] = resume_url
+                                    candidate.resume_url = resume_url
+                                    
+                                    # Mark portfolio as completed since we have a resume
+                                    candidate.portfolio_completed = True
+                                    
+                                    logger.info(f"Successfully saved resume file for candidate {candidate.id}")
+                                else:
+                                    logger.warning("Failed to save resume file to media storage")
+                                    return Response(
+                                        {"error": "Failed to save resume file"}, 
+                                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                                    )
+                            else:
+                                error_msg = data.get('message', 'Unknown error from ML service')
+                                logger.warning(f"Failed to parse resume: {error_msg}")
+                                return Response(
+                                    {"error": f"Failed to parse resume: {error_msg}"}, 
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+                        except ValueError as e:
+                            logger.error(f"Invalid JSON response from ML API: {response.text}", exc_info=True)
+                            return Response(
+                                {"error": "Invalid response from resume parsing service"}, 
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                            )
+                    else:
+                        error_msg = f"Failed to parse resume: HTTP {response.status_code}"
+                        if response.status_code == 422:
+                            error_msg = "The resume file could not be processed. Please ensure it's a valid PDF or Word document and try again."
+                        elif response.status_code >= 500:
+                            error_msg = "The resume parsing service is currently unavailable. Please try again later."
+                            
+                        logger.warning(f"{error_msg} - Response: {response.text}")
+                        return Response(
+                            {"error": error_msg}, 
+                            status=status.HTTP_400_BAD_REQUEST if response.status_code < 500 else status.HTTP_503_SERVICE_UNAVAILABLE
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"Error parsing resume: {str(e)}", exc_info=True)
+                    return Response(
+                        {"error": f"Failed to process resume: {str(e)}"}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Error handling resume file: {str(e)}", exc_info=True)
+                return Response(
+                    {"error": f"Failed to process resume file: {str(e)}"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-                if resume_url:
-                    # Update both data and final_data with the resume_url
-                    data['resume_url'] = resume_url
-                    final_data['resume_url'] = resume_url
-                    # Mark portfolio as completed since we have a resume
-                    candidate.portfolio_completed = True
             except Exception as e:
                 exception_logger.exception("Error saving resume")
                 logger.error(f"Error saving resume: {str(e)}", exc_info=True)
@@ -1286,10 +1457,10 @@ class CandidateViewSet(viewsets.ModelViewSet):
         # Get the updated data using the serializer
         serializer = self.get_serializer(candidate)
         
-        # Update ML service with the final data
-        ml_success, ml_message, _ = self._update_ml_candidate_data(candidate.id, final_data)
-        if not ml_success:
-            logger.warning(f"Failed to update ML service: {ml_message}")
+        # Skip ML service updates as requested
+        ml_success = True
+        ml_message = "ML service updates are disabled"
+        logger.info("Skipping ML service update as requested")
         
         # Add ML update status to response
         response_data = serializer.data
@@ -1515,6 +1686,93 @@ class CandidateViewSet(viewsets.ModelViewSet):
             'count': companies_qs.count(),
             'results': serializer.data
         }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='upload-resume', permission_classes=[permissions.IsAuthenticated])
+    def upload_resume(self, request):
+        """
+        Handle resume file upload and parsing
+        Only saves the parsed resume data to the database without updating other fields
+        """
+        candidate = self._get_candidate_profile(request.user)
+        if isinstance(candidate, Response):
+            return candidate
+            
+        # Check if file is present in the request
+        if 'resume' not in request.FILES:
+            return Response(
+                {"error": "No resume file provided"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        resume_file = request.FILES['resume']
+        
+        try:
+            # Save the resume file temporarily
+            temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_resumes')
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_path = os.path.join(temp_dir, resume_file.name)
+            
+            with open(temp_path, 'wb+') as destination:
+                for chunk in resume_file.chunks():
+                    destination.write(chunk)
+            
+            # Call the ML API to parse the resume
+            ml_api_url = "https://dev-flit-ai.neurooceans.com/parse_cv"
+            
+            with open(temp_path, 'rb') as f:
+                files = {'file': (resume_file.name, f, 'application/pdf')}
+                response = requests.post(ml_api_url, files=files)
+            
+            # Remove the temporary file
+            try:
+                os.remove(temp_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary file {temp_path}: {str(e)}")
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to parse resume. Status: {response.status_code}, Response: {response.text}")
+                return Response(
+                    {"error": "Failed to parse resume", "status_code": response.status_code}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            try:
+                data = response.json()
+                
+                # Check if the response has the expected structure
+                if not data.get('success', False):
+                    error_msg = data.get('message', 'Unknown error from ML service')
+                    logger.error(f"ML service returned error: {error_msg}")
+                    return Response(
+                        {"error": "Failed to parse resume", "details": error_msg}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Only update the resume_data field
+                candidate.resume_data = data.get('data', {})
+                
+                # Save only the resume_data field to the database
+                candidate.save(update_fields=['resume_data', 'updated_at'])
+                
+                return Response({
+                    "success": True,
+                    "message": "Resume uploaded and parsed successfully",
+                    "resume_data": candidate.resume_data
+                }, status=status.HTTP_200_OK)
+                
+            except ValueError as e:
+                logger.error(f"Failed to parse JSON response from ML service: {str(e)}")
+                return Response(
+                    {"error": "Invalid response from resume parsing service"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+        except Exception as e:
+            logger.error(f"Error processing resume: {str(e)}", exc_info=True)
+            return Response(
+                {"error": f"Failed to process resume: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=False, methods=['post'], url_path='profile/complete/(?P<section>[^/.]+)', permission_classes=[permissions.IsAuthenticated])
     def complete_profile_section(self, request, section=None):
