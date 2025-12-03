@@ -1,12 +1,17 @@
-from rest_framework import status, generics, permissions
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-from django.shortcuts import get_object_or_404
+from datetime import timedelta
+
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework import status, generics, permissions, serializers
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from .models import Story, Like, Comment, SavedItem
 from .serializers import StorySerializer, LikeSerializer, CommentSerializer, SavedItemSerializer
-from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class StoryListCreateView(generics.ListCreateAPIView):
@@ -79,6 +84,10 @@ class StoryListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         queryset = Story.objects.filter(is_active=True)
         request = self.request
+        twenty_four_hours_ago = timezone.now() - timedelta(hours=24)
+
+        # Hide stories older than 24 hours
+        queryset = queryset.filter(created_at__gte=twenty_four_hours_ago)
         
         # Filter by user type if provided
         user_type = request.query_params.get('user_type')
