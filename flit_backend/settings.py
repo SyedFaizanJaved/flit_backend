@@ -86,6 +86,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'flit_backend.middleware.APILoggingMiddleware',
 ]
 
 ROOT_URLCONF = 'flit_backend.urls'
@@ -259,53 +260,81 @@ CREDENTIALS_FILE = os.path.join(BASE_DIR, config('GOOGLE_CLIENT_SECRET_FILE'))
 TOKEN_FILE = os.path.join(BASE_DIR, config('GOOGLE_TOKEN_FILE'))
 
 # Logging Configuration
+import os
+
+# Ensure logs directory exists
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-
     'formatters': {
-    'pretty_format': {
-        'format': '[{asctime}] [{levelname}] {message}',
-        'style': '{',
-        }
+        'verbose': {
+            'format': '[{asctime}] {levelname} {module} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '[{asctime}] {levelname} {message}',
+            'style': '{',
+        },
     },
-
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'simple',
         },
-        'API_access_file': {
+        'api_file': {
+            'level': 'DEBUG',
             'class': 'logging.FileHandler',
-            'filename': 'logs/API_access.log',
-            'formatter': 'pretty_format'
+            'filename': os.path.join(LOG_DIR, 'API_access.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
         },
-        'security_warnings_file': {
+        'security_file': {
+            'level': 'WARNING',
             'class': 'logging.FileHandler',
-            'filename': 'logs/security_warnings.log',
-            'formatter': 'pretty_format'
+            'filename': os.path.join(LOG_DIR, 'security_warnings.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
         },
         'exceptions_file': {
+            'level': 'ERROR',
             'class': 'logging.FileHandler',
-            'filename': 'logs/exceptions.log',
-            'formatter': 'pretty_format'
+            'filename': os.path.join(LOG_DIR, 'exceptions.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
         },
     },
-
     'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
         'django.server': {
-            'handlers': ['console', 'API_access_file'],
+            'handlers': ['console', 'api_file'],
             'level': 'INFO',
             'propagate': False,
         },
-        'django.security': {
-            'handlers': ['console', 'security_warnings_file'],
-            'level': 'WARNING',
-            'propagate': False,
-        },
-        'exceptions': {
-            'handlers': ['exceptions_file'],
+        'django.request': {
+            'handlers': ['console', 'api_file'],
             'level': 'DEBUG',
             'propagate': False,
         },
+        'django.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        '': {
+            'handlers': ['console', 'exceptions_file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
     }
 }
