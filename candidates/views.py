@@ -250,7 +250,8 @@ class CandidateApplicationsView(DashboardBaseView):
                 app_obj = app['object']
                 if app['type'] == 'job':
                     applications_data.append({
-                        'id': app_obj.id,
+                        'app_id': app_obj.id,
+                        'id': app_obj.job.id,
                         'title': app_obj.job.title if hasattr(app_obj, 'job') and app_obj.job else 'Unknown Job',
                         'company': app_obj.job.company.name if hasattr(app_obj, 'job') and hasattr(app_obj.job, 'company') and app_obj.job.company else 'Unknown Company',
                         'status': app_obj.status,
@@ -259,7 +260,8 @@ class CandidateApplicationsView(DashboardBaseView):
                     })
                 else:  # project application
                     applications_data.append({
-                        'id': app_obj.id,
+                        'app_id': app_obj.id,
+                        'id': app_obj.project.id,
                         'title': app_obj.project.title if hasattr(app_obj, 'project') and app_obj.project else 'Unknown Project',
                         'company': app_obj.project.company.name if hasattr(app_obj, 'project') and hasattr(app_obj.project, 'company') and app_obj.project.company else 'Unknown Company',
                         'status': app_obj.status,

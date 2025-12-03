@@ -94,28 +94,82 @@ class CandidateConversationSummarySerializer(serializers.ModelSerializer):
         return self.get_candidate_info(obj)['profile_picture']
 
 
-class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
+class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
     """
-    Serializer used on the candidate side to list employers they have chatted with,
-    returning employer's user id, the associated company details, and unread message count.
+    Unified serializer for the candidate inbox.
+    It returns conversation participants (employers or candidates) using the
+    same structure that the frontend already consumes.
     """
-    id = serializers.IntegerField(source='user.id', read_only=True)
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    industry = serializers.CharField(source='company.industry', read_only=True)
+    id = serializers.IntegerField(read_only=True)
+    company_name = serializers.SerializerMethodField()
+    industry = serializers.SerializerMethodField()
     logo = serializers.SerializerMethodField()
-    last_message_time = serializers.DateTimeField(read_only=True)
-    last_seen = serializers.DateTimeField(source='user.last_login', read_only=True)
-    unread_count = serializers.IntegerField(read_only=True)
+    last_message_time = serializers.DateTimeField(allow_null=True)
+    last_seen = serializers.SerializerMethodField()
+    unread_count = serializers.IntegerField()
+    entity_type = serializers.SerializerMethodField()
     
-    class Meta:
-        from employers.models import Employer
-        model = Employer
-        fields = ('id', 'company_name', 'industry', 'logo', 'last_message_time', 'last_seen', 'unread_count')
+    def _build_absolute_uri(self, path):
+        """Helper to build absolute URLs when request context is available."""
+        request = self.context.get('request')
+        if request and path:
+            return request.build_absolute_uri(path)
+        return path
+    
+    def _get_employer_profile(self, obj):
+        return getattr(obj, 'employer_profile', None)
+    
+    def _get_candidate_profile(self, obj):
+        return getattr(obj, 'candidate_profile', None)
+    
+    def get_company_name(self, obj):
+        employer = self._get_employer_profile(obj)
+        if employer and getattr(employer, 'company', None):
+            return employer.company.company_name or employer.company.name
+        if employer and (employer.first_name or employer.last_name):
+            return employer.full_name
+        
+        candidate = self._get_candidate_profile(obj)
+        if candidate and candidate.full_name:
+            return candidate.full_name
+        
+        return obj.get_full_name() or obj.email
+    
+    def get_industry(self, obj):
+        employer = self._get_employer_profile(obj)
+        if employer and getattr(employer, 'company', None):
+            return employer.company.industry or employer.position or 'Industry not specified'
+        
+        candidate = self._get_candidate_profile(obj)
+        if candidate and candidate.title:
+            return candidate.title
+        
+        role_name = getattr(getattr(obj, 'role', None), 'name', None)
+        return role_name or 'User'
     
     def get_logo(self, obj):
-        if obj.company and obj.company.logo:
-            return self.context['request'].build_absolute_uri(obj.company.logo.url)
-        return None
+        logo_path = None
+        employer = self._get_employer_profile(obj)
+        if employer:
+            if getattr(employer, 'company', None) and employer.company.logo:
+                logo_path = employer.company.logo.url
+            elif employer.profile_picture:
+                logo_path = employer.profile_picture.url
+        if not logo_path:
+            candidate = self._get_candidate_profile(obj)
+            if candidate and candidate.profile_image:
+                logo_path = candidate.profile_image.url
+        return self._build_absolute_uri(logo_path) if logo_path else None
+    
+    def get_last_seen(self, obj):
+        return getattr(obj, 'last_login', None)
+    
+    def get_entity_type(self, obj):
+        if self._get_employer_profile(obj):
+            return 'employer'
+        if self._get_candidate_profile(obj):
+            return 'candidate'
+        return 'user'
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     """
