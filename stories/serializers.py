@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
+from django.contrib.auth import get_user_model
 from .models import Story, Like, Comment, SavedItem
 from accounts.serializers import UserListSerializer as UserSerializer
 
@@ -159,11 +160,28 @@ class LikeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user', 'created_at']
 
 
+class CommentUserSerializer(serializers.ModelSerializer):
+    """
+    Nested user serializer with profile image for comments
+    """
+    profile_image = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = get_user_model()
+        fields = ['id', 'first_name', 'last_name', 'email', 'profile_image']
+        read_only_fields = fields
+    
+    def get_profile_image(self, obj):
+        if hasattr(obj, 'candidate_profile') and obj.candidate_profile.profile_image:
+            return obj.candidate_profile.profile_image.url
+        return None
+
+
 class CommentSerializer(serializers.ModelSerializer):
     """
     Serializer for Comment model
     """
-    user = UserSerializer(read_only=True)
+    user = CommentUserSerializer(read_only=True)
     
     class Meta:
         model = Comment
