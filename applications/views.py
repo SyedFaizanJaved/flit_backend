@@ -277,6 +277,7 @@ class InterviewRequestListView(generics.ListCreateAPIView):
         # Create Google Meet event
         try:
             meet_link, event_id = create_google_event(
+                user=user,
                 title=f"Interview for {title}",
                 description="Auto-generated interview room",
                 start_time=start_time,
@@ -288,6 +289,9 @@ class InterviewRequestListView(generics.ListCreateAPIView):
             print("GOOGLE CALENDAR ERROR:", e)
             meet_link = None
 
+        if not meet_link:
+            logger.error("Failed to generate Google Meet link. Interview request not created.")
+            raise ValidationError("Failed to generate Google Meet link. Interview request not created.")
         # Create MeetingRoom entry
         room=MeetingRoom.objects.create(
             meeting_title=f"Interview for {title}",

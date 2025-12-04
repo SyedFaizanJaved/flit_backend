@@ -257,7 +257,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(BASE_DIR)
 
 CREDENTIALS_FILE = os.path.join(BASE_DIR, config('GOOGLE_CLIENT_SECRET_FILE'))
-TOKEN_FILE = os.path.join(BASE_DIR, config('GOOGLE_TOKEN_FILE'))
+REDIRECT_URI = config('GOOGLE_REDIRECT_URI')
 
 # Logging Configuration
 import os
@@ -327,7 +327,7 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
-        '': {
+        'exceptions': {
             'handlers': ['console', 'exceptions_file'],
             'level': 'DEBUG',
             'propagate': True,
