@@ -73,6 +73,37 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update']:
             return ProjectUpdateSerializer
         return ProjectSerializer
+        
+    def retrieve(self, request, *args, **kwargs):
+ 
+        instance = self.get_object()
+     
+        # Check if user has candidate profile
+        has_candidate_profile = hasattr(request.user, 'candidate_profile')
+  
+        if has_candidate_profile:
+            candidate = request.user.candidate_profile
+        
+            # Check applications directly
+            from applications.models import ProjectApplication
+            applications = ProjectApplication.objects.filter(
+                project=instance,
+                candidate=candidate,
+                is_withdrawn=False
+            )
+           
+            for app in applications:
+           
+        
+                # Get serializer with request context
+                context = self.get_serializer_context()
+                context['request'] = request
+                
+        serializer = self.get_serializer(instance, context=context)
+        
+    
+        
+        return Response(serializer.data)
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'milestones']:

@@ -89,6 +89,14 @@ class JobViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(company_id=company_id)
             
         return queryset
+        
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a job instance with proper request context.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, context={'request': request})
+        return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
     def my_jobs(self, request):
