@@ -8,6 +8,7 @@ __pycache__/
 # Django
 media/
 staticfiles/
+migrations_backup/
 
 # Virtual environment
 venv/
