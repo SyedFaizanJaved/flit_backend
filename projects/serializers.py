@@ -55,15 +55,8 @@ class ProjectSerializer(serializers.ModelSerializer):
 
             return False
         
-        # Debug: Print all applications for this candidate
-        from applications.models import ProjectApplication
-        all_apps = ProjectApplication.objects.filter(
-            candidate=request.user.candidate_profile
-        )
-        for app in all_apps:
-    
         # Check if candidate has an active application for this project
-          application_exists = obj.applications.filter(
+        application_exists = obj.applications.filter(
             candidate=request.user.candidate_profile,
             is_withdrawn=False
         ).exists()
