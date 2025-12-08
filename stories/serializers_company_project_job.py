@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 from companies.models import Company
-from projects.models import Project
+from projects.models import Project, ProjectSkill
 from jobs.models import Job
 from candidates.models import Candidate, Education, Experience, Achievement
 from .models import Comment, Like, SavedItem
@@ -103,6 +103,14 @@ class CompanyBasicSerializer(serializers.ModelSerializer):
         model = Company
         fields = ['id', 'company_name']
 
+class ProjectSkillSerializer(serializers.ModelSerializer):
+    """
+    Serializer for project skills in stories
+    """
+    class Meta:
+        model = ProjectSkill
+        fields = ['name']
+
 class ProjectSerializer(serializers.ModelSerializer):
     """
     Project serializer with interaction data
@@ -113,15 +121,22 @@ class ProjectSerializer(serializers.ModelSerializer):
     is_saved = serializers.SerializerMethodField()
     project_id = serializers.IntegerField(source='id', read_only=True)
     company = CompanyBasicSerializer()
+    skills = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
         fields = [
             'project_id', 'title', 'description', 'category', 'paymentType', 'paymentAmount',
             'estimatedHours', 'deadline', 'status', 'company', 'created_at',
-            'like_count', 'comment_count', 'is_liked', 'is_saved'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'skills'
         ]
         read_only_fields = ['created_at']
+    
+    def get_skills(self, obj):
+        """
+        Get the list of skill names for the project
+        """
+        return list(ProjectSkill.objects.filter(project=obj).values_list('name', flat=True))
     
     def get_like_count(self, obj):
         from stories.models import Like
