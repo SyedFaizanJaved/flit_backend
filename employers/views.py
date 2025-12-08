@@ -44,6 +44,7 @@ from .serializers import (
 from accounts.views import BaseRoleRegistrationView
 from django.urls import reverse
 import requests
+from applications.models import JobApplication, ProjectApplication
 from rest_framework.reverse import reverse as drf_reverse
 
 exception_logger = logging.getLogger("exceptions")
@@ -75,7 +76,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
         """
         Use different serializers for different actions
         """
-        if self.action in ['list', 'retrieve', 'by_candidate']:
+        if self.action in ['list', 'retrieve', 'by_candidate', 'shortlisted']:
             return CandidateActionDetailSerializer
         return CandidateActionSerializer
     
@@ -203,6 +204,72 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             
         serializer = self.get_serializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
+        
+    @action(detail=False, methods=['get'])
+    def shortlisted(self, request):
+        """
+        Get all candidates that have been shortlisted by the current employer.
+        """
+        try:
+          
+            # Get the employer's profile
+            employer = request.user.employer_profile
+            job_applications = JobApplication.objects.filter(
+                employer=request.user,
+                is_shortlisted=True
+            ).select_related('candidate', 'job', 'company')
+            
+            # Get shortlisted project applications
+            project_applications = ProjectApplication.objects.filter(
+                employer=request.user,
+                is_shortlisted=True
+            ).select_related('candidate', 'project', 'company')
+            
+            # Combine and serialize the results
+            results = []
+            for app in job_applications:
+                if not hasattr(app, 'candidate'):
+                    continue
+                    
+                results.append({
+                    'id': app.id,
+                    'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
+                    'name': app.candidate.full_name,
+                    'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
+                    'profile_picture': app.candidate.profile_image.url if hasattr(app.candidate, 'profile_image') and app.candidate.profile_image else None,
+                    'title': app.job.title if hasattr(app, 'job') and app.job else 'No title',
+                    'type': 'job',
+                    'application_id': app.id,
+                    'applied_at': app.applied_at.isoformat() if hasattr(app, 'applied_at') else None,
+                })
+                
+            for app in project_applications:
+                if not hasattr(app, 'candidate'):
+                    continue
+                    
+                results.append({
+                    'id': app.id,
+                    'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
+                    'name': app.candidate.full_name,
+                    'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
+                    'profile_picture': app.candidate.profile_image.url if hasattr(app.candidate, 'profile_image') and app.candidate.profile_image else None,
+                    'title': app.project.title if hasattr(app, 'project') and app.project else 'No title',
+                    'type': 'project',
+                    'application_id': app.id,
+                    'applied_at': app.applied_at.isoformat() if hasattr(app, 'applied_at') else None,
+                })
+            
+            # Sort by applied_at in descending order (newest first)
+            results.sort(key=lambda x: x.get('applied_at', ''), reverse=True)
+                
+            return Response(results)
+            
+        except Exception as e:
+            exception_logger.exception("Error fetching shortlisted candidates")
+            return Response(
+                {'error': f'An error occurred while fetching shortlisted candidates: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class EmployerProfileDashboardView(EmployerDashboardBaseView):
