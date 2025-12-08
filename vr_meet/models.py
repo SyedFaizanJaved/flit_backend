@@ -94,3 +94,14 @@ class MeetingRoom(models.Model):
             models.Index(fields=['status']),
             models.Index(fields=['employer']),
         ]
+
+class UserGoogleToken(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    token_json = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_google_token'
+        verbose_name = 'User Google Token'
+        verbose_name_plural = 'User Google Tokens'
+        ordering = ['-created_at']

@@ -559,7 +559,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                     latest_projects.append(project)
                                     continue
                                 except Project.DoesNotExist:
-                                    exception_logger.error(f"Project.DoesNotExist: Active project not found for project_id={project_id}")
+                                    # exception_logger.error(f"Project.DoesNotExist: Active project not found for project_id={project_id}")
                                     pass
                                 
                                 # If not in database, create a new project from ML data
