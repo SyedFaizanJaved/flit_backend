@@ -253,11 +253,12 @@ STORAGES = {
 }
 
 # Google Configuration
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(BASE_DIR)
-
-CREDENTIALS_FILE = os.path.join(BASE_DIR, config('GOOGLE_CLIENT_SECRET_FILE'))
+CLIENT_ID = config('GOOGLE_CLIENT_ID')
+CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET')
 REDIRECT_URI = config('GOOGLE_REDIRECT_URI')
+AUTH_URI = config('AUTH_URI')
+TOKEN_URI = config('TOKEN_URI')
+GOOGLE_SCOPES = config('GOOGLE_SCOPES')
 
 # Logging Configuration
 import os

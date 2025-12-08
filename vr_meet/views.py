@@ -261,68 +261,91 @@ class MeetingRoomDeleteView(APIView):
 # --------------------------
 #  GOOGLE OAUTH CONNECT VIEW
 # --------------------------
-def decode_jwt_and_get_user(token):
-    try:
-        access = AccessToken(token)
-        user_id = access['user_id']
-        user = User.objects.get(id=user_id)
-        if user.role.name != settings.USER_ROLE_EMPLOYER:
-            logger.warning("Unauthorized user role in decode_jwt_and_get_user")
-            return None
-        return user
-    except Exception:
-        logger.exception("Exception in decode_jwt_and_get_user")
-        return None
-
-
+from rest_framework.decorators import api_view
+@api_view()
 def connect_google(request):
-    jwt_token = request.GET.get("token")
-    if not jwt_token:
-        logger.error("Missing user token")
-        return HttpResponse("Missing user token", status=400) 
+    try:
+        user_id = request.user.id
+        if not user_id:
+            logger.error("Missing user id")
+            return Response({"detail": "User id missing"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user=User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            logger.exception("User.DoesNotExist : User not found")
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if user.role.name != settings.USER_ROLE_EMPLOYER:  
+            return Response({"detail": "You are not authorized to connect Google."}, status=status.HTTP_403_FORBIDDEN)
+        
+        flow = Flow.from_client_config(
+            {
+            "web":{
+                "client_id": settings.CLIENT_ID,
+                "client_secret": settings.CLIENT_SECRET,
+                "auth_uri": settings.AUTH_URI,
+                "token_uri": settings.TOKEN_URI,
+                "redirect_uris": [settings.REDIRECT_URI],
+                }
+            },
+            scopes=[settings.GOOGLE_SCOPES]
+            )
+        flow.redirect_uri = settings.REDIRECT_URI
 
-    request.session['user_jwt'] = jwt_token
+        auth_url, state = flow.authorization_url(prompt='consent', login_hint="", state=str(user_id))
+        
+        return Response({"auth_url": auth_url})
+        # return redirect(auth_url)
 
-    flow = Flow.from_client_secrets_file(
-        settings.CREDENTIALS_FILE,
-        scopes=["https://www.googleapis.com/auth/calendar"]
-    )
-    flow.redirect_uri = settings.REDIRECT_URI
+    except Exception as e:
+        logger.exception("Exception in connect_google")
+        return Response({"detail": "Something went wrong. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    auth_url, state = flow.authorization_url(prompt='consent',login_hint="")
-
-    request.session['oauth_state'] = state
-    request.session.save()
-
-    return redirect(auth_url)
-
-
+#--------------------------
+#  GOOGLE OAUTH CALLBACK
+#--------------------------
 def google_callback(request):
-    state = request.session.get('oauth_state')
-    jwt_token = request.session.get('user_jwt')
+    try:
+        user_id = request.GET.get("state")
+        if not user_id or user_id == "None":
+            logger.error("Missing user id in state param")
+            return HttpResponse("User id missing", status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            logger.exception("User.DoesNotExist : User not found")
+            return HttpResponse("User not found", status=status.HTTP_404_NOT_FOUND)
+        try:
+            flow = Flow.from_client_config(
+                {
+                "web":{
+                    "client_id": settings.CLIENT_ID,
+                    "client_secret": settings.CLIENT_SECRET,
+                    "auth_uri": settings.AUTH_URI,
+                    "token_uri": settings.TOKEN_URI,
+                    "redirect_uris": [settings.REDIRECT_URI],
+                    }
+                },
+                scopes=[settings.GOOGLE_SCOPES],
+                state=user_id
+            )
+            flow.redirect_uri = settings.REDIRECT_URI
 
-    if not jwt_token:
-        return HttpResponse("User token missing", status=400)
+            flow.fetch_token(authorization_response=request.build_absolute_uri())
 
-    user = decode_jwt_and_get_user(jwt_token)
-    if not user:
-        return HttpResponse("User not authorized", status=403)
+            creds = flow.credentials
+            token_json = json.loads(creds.to_json())
 
-    flow = Flow.from_client_secrets_file(
-        settings.CREDENTIALS_FILE,
-        scopes=["https://www.googleapis.com/auth/calendar"],
-        state=state
-    )
-    flow.redirect_uri = settings.REDIRECT_URI
+            UserGoogleToken.objects.update_or_create(
+                user=user,
+                defaults={"token_json": token_json}
+            )
 
-    flow.fetch_token(authorization_response=request.build_absolute_uri())
-
-    creds = flow.credentials
-    token_json = json.loads(creds.to_json())
-
-    UserGoogleToken.objects.update_or_create(
-        user=user,
-        defaults={"token_json": token_json}
-    )
-
-    return HttpResponse("Google connected successfully")
+            return HttpResponse("Google connected successfully", status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Exception in google_callback")
+            return HttpResponse("failed to connect google", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        logger.exception("Exception in google_callback")
+        return HttpResponse("failed to connect google", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
