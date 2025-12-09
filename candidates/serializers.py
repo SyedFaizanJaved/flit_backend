@@ -64,7 +64,7 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     def get_minSalary(self, obj):
         # Return minimum salary if exists, otherwise None
         return getattr(obj, 'min_salary', None)
-
+        
     def get_maxSalary(self, obj):
         # Return maximum salary if exists, otherwise None
         return getattr(obj, 'max_salary', None)
@@ -73,15 +73,15 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         # Return profile image URL if exists, otherwise None
         if hasattr(obj, 'profile_image') and obj.profile_image:
             try:
-                # Check if the file exists in storage
-                if obj.profile_image.storage.exists(obj.profile_image.name):
-                    return obj.profile_image.url
-            except (ValueError, AttributeError):
-                pass
+                # Try to get the URL directly without checking existence first
+                # This avoids the extra HEAD request that might be failing with 403
+                return obj.profile_image.url
+            except Exception as e:
+                # Log the error for debugging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error getting profile image URL for user {obj.id}: {str(e)}")
+                return None
         return None
-
-
-
 
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
     """

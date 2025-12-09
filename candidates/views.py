@@ -241,12 +241,9 @@ class CandidateApplicationsView(DashboardBaseView):
             # Sort by applied_at in descending order
             all_applications.sort(key=lambda x: x['applied_at'], reverse=True)
             
-            # Take the 5 most recent applications
-            recent_applications = all_applications[:5]
-            
-            # Prepare response data
+            # Prepare response data - using all applications now
             applications_data = []
-            for app in recent_applications:
+            for app in all_applications:
                 app_obj = app['object']
                 if app['type'] == 'job':
                     applications_data.append({
@@ -270,7 +267,7 @@ class CandidateApplicationsView(DashboardBaseView):
                     })
             
             return Response({
-                'recent_applications': applications_data,
+                'applications': applications_data,
                 'total_applications': len(job_applications) + len(project_applications),
                 'job_applications_count': len(job_applications),
                 'project_applications_count': len(project_applications)
