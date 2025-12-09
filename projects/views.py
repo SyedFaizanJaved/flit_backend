@@ -107,10 +107,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
     @action(detail=False, methods=['get'], url_path='my-projects')
     def my_projects(self, request):
-        projects = Project.objects.filter(employer=request.user)
-        page = self.paginate_queryset(projects)
-        serializer = ProjectSerializer(page or projects, many=True, context=self.get_serializer_context())
-        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+        # Filter projects by the employer's user ID
+        projects = Project.objects.filter(employer_id=request.user.id)
+        serializer = ProjectListSerializer(projects, many=True, context=self.get_serializer_context())
+        return Response({
+            'count': projects.count(),
+            'results': serializer.data
+        })
         
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
