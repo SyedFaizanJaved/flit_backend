@@ -1,0 +1,50 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.STAG_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.STAG_SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2 (Staging)
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.STAG_SSH_USER }}@${{ secrets.STAG_SSH_HOST }} << 'EOF'
+            set -e
+
+            echo ">>> Switching to backend directory"
+            cd /home/ubuntu/flit_backend
+
+            echo ">>> Fetching latest code..."
+            git fetch origin
+            git checkout staging
+            git pull origin staging
+
+            echo ">>> Activating Virtualenv..."
+            source venv/bin/activate
+
+            echo ">>> Installing dependencies..."
+            pip install -r requirements.txt
+
+            echo ">>> Restarting backend service..."
+            sudo systemctl restart flit-backend.service
+
+            
+            echo ">>> Restarting Nginx service..."
+            sudo systemctl restart nginx.service
+            
+            echo ">>> Deployment completed successfully!"
+          EOF
