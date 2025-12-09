@@ -12,6 +12,7 @@ staticfiles/
 # Virtual environment
 venv/
 .env
+.env.dev
 google_secret
 
 # IDEs

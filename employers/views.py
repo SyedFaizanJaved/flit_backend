@@ -557,7 +557,7 @@ def get_flitpass_data(request, company_id):
     """
     try:
         # The ML API endpoint URL
-        ml_api_url = f"https://dev-flit-ai.neurooceans.com/flitpass/{company_id}"
+        ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/flitpass/{company_id}"
         
         # Make the GET request to the ML API
         response = requests.get(ml_api_url)
