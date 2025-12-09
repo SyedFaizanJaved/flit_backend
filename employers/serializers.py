@@ -1,5 +1,45 @@
 from rest_framework import serializers
-from .models import Employer, EmployerPreference, EmployerCompliance
+from django.contrib.auth import get_user_model
+from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
+from candidates.models import Candidate
+
+User = get_user_model()
+
+
+class EmployerRegistrationSerializer(serializers.ModelSerializer):
+    """Serializer for employer registration"""
+    email = serializers.EmailField(write_only=True)
+    password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    first_name = serializers.CharField(required=True)
+    last_name = serializers.CharField(required=True)
+    
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'password', 'first_name', 'last_name']
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'first_name': {'required': True},
+            'last_name': {'required': True}
+        }
+    
+    def create(self, validated_data):
+        # Create user
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            password=validated_data['password'],
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name'],
+            is_employer=True
+        )
+        
+        # Create employer profile
+        Employer.objects.create(
+            user=user,
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name']
+        )
+        
+        return user
 
 
 class EmployerSerializer(serializers.ModelSerializer):
@@ -136,10 +176,124 @@ class EmployerComplianceSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
-    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    id = serializers.IntegerField(source='user.id', read_only=True)
     last_message_time = serializers.DateTimeField(read_only=True)
-
+    unread_count = serializers.IntegerField(read_only=True)
+    
     class Meta:
         from candidates.models import Candidate
         model = Candidate
-        fields = ('user_id', 'full_name', 'title', 'last_message_time')
+        fields = ('id', 'title', 'last_message_time', 'unread_count')
+    
+class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer used on the candidate side to list employers they have chatted with,
+    returning employer's user id, the associated company details, and unread message count.
+    """
+    id = serializers.IntegerField(source='user.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    industry = serializers.CharField(source='company.industry', read_only=True)
+    logo = serializers.ImageField(source='company.logo', read_only=True)
+    last_message_time = serializers.DateTimeField(read_only=True)
+    last_seen = serializers.DateTimeField(source='user.last_login', read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Employer
+        fields = ('id', 'company_name', 'industry', 'logo', 'last_message_time', 'last_seen', 'unread_count')
+
+
+class CandidateActionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for candidate actions (pass/reject)
+    """
+    employer = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    class Meta:
+        model = CandidateAction
+        fields = ['id', 'employer', 'candidate_id', 'action', 'created_at']
+        read_only_fields = ['employer', 'created_at']
+    
+    def validate(self, data):
+        """
+        Validate that the same employer can't have multiple actions for the same candidate
+        """
+        employer = self.context['request'].user.employer_profile
+        candidate_id = data.get('candidate_id')
+        action = data.get('action')
+        
+        # Check if action already exists
+        existing_action = CandidateAction.objects.filter(
+            employer=employer,
+            candidate_id=candidate_id
+        ).first()
+        
+        if self.instance is None and existing_action:
+            raise serializers.ValidationError(
+                f"You have already {existing_action.action}ed this candidate."
+            )
+            
+        return data
+
+
+class CandidateActionDetailSerializer(serializers.ModelSerializer):
+    """Serializer for candidate actions with candidate details"""
+    user_id = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    
+    # Define fields directly without source
+    candidate_id = serializers.CharField(read_only=True)
+    employer_id = serializers.PrimaryKeyRelatedField(source='employer', read_only=True)
+    
+    class Meta:
+        model = CandidateAction
+        fields = [
+            'id', 'user_id', 'action', 'created_at',
+            'full_name', 'title', 'profile_image', 'skills',
+            'candidate_id', 'employer_id'
+        ]
+        read_only_fields = fields  # Make all fields read-only
+        
+    def get_user_id(self, obj):
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return candidate.user.id if hasattr(candidate, 'user') else None
+        except (Candidate.DoesNotExist, AttributeError):
+            return None
+    
+    def get_full_name(self, obj):
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return getattr(candidate, 'full_name', None)
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_title(self, obj):
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            return getattr(candidate, 'title', 'No title')
+        except Candidate.DoesNotExist:
+            return None
+    
+    def get_profile_image(self, obj):
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            if hasattr(candidate, 'profile_image') and candidate.profile_image:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(candidate.profile_image.url)
+                return candidate.profile_image.url
+        except (Candidate.DoesNotExist, ValueError, AttributeError):
+            pass
+        return None
+    
+    def get_skills(self, obj):
+        try:
+            candidate = Candidate.objects.get(id=obj.candidate_id)
+            # Safely get skills with a default empty list
+            return getattr(candidate, 'skills', [])
+        except Candidate.DoesNotExist:
+            return []

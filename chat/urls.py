@@ -1,6 +1,8 @@
 from django.urls import path
 from . import views
 
+app_name = 'chat'
+
 urlpatterns = [
     # Chat Messages
     path('messages/', views.ChatMessageListView.as_view(), name='chat-message-list'),
@@ -17,6 +19,10 @@ urlpatterns = [
     
     # Room Messages
     path('rooms/<int:room_id>/messages/', views.ChatRoomMessageListView.as_view(), name='chat-room-message-list'),
+    
+    # Conversation Lists
+    path('employers/conversations/', views.EmployerConversationListView.as_view(), name='employer-conversation-list'),
+    path('candidates/conversations/', views.CandidateEmployerConversationListView.as_view(), name='candidate-employer-conversations'),
     
     # Dashboard
     path('dashboard/', views.chat_dashboard, name='chat-dashboard'),

@@ -78,9 +78,37 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     def calculate_skills_score(self, candidate, job):
         if not job.skills:
             return 0
-        matched = len(set(candidate.skills) & set(job.skills))
-        score = int((matched / len(job.skills)) * 100)
-        return score if score >= job.skill_match_threshold else score
+            
+        # Convert skills to sets of skill names/IDs if they're dictionaries
+        def get_skill_names(skills):
+            if not skills:
+                return set()
+            # If skills is a dictionary, use its keys or values as skill names
+            if isinstance(skills, dict):
+                # Check if it's a dictionary of skills with 'name' or 'id' as keys
+                if skills and isinstance(next(iter(skills.values())), dict):
+                    return {str(skill.get('name', '')) or str(skill.get('id', '')) for skill in skills.values()}
+                # If it's a simple key-value dict, use the keys
+                return {str(k) for k in skills.keys()}
+            # If it's already a list/set of strings/IDs
+            return {str(skill) for skill in skills}
+        
+        try:
+            candidate_skills = get_skill_names(candidate.skills)
+            job_skills = get_skill_names(job.skills)
+            
+            if not job_skills:  # Avoid division by zero
+                return 0
+                
+            matched = len(candidate_skills & job_skills)
+            score = int((matched / len(job_skills)) * 100)
+            return score if score >= getattr(job, 'skill_match_threshold', 0) else score
+            
+        except Exception as e:
+            print(f"Error calculating skills score: {e}")
+            print(f"Candidate skills type: {type(candidate.skills)}, Job skills type: {type(job.skills)}")
+            return 0  # Return 0 if there's any error in calculation
+
 
     def calculate_experience_score(self, candidate, job):
         # Dummy example: tumhe apne candidate model me exp_years add karna hoga
@@ -202,7 +230,12 @@ class InterviewRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewRequest
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+        read_only_fields = ('created_at', 'updated_at','meetLink')
+
+    def update(self, instance, validated_data):
+        if set(validated_data.keys()) != {'status'}:
+            raise serializers.ValidationError("Only status can be updated.")
+        return super().update(instance, validated_data)
 
     def create(self, validated_data):
         return super().create(validated_data)
@@ -218,11 +251,12 @@ class JobApplicationListSerializer(serializers.ModelSerializer):
     job_title = serializers.CharField(source='job.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
     candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
+    candidate_profile_image = serializers.ImageField(source='candidate.profile_image', read_only=True)
 
     class Meta:
         model = JobApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'job_title', 'company_name', 'status',
-                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
+                  'candidate_profile_image', 'applied_at', 'is_shortlisted', 'is_rejected', 'coverLetter')
 
 
 class ProjectApplicationListSerializer(serializers.ModelSerializer):
@@ -235,8 +269,10 @@ class ProjectApplicationListSerializer(serializers.ModelSerializer):
         source='project.title', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
     candidate_user_id = serializers.IntegerField(source='candidate.user.id', read_only=True)
+    candidate_profile_image = serializers.ImageField(source='candidate.profile_image', read_only=True)
+
 
     class Meta:
         model = ProjectApplication
         fields = ('id', 'candidate_name', 'candidate_user_id', 'project_title', 'company_name', 'status',
-                  'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')
+                  'candidate_profile_image','coverLetter', 'overall_match_score', 'applied_at', 'is_shortlisted', 'is_rejected')

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Candidate, WorkDNA, Reference, ReferenceRequest, Education, Experience, Achievement, MediaFile, CandidatePreference
+from .models import Candidate, ReferenceRequest, Education, Experience, Achievement, MediaFile, CandidatePreference
 
 
 @admin.register(Candidate)
@@ -39,28 +39,6 @@ class CandidateAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-
-
-@admin.register(WorkDNA)
-class WorkDNAAdmin(admin.ModelAdmin):
-    """
-    Work DNA admin
-    """
-    list_display = ('candidate', 'communication_style', 'working_style', 'problem_solving_approach', 'created_at')
-    list_filter = ('communication_style', 'working_style', 'problem_solving_approach', 'team_dynamics', 'created_at')
-    search_fields = ('candidate__full_name',)
-    readonly_fields = ('created_at', 'updated_at')
-
-
-@admin.register(Reference)
-class ReferenceAdmin(admin.ModelAdmin):
-    """
-    Reference admin
-    """
-    list_display = ('candidate', 'reference_name', 'relationship_type', 'company_name', 'overall_rating', 'is_public', 'created_at')
-    list_filter = ('relationship_type', 'is_public', 'overall_rating', 'created_at')
-    search_fields = ('candidate__full_name', 'reference_name', 'company_name')
-    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(ReferenceRequest)

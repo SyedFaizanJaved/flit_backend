@@ -73,8 +73,17 @@ class Project(models.Model):
         ('engineering', 'Engineering'),
         ('design', 'Design'),
         ('marketing', 'Marketing'),
+        ('sales', 'Sales'),
+        ('operations', 'Operations'),
         ('writing', 'Writing'),
-        ('data', 'Data'),
+        ('technology/Digital', 'Technology/Digital'),
+        ('creative/media', 'Creative/Media'),
+        ('business/finance', 'Business/Finance'),
+        ('trades/labour', 'Trades/Labour'),
+        ('healthcare & welness', 'Healthcare & Wellness'),
+        ('education & training', 'Education & Training'),
+        ('hospitality & services', 'Hospitality & Services'),
+        ('nonprofit/community work', 'Nonprofit/Community Work'),
         ('other', 'Other'),
     ])
     skills = models.JSONField(default=list)  # List of required skills
@@ -128,6 +137,13 @@ class Project(models.Model):
     
     # Tags for search
     tags = models.JSONField(default=list)  # List of tags
+
+
+    project_tags = models.JSONField(default=list,blank=True,null=True)  # List of tags for categorization
+    project_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
+    search_query=models.TextField(blank=True,null=True)
+
+
     
     # SEO
     slug = models.SlugField(max_length=255, unique=True, blank=True)

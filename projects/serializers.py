@@ -29,15 +29,39 @@ class ProjectSerializer(serializers.ModelSerializer):
     required_skills = ProjectSkillSerializer(many=True, read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
+    is_applied = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'skills', 'deadline', 'required_skills',
-            'status', 'created_at', 'updated_at'
+            'status', 'created_at', 'updated_at', 'is_applied'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
+    
+    def get_is_applied(self, obj):
+        """
+        Check if the current user (must be a candidate) has applied to this project.
+        Returns False for non-candidate users or if not authenticated.
+        """
+        request = self.context.get('request')
+      
+        # Only proceed if user is authenticated and is a candidate
+        if not request or not request.user.is_authenticated:
+            return False
+            
+        if not hasattr(request.user, 'candidate_profile'):
+
+            return False
+        
+        # Check if candidate has an active application for this project
+        application_exists = obj.applications.filter(
+            candidate=request.user.candidate_profile,
+            is_withdrawn=False
+        ).exists()
+        
+        return application_exists
     
     def create(self, validated_data):
         validated_data['employer'] = self.context['request'].user
@@ -50,11 +74,54 @@ class ProjectListSerializer(serializers.ModelSerializer):
     """
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
-    # company_logo = serializers.CharField(source='company.logo.url', read_only=True)
+    skills = serializers.SerializerMethodField()
+    is_applied = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
-        fields = ('id', 'title','description', 'company_name', 'company_id', 'category', 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 'created_at', 'skills')
+        fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
+                 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
+                 'created_at', 'skills', 'is_applied')
+    
+    def get_skills(self, obj):
+        # Get skills from ProjectSkill model
+        return list(obj.required_skills.values_list('name', flat=True))
+        
+    def get_is_applied(self, obj):
+        """
+        Check if the current user (must be a candidate) has applied to this project.
+        Returns False for non-candidate users or if not authenticated.
+        """
+        request = self.context.get('request')
+        
+        
+        # Only proceed if user is authenticated and is a candidate
+        if not request or not request.user.is_authenticated:
+            return False
+            
+        if not hasattr(request.user, 'candidate_profile'):
+            print("[DEBUG] User is not a candidate")
+            return False
+            
+        print("[DEBUG] User is a candidate, checking applications...")
+        
+        # Debug: Print all applications for this candidate
+        from applications.models import ProjectApplication
+        all_apps = ProjectApplication.objects.filter(
+            candidate=request.user.candidate_profile
+        )
+        print(f"[DEBUG] Candidate has {all_apps.count()} total applications")
+        for app in all_apps:
+            print(f"[DEBUG] App ID: {app.id}, Project: {app.project_id}, Status: {app.status}, Withdrawn: {app.is_withdrawn}")
+            
+        # Check if candidate has an active application for this project
+        application_exists = obj.applications.filter(
+            candidate=request.user.candidate_profile,
+            is_withdrawn=False
+        ).exists()
+        
+        print(f"[DEBUG] Application exists for project {obj.id}: {application_exists}")
+        return application_exists
         # fields = ('id', 'title', 'company_name', 'company_logo', 'category', 'complexity',
         #          'paymentType', 'paymentAmount', 'estimatedHours', 'budget_min', 'budget_max',
         #          'budget_currency', 'work_style', 'status', 'created_at')

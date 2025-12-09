@@ -15,7 +15,6 @@ import os
 from decouple import config
 from datetime import timedelta
 
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -68,7 +67,9 @@ LOCAL_APPS = [
     'jobs',
     'projects',
     'applications',   
-    'chat'
+    'chat',
+    'vr_meet',
+    'stories'
 ]
 
 
@@ -85,6 +86,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'flit_backend.middleware.APILoggingMiddleware',
 ]
 
 ROOT_URLCONF = 'flit_backend.urls'
@@ -226,54 +228,114 @@ SIMPLE_JWT = {
 
 # AWS S3 Configuration
 
-# AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
-# AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
-# AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
-# AWS_S3_REGION_NAME = config("AWS_REGION")
-# AWS_QUERYSTRING_AUTH = False  
+AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
+AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
+AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
+AWS_S3_REGION_NAME = config("AWS_REGION")
+AWS_S3_SIGNATURE_NAME = 's3v4'
+AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
 
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+AWS_IS_GZIPPED = False
+AWS_S3_VERIFY = True
+AWS_S3_SECURE_URLS = True
 
-# Media files (S3 setup)
-# DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
-# MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
-
-# MEDIA_URL = '/media/'
-# MEDIA_ROOT = BASE_DIR / 'media'
-
-USE_S3 = config('USE_S3', default=False, cast=bool)
-
-if USE_S3:
-    # AWS S3 bucket
-    AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
-    AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
-    AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
-    AWS_S3_REGION_NAME = config("AWS_REGION")
-    AWS_S3_SIGNATURE_NAME = 's3v4'
-    AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
-
-    AWS_S3_FILE_OVERWRITE = False
-    AWS_DEFAULT_ACL = None
-    AWS_IS_GZIPPED = False
-    AWS_S3_VERIFY = True
-    AWS_S3_SECURE_URLS = True
-
-    STORAGES = {
-        "default": {
-            "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
-            "LOCATION": "media",
-        },
-        "staticfiles": {
-            "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
-            "LOCATION": "staticfiles",
-        }
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+        "LOCATION": "media",
+    },
+    "staticfiles": {
+        "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+        "LOCATION": "staticfiles",
     }
-else:
-    # Local development: serve static/admin CSS locally
-    STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
+}
+
+# Google Configuration
+CLIENT_ID = config('GOOGLE_CLIENT_ID')
+CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET')
+REDIRECT_URI = config('GOOGLE_REDIRECT_URI')
+AUTH_URI = config('AUTH_URI')
+TOKEN_URI = config('TOKEN_URI')
+GOOGLE_SCOPES = config('GOOGLE_SCOPES')
+
+# Logging Configuration
+import os
+
+# Ensure logs directory exists
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname} {module} {message}',
+            'style': '{',
         },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        }
+        'simple': {
+            'format': '[{asctime}] {levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'api_file': {
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(LOG_DIR, 'API_access.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
+        },
+        'security_file': {
+            'level': 'WARNING',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(LOG_DIR, 'security_warnings.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
+        },
+        'exceptions_file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(LOG_DIR, 'exceptions.log'),
+            'formatter': 'verbose',
+            'mode': 'a+',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'django.server': {
+            'handlers': ['console', 'api_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'api_file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'exceptions': {
+            'handlers': ['console', 'exceptions_file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
     }
+}

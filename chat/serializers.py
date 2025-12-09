@@ -1,6 +1,175 @@
 from rest_framework import serializers
 from .models import ChatMessage, ChatRoom, ChatRoomMessage
+from candidates.models import Candidate
 
+class EmployerConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing candidates that an employer has chatted with.
+    Shows candidate details like name, title, profile image, etc.
+    """
+    user_id = serializers.IntegerField(source='user.id')
+    full_name = serializers.SerializerMethodField()
+    title = serializers.CharField(allow_null=True)
+    profile_image = serializers.SerializerMethodField()
+    last_message_time = serializers.DateTimeField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Candidate
+        fields = ('user_id', 'full_name', 'title', 'profile_image', 'last_message_time', 'unread_count')
+    
+    def get_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}"
+        
+    def get_profile_image(self, obj):
+        if obj.profile_image:
+            return obj.profile_image.url
+        return None
+
+
+
+class CandidateConversationSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing candidates that an employer has chatted with.
+    Used on the employer side to list candidates they have chatted with.
+    Shows candidate details like name, title, profile image, etc.
+    """
+    id = serializers.IntegerField(source='id', read_only=True)
+    name = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    last_seen = serializers.DateTimeField(source='last_login', read_only=True)
+    last_message_time = serializers.DateTimeField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        from django.contrib.auth import get_user_model
+        model = get_user_model()
+        fields = (
+            'id', 'name', 'title', 'profile_image', 
+            'last_seen', 'last_message_time', 'unread_count'
+        )
+    
+    def get_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}"
+    
+    def get_title(self, obj):
+        try:
+            return obj.candidate_profile.title
+        except:
+            return None
+    
+    def get_profile_image(self, obj):
+        try:
+            if hasattr(obj, 'candidate_profile') and obj.candidate_profile.profile_image:
+                return obj.candidate_profile.profile_image.url
+        except:
+            pass
+        return None
+    
+    def get_candidate_info(self, obj):
+        """Helper method to get candidate info"""
+        from candidates.models import Candidate
+        try:
+            candidate = Candidate.objects.get(user=obj)
+            return {
+                'name': f"{candidate.user.first_name} {candidate.user.last_name}",
+                'title': candidate.title,
+                'profile_image': candidate.profile_image.url if candidate.profile_image else None
+            }
+        except Candidate.DoesNotExist:
+            return {
+                'name': f"{obj.first_name} {obj.last_name}" if obj.first_name or obj.last_name else obj.email,
+                'title': 'No title',
+                'profile_picture': None
+            }
+    
+    def get_name(self, obj):
+        return self.get_candidate_info(obj)['name']
+    
+    def get_title(self, obj):
+        return self.get_candidate_info(obj)['title']
+    
+    def get_profile_picture(self, obj):
+        return self.get_candidate_info(obj)['profile_picture']
+
+
+class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
+    """
+    Unified serializer for the candidate inbox.
+    It returns conversation participants (employers or candidates) using the
+    same structure that the frontend already consumes.
+    """
+    id = serializers.IntegerField(read_only=True)
+    company_name = serializers.SerializerMethodField()
+    industry = serializers.SerializerMethodField()
+    logo = serializers.SerializerMethodField()
+    last_message_time = serializers.DateTimeField(allow_null=True)
+    last_seen = serializers.SerializerMethodField()
+    unread_count = serializers.IntegerField()
+    entity_type = serializers.SerializerMethodField()
+    
+    def _build_absolute_uri(self, path):
+        """Helper to build absolute URLs when request context is available."""
+        request = self.context.get('request')
+        if request and path:
+            return request.build_absolute_uri(path)
+        return path
+    
+    def _get_employer_profile(self, obj):
+        return getattr(obj, 'employer_profile', None)
+    
+    def _get_candidate_profile(self, obj):
+        return getattr(obj, 'candidate_profile', None)
+    
+    def get_company_name(self, obj):
+        employer = self._get_employer_profile(obj)
+        if employer and getattr(employer, 'company', None):
+            return employer.company.company_name or employer.company.name
+        if employer and (employer.first_name or employer.last_name):
+            return employer.full_name
+        
+        candidate = self._get_candidate_profile(obj)
+        if candidate and candidate.full_name:
+            return candidate.full_name
+        
+        return obj.get_full_name() or obj.email
+    
+    def get_industry(self, obj):
+        employer = self._get_employer_profile(obj)
+        if employer and getattr(employer, 'company', None):
+            return employer.company.industry or employer.position or 'Industry not specified'
+        
+        candidate = self._get_candidate_profile(obj)
+        if candidate and candidate.title:
+            return candidate.title
+        
+        role_name = getattr(getattr(obj, 'role', None), 'name', None)
+        return role_name or 'User'
+    
+    def get_logo(self, obj):
+        logo_path = None
+        employer = self._get_employer_profile(obj)
+        if employer:
+            if getattr(employer, 'company', None) and employer.company.logo:
+                logo_path = employer.company.logo.url
+            elif employer.profile_picture:
+                logo_path = employer.profile_picture.url
+        if not logo_path:
+            candidate = self._get_candidate_profile(obj)
+            if candidate and candidate.profile_image:
+                logo_path = candidate.profile_image.url
+        return self._build_absolute_uri(logo_path) if logo_path else None
+    
+    def get_last_seen(self, obj):
+        return getattr(obj, 'last_login', None)
+    
+    def get_entity_type(self, obj):
+        if self._get_employer_profile(obj):
+            return 'employer'
+        if self._get_candidate_profile(obj):
+            return 'candidate'
+        return 'user'
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     """

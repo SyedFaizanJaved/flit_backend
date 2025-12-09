@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -25,6 +26,14 @@ class Candidate(models.Model):
         ('limited', 'Limited'),
         ('private', 'Private'),
     ]
+
+    SENIORITY_LEVEL_CHOICES = [
+        ('junior', 'Junior'),
+        ('beginner', 'Beginner'),
+        ('intermediate', 'Intermediate'),
+        ('mid', 'Mid'),
+        ('senior', 'Senior'),
+    ]
     
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='candidate_profile')
     
@@ -46,6 +55,8 @@ class Candidate(models.Model):
     superpowers = models.JSONField(default=list)  # List of career superpowers (max 5)
     preferred_roles = models.JSONField(default=list)  # List of preferred role types
     passion_projects = models.TextField(blank=True, null=True)
+    seniority_level = models.CharField(max_length=20, choices=SENIORITY_LEVEL_CHOICES, blank=True, null=True)
+    
     
     # Compensation
     min_salary = models.PositiveIntegerField(blank=True, null=True)
@@ -75,7 +86,15 @@ class Candidate(models.Model):
     skills_completed = models.BooleanField(default=False)
     portfolio_completed = models.BooleanField(default=False)
     privacy_completed = models.BooleanField(default=False)
-    
+
+
+    # Ml Endpoints
+    candidate_tags = models.JSONField(default=list,blank=True, null=True)  # List of tags for categorization
+    candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
+    search_query = models.TextField(blank=True, null=True)
+    resume_data = models.JSONField(blank=True, null=True)  # Store parsed resume data from ML API
+
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -84,12 +103,18 @@ class Candidate(models.Model):
         db_table = 'candidates'
         verbose_name = 'Candidate'
         verbose_name_plural = 'Candidates'
+        ordering = ['-created_at']
     
     def __str__(self):
         return self.full_name
     
     @property
     def is_profile_complete(self):
+        # If basic info is completed, consider profile as complete
+        if getattr(self, 'basic_info_completed', False):
+            return True
+            
+        # Original logic for backward compatibility
         flags = [
             bool(self.basic_info_completed),
             bool(self.work_preferences_completed),
@@ -97,121 +122,56 @@ class Candidate(models.Model):
             bool(self.portfolio_completed),
             bool(self.privacy_completed),
         ]
-        return sum(flags) >= 2
+        return sum(flags) >= 1
 
 
-class WorkDNA(models.Model):
+class WorkDNAQuestion(models.Model):
     """
-    Work DNA assessment for candidates
+    Model to store work DNA questions and responses
     """
-    COMMUNICATION_STYLE_CHOICES = [
-        ('direct', 'Direct'),
-        ('diplomatic', 'Diplomatic'),
-        ('analytical', 'Analytical'),
-        ('expressive', 'Expressive'),
-    ]
-    
-    WORKING_STYLE_CHOICES = [
-        ('independent', 'Independent'),
-        ('collaborative', 'Collaborative'),
-        ('structured', 'Structured'),
-        ('flexible', 'Flexible'),
-    ]
-    
-    PROBLEM_SOLVING_CHOICES = [
-        ('analytical', 'Analytical'),
-        ('creative', 'Creative'),
-        ('systematic', 'Systematic'),
-        ('intuitive', 'Intuitive'),
-    ]
-    
-    TEAM_DYNAMICS_CHOICES = [
-        ('leader', 'Leader'),
-        ('supporter', 'Supporter'),
-        ('facilitator', 'Facilitator'),
-        ('specialist', 'Specialist'),
-    ]
-    
-    WORK_ENVIRONMENT_CHOICES = [
-        ('quiet', 'Quiet'),
-        ('energetic', 'Energetic'),
-        ('creative', 'Creative'),
-        ('structured', 'Structured'),
-    ]
-    
-    LEADERSHIP_STYLE_CHOICES = [
-        ('autocratic', 'Autocratic'),
-        ('democratic', 'Democratic'),
-        ('laissez-faire', 'Laissez-faire'),
-        ('transformational', 'Transformational'),
-    ]
-    
-    candidate = models.OneToOneField(Candidate, on_delete=models.CASCADE, related_name='work_dna')
-    communication_style = models.CharField(max_length=20, choices=COMMUNICATION_STYLE_CHOICES, blank=True, null=True)
-    working_style = models.CharField(max_length=20, choices=WORKING_STYLE_CHOICES, blank=True, null=True)
-    problem_solving_approach = models.CharField(max_length=20, choices=PROBLEM_SOLVING_CHOICES, blank=True, null=True)
-    team_dynamics = models.CharField(max_length=20, choices=TEAM_DYNAMICS_CHOICES, blank=True, null=True)
-    work_environment_preference = models.CharField(max_length=20, choices=WORK_ENVIRONMENT_CHOICES, blank=True, null=True)
-    leadership_style = models.CharField(max_length=20, choices=LEADERSHIP_STYLE_CHOICES, blank=True, null=True)
-    values = models.JSONField(default=list)  # List of core values
-    extra_answers = models.JSONField(default=dict)  
-    
-    # Timestamps
+    candidate = models.ForeignKey('Candidate', on_delete=models.CASCADE, related_name='work_dna_questions')
+    candidate_name = models.CharField(max_length=255)
+    questions = models.JSONField()
+    answers = models.JSONField(default=dict, blank=True)  # Stores selected answers in format: {"1": "option_text", "2": "option_text"}
+    total_questions = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'candidate_work_dna'
-        verbose_name = 'Work DNA'
-        verbose_name_plural = 'Work DNA Records'
-    
-    def __str__(self):
-        return f"Work DNA for {self.candidate.full_name}"
 
-
-class Reference(models.Model):
-    """
-    Reference system for candidates
-    """
-    RELATIONSHIP_TYPE_CHOICES = [
-        ('colleague', 'Colleague'),
-        ('manager', 'Manager'),
-        ('client', 'Client'),
-        ('mentor', 'Mentor'),
-        ('friend', 'Friend'),
-    ]
-    
-    candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='references')
-    relationship_type = models.CharField(max_length=20, choices=RELATIONSHIP_TYPE_CHOICES)
-    company_name = models.CharField(max_length=200, blank=True, null=True)
-    worked_together = models.BooleanField(default=False)
-    work_duration = models.CharField(max_length=100, blank=True, null=True)
-    overall_rating = models.PositiveIntegerField(blank=True, null=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
-    skill_ratings = models.JSONField(default=dict)  
-    superpowers = models.JSONField(default=list)  # List of superpowers
-    headline = models.CharField(max_length=200, blank=True, null=True)
-    testimonial = models.TextField(blank=True, null=True)
-    specific_achievements = models.JSONField(default=list)  # List of achievements
-    referral_reason = models.TextField(blank=True, null=True)
-    is_public = models.BooleanField(default=True)
-    
-    # Reference contact info
-    reference_name = models.CharField(max_length=200)
-    reference_email = models.EmailField()
-    reference_phone = models.CharField(max_length=20, blank=True, null=True)
-    reference_position = models.CharField(max_length=200, blank=True, null=True)
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
     class Meta:
-        db_table = 'candidate_references'
-        verbose_name = 'Reference'
-        verbose_name_plural = 'References'
-    
+        db_table = 'candidate_work_dna_questions'
+        verbose_name = 'Work DNA Question'
+        verbose_name_plural = 'Work DNA Questions'
+
     def __str__(self):
-        return f"Reference from {self.reference_name} for {self.candidate.full_name}"
+        return f"Work DNA Questions for {self.candidate_name} ({self.candidate.id})"
+        
+    def update_answers(self, question_id, selected_option):
+        """
+        Helper method to update answers
+        
+        Args:
+            question_id: Can be either the question number (as string) or the question text
+            selected_option: The selected answer option
+        """
+        if not self.answers:
+            self.answers = {}
+            
+        # If question_id is a number, update using the actual question text
+        if isinstance(question_id, str) and question_id.isdigit() and hasattr(self, 'questions'):
+            try:
+                question_text = self.questions[int(question_id) - 1].get('question', f'Question {question_id}')
+                # Remove any existing answer for this question (by text)
+                self.answers = {k: v for k, v in self.answers.items() if k != question_text and k != question_id}
+                # Add the new answer with question text as key
+                self.answers[question_text] = selected_option
+            except (IndexError, TypeError):
+                # Fallback to using the question_id as is if we can't get the question text
+                self.answers[question_id] = selected_option
+        else:
+            # If question_id is already the question text, just update it
+            self.answers[question_id] = selected_option
+            
+        self.save()
 
 
 class ReferenceRequest(models.Model):
@@ -239,12 +199,34 @@ class ReferenceRequest(models.Model):
     suggested_relationship = models.CharField(max_length=20, choices=RELATIONSHIP_TYPE_CHOICES, blank=True, null=True)
     suggested_company = models.CharField(max_length=200, blank=True, null=True)
     request_message = models.TextField(blank=True, null=True)
+    reply_message = models.TextField(blank=True, null=True, verbose_name='Reference Response')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        db_index=True,
+    ) 
     expires_at = models.DateTimeField(blank=True, null=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def save(self, *args, **kwargs):
+        # Ensure token is set and unique
+        if not self.token:
+            self.token = uuid.uuid4()
+            while ReferenceRequest.objects.filter(token=self.token).exists():
+                self.token = uuid.uuid4()
+        
+        # Set expiry to 30 days from creation if not set
+        if not self.expires_at and not self.pk:
+            from django.utils import timezone
+            from datetime import timedelta
+            self.expires_at = timezone.now() + timedelta(days=30)
+            
+        super().save(*args, **kwargs)
     
     class Meta:
         db_table = 'candidate_reference_requests'
@@ -253,7 +235,9 @@ class ReferenceRequest(models.Model):
     
     def __str__(self):
         return f"Reference request to {self.reference_name} from {self.candidate.full_name}"
-
+        
+    def __str__(self):
+        return f"Ref Request - {self.token}"
 
 class Education(models.Model):
     """

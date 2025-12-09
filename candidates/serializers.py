@@ -1,78 +1,277 @@
+import json
 from rest_framework import serializers
-from .models import Candidate, WorkDNA, Reference, ReferenceRequest
+from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from companies.models import Company
 from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
 
 
+class DiscoverTalentSerializer(serializers.ModelSerializer):
+    """
+    Serializer for discover_talent endpoint with minimal required fields
+    """
+    fullName = serializers.CharField(source='full_name', read_only=True)
+    title = serializers.CharField(required=False, allow_blank=True)
+    bio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    skills = serializers.SerializerMethodField()
+    availability = serializers.SerializerMethodField()
+    lastSeen = serializers.SerializerMethodField()
+    profile_views_display = serializers.SerializerMethodField()
+    minSalary = serializers.SerializerMethodField()
+    maxSalary = serializers.SerializerMethodField()
+    profileImage = serializers.SerializerMethodField()
+    userId = serializers.IntegerField(source='user.id', read_only=True)
+
+    class Meta:
+        model = Candidate
+        fields = [
+            'id', 'fullName', 'title', 'bio', 'skills', 'location',
+            'availability', 'lastSeen', 'profile_views_display',
+            'minSalary', 'maxSalary', 'profileImage', 'userId'
+        ]
+
+    def get_skills(self, obj):
+        # Return a list of skill names if skills field exists, otherwise empty list
+        if hasattr(obj, 'skills') and obj.skills:
+            # Handle both list and queryset cases
+            if hasattr(obj.skills, 'all'):  # It's a queryset
+                return [skill.name for skill in obj.skills.all()]
+            elif isinstance(obj.skills, list):  # It's already a list
+                return [skill.name if hasattr(skill, 'name') else skill for skill in obj.skills]
+            elif isinstance(obj.skills, str):  # It's a JSON string
+                try:
+                    skills_list = json.loads(obj.skills)
+                    if isinstance(skills_list, list):
+                        return skills_list
+                except json.JSONDecodeError:
+                    pass
+        return []
+
+    def get_availability(self, obj):
+        # Return only the availability type
+        return getattr(obj, 'availability_type', None)
+
+    def get_lastSeen(self, obj):
+        # Return last login time if user exists and has last_login
+        if hasattr(obj, 'user') and hasattr(obj.user, 'last_login') and obj.user.last_login:
+            return obj.user.last_login.isoformat()
+        return None
+
+    def get_profile_views_display(self, obj):
+        # Return profile views count if exists, otherwise 0
+        return getattr(obj, 'profile_views', 0)
+
+    def get_minSalary(self, obj):
+        # Return minimum salary if exists, otherwise None
+        return getattr(obj, 'min_salary', None)
+        
+    def get_maxSalary(self, obj):
+        # Return maximum salary if exists, otherwise None
+        return getattr(obj, 'max_salary', None)
+
+    def get_profileImage(self, obj):
+        # Return profile image URL if exists, otherwise None
+        if hasattr(obj, 'profile_image') and obj.profile_image:
+            try:
+                # Try to get the URL directly without checking existence first
+                # This avoids the extra HEAD request that might be failing with 403
+                return obj.profile_image.url
+            except Exception as e:
+                # Log the error for debugging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error getting profile image URL for user {obj.id}: {str(e)}")
+                return None
+        return None
+
+class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
+    """
+    Serializer for reference request responses (used in candidate profile)
+    """
+    class Meta:
+        model = ReferenceRequest
+        fields = [
+            'id',
+            'reference_name',
+            'reference_email',
+            'suggested_relationship',
+            'reply_message'
+        ]
+        read_only_fields = fields
+
 class CandidateSerializer(serializers.ModelSerializer):
-    full_name = serializers.ReadOnlyField()
+    full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     profile_completed = serializers.SerializerMethodField()
-    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    profile_image = serializers.SerializerMethodField()
     viewers_count = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
+    reference_responses = serializers.SerializerMethodField()
+    passion_projects = serializers.SerializerMethodField()
+    superpowers = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    portfolio_links = serializers.SerializerMethodField()
+    preferred_roles = serializers.SerializerMethodField()
+    
+    def _parse_json_field(self, value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        return value or []
+    
+    def get_superpowers(self, obj):
+        return self._parse_json_field(obj.superpowers)
+        
+    def get_skills(self, obj):
+        return self._parse_json_field(obj.skills)
+        
+    def get_portfolio_links(self, obj):
+        return self._parse_json_field(obj.portfolio_links)
+        
+    def get_preferred_roles(self, obj):
+        return self._parse_json_field(obj.preferred_roles)
+    
+    def get_profile_image(self, obj):
+        if not obj.profile_image:
+            return None
+            
+        # Get the URL from the file field
+        url = obj.profile_image.url
+        
+        # If the URL is already a full URL, return it as is
+        if url.startswith(('http://', 'https://')):
+            return url
+            
+        # Otherwise, construct the proper S3 URL
+        from django.conf import settings
+        base_url = f'https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com'
+        
+        # Remove any leading slashes from the path
+        path = url.lstrip('/')
+        
+        # Combine the base URL with the path
+        return f'{base_url}/{path}'
     
     class Meta:
         model = Candidate
-        fields = ("id", "full_name", "profile_completed","title", "bio","work_style","availability_type",
-            "skills","superpowers","preferred_roles","min_salary","max_salary","resume_url","video_intro_url",
-             "video_transcription", "privacy_completed","location","created_at","updated_at","user",
-            "profile_image","resume_url","profile_views","viewers_count","profile_views_display"
-        )
+        fields = [
+            "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
+            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
+            "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
+            "profile_image", "resume_url", "profile_views", "viewers_count", "profile_views_display",
+            "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
+            "resume_data" 
+        ]
         read_only_fields = ("user", "created_at", "updated_at")
+    
+    def get_passion_projects(self, obj):
+        return obj.passion_projects
+    
+    def get_reference_responses(self, obj):
+        # Get all accepted reference requests with reply messages
+        references = ReferenceRequest.objects.filter(
+            candidate=obj,
+            status='accepted',
+            reply_message__isnull=False
+        ).order_by('-updated_at')
+        return ReferenceRequestResponseSerializer(references, many=True).data
+    
+    def update(self, instance, validated_data):
+        # Handle full_name update
+        full_name = validated_data.pop('full_name', None)
+        if full_name:
+            # Split the full name into first and last name
+            name_parts = full_name.split(' ', 1)
+            instance.user.first_name = name_parts[0]
+            instance.user.last_name = name_parts[1] if len(name_parts) > 1 else ''
+            instance.user.save()
+        
+        return super().update(instance, validated_data)
 
-    def create(self, validated_data):
-        validated_data['user'] = self.context['request'].user
-        instance = super().create(validated_data)
+    def to_internal_value(self, data):
+        """
+        Ensure empty strings coming from JSON/form submissions are treated as null
+        for optional file/url fields so DRF doesn't expect an uploaded file.
+        """
+        data_copy = data.copy() if hasattr(data, 'copy') else data
+        if hasattr(data_copy, 'get'):
+            if data_copy.get('profile_image') in ('', None):
+                data_copy['profile_image'] = None
+        return super().to_internal_value(data_copy)
 
-        # Compute component completion flags using the same heuristics as update
+    def _update_completion_flags(self, instance, validated_data):
+        """
+        Shared helper to update completion flags across create/update flows.
+        """
         try:
+            updated_fields = set()
+
             # Basic info
             if getattr(instance, 'full_name', None) and getattr(instance, 'title', None):
-                instance.basic_info_completed = True
+                if not instance.basic_info_completed:
+                    instance.basic_info_completed = True
+                    updated_fields.add('basic_info_completed')
 
             # Work preferences
             work_pref_keys = [
                 'work_style', 'availability_type', 'is_available', 'is_remote', 'time_zone', 'location'
             ]
-            if any(key in validated_data for key in work_pref_keys):
+            if any(key in validated_data for key in work_pref_keys) and not instance.work_preferences_completed:
                 instance.work_preferences_completed = True
+                updated_fields.add('work_preferences_completed')
 
             # Skills
-            if 'skills' in validated_data and getattr(instance, 'skills', None):
+            if 'skills' in validated_data and getattr(instance, 'skills', None) and not instance.skills_completed:
                 instance.skills_completed = True
+                updated_fields.add('skills_completed')
 
             # Portfolio
             if (
                 'portfolio_links' in validated_data or
                 ('resume_url' in validated_data and instance.resume_url) or
                 ('video_intro_url' in validated_data and instance.video_intro_url)
-            ):
+            ) and not instance.portfolio_completed:
                 instance.portfolio_completed = True
+                updated_fields.add('portfolio_completed')
 
             # Privacy: allow explicit flag or infer from visibility fields
             privacy_keys = ['profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility']
-            if any(key in validated_data for key in privacy_keys):
+            if any(key in validated_data for key in privacy_keys) and not instance.privacy_completed:
                 instance.privacy_completed = True
+                updated_fields.add('privacy_completed')
             if 'privacy_completed' in validated_data:
-                instance.privacy_completed = bool(validated_data.get('privacy_completed'))
+                desired_privacy_state = bool(validated_data.get('privacy_completed'))
+                if instance.privacy_completed != desired_privacy_state:
+                    instance.privacy_completed = desired_privacy_state
+                    updated_fields.add('privacy_completed')
 
-            # Persist any flag changes
-            instance.save(update_fields=[
-                'basic_info_completed', 'work_preferences_completed', 'skills_completed',
-                'portfolio_completed', 'privacy_completed', 'updated_at'
-            ])
+            if updated_fields:
+                updated_fields.add('updated_at')
+                instance.save(update_fields=list(updated_fields))
 
-            # Sync to user
-            user = instance.user
-            if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
-                user.profile_completed = True
-                user.save(update_fields=['profile_completed', 'updated_at'])
+            # Sync to user if needed
+            try:
+                user = instance.user
+                if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
+                    user.profile_completed = True
+                    user.save(update_fields=['profile_completed', 'updated_at'])
+            except Exception:
+                pass
+
         except Exception:
-            # Don't break creation on sync errors
+            # Don't break serializer flow on sync errors
             pass
 
+    def create(self, validated_data):
+        validated_data['user'] = self.context['request'].user
+        instance = super().create(validated_data)
+        self._update_completion_flags(instance, validated_data)
         return instance
+
+    def update(self, instance, validated_data):
+        updated_instance = super().update(instance, validated_data)
+        self._update_completion_flags(updated_instance, validated_data)
+        return updated_instance
     
     def get_profile_completed(self, obj):
         try:
@@ -110,9 +309,8 @@ class CandidateListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Candidate
-        fields = ('id', 'full_name', 'title',"bio", "profile_image", 'location', 'is_available', 'work_style', 
-                 'skills', 'superpowers', 'profile_completed', 'min_salary', 'max_salary', 'created_at', 'profile_views_display')
-    
+        fields = '__all__'
+
     def get_profile_completed(self, obj):
         try:
             return bool(getattr(obj, 'is_profile_complete', False))
@@ -135,53 +333,151 @@ class CandidateListSerializer(serializers.ModelSerializer):
         return str(n)
 
 
-class WorkDNASerializer(serializers.ModelSerializer):
+class WorkDNAQuestionSerializer(serializers.ModelSerializer):
     """
-    Serializer for Work DNA assessment
+    Serializer for Work DNA Questions
     """
     class Meta:
-        model = WorkDNA
+        model = WorkDNAQuestion
         fields = '__all__'
         read_only_fields = ('candidate', 'created_at', 'updated_at')
     
     def create(self, validated_data):
         validated_data['candidate'] = self.context['request'].user.candidate_profile
         return super().create(validated_data)
-
-
-class ReferenceSerializer(serializers.ModelSerializer):
-    """
-    Serializer for references
-    """
-    class Meta:
-        model = Reference
-        fields = '__all__'
-        read_only_fields = ('candidate', 'created_at', 'updated_at')
+        
+    def update(self, instance, validated_data):
+        # Handle answers update if provided
+        answers = validated_data.pop('answers', None)
+        if answers is not None:
+            instance.answers = answers
+            instance.save()
+        return super().update(instance, validated_data)
     
-    def create(self, validated_data):
-        validated_data['candidate'] = self.context['request'].user.candidate_profile
-        return super().create(validated_data)
-
-
 class ReferenceRequestSerializer(serializers.ModelSerializer):
     """
     Serializer for reference requests
     """
+    token = serializers.UUIDField(read_only=True)
+    user_id = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ReferenceRequest
+        fields = [
+            'id', 'token', 'reference_email', 'reference_name', 'suggested_relationship',
+            'suggested_company', 'request_message', 'reply_message', 'status',
+            'expires_at', 'created_at', 'updated_at', 'candidate', 'user_id'
+        ]
+        read_only_fields = ('candidate', 'created_at', 'updated_at', 'token', 'user_id')
+    
+    def get_user_id(self, obj):
+        """Return the user ID associated with the candidate"""
+        return obj.candidate.user.id if obj.candidate and hasattr(obj.candidate, 'user') else None
+    
+    def validate_reference_email(self, value):
+        """
+        Validate that the reference email doesn't belong to an employer
+        """
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        
+        # Check if user with this email exists
+        try:
+            user = User.objects.get(email=value)
+            
+            # Check if the user is an employer
+            if hasattr(user, 'employer_profile'):
+                raise serializers.ValidationError("Reference requests cannot be sent to employers.")
+                
+        except User.DoesNotExist:
+            # Allow sending to emails not in the system
+            pass
+            
+        return value
+    
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
+            validated_data['candidate'] = request.user.candidate_profile
+        
+        ref_request = super().create(validated_data)
+        
+        # Send reference request email
+        from .views_reference import send_reference_request_email
+        send_reference_request_email(ref_request, request)
+        
+        ref_request.status = 'pending'
+        ref_request.save()
+        return ref_request
+    """
+    Serializer for reference requests
+    """
+    token = serializers.UUIDField(read_only=True)
+    
     class Meta:
         model = ReferenceRequest
         fields = '__all__'
-        read_only_fields = ('candidate', 'created_at', 'updated_at')
+        read_only_fields = ('candidate', 'created_at', 'updated_at', 'status', 'token')
+    
+    def validate_reference_email(self, value):
+        """
+        Validate that the reference email doesn't belong to an employer
+        """
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        
+        # Check if user with this email exists
+        try:
+            user = User.objects.get(email=value)
+            
+            # Check if the user is an employer
+            if hasattr(user, 'employer_profile'):
+                raise serializers.ValidationError("Reference requests cannot be sent to employers.")
+                
+        except User.DoesNotExist:
+            # Allow sending to emails not in the system
+            pass
+            
+        return value
     
     def create(self, validated_data):
-        validated_data['candidate'] = self.context['request'].user.candidate_profile
-        return super().create(validated_data)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
+            validated_data['candidate'] = request.user.candidate_profile
+        
+        ref_request = super().create(validated_data)
+        
+        # Send reference request email
+        from .views_reference import send_reference_request_email
+        send_reference_request_email(ref_request, request)
+        
+        ref_request.status = 'pending'
+        ref_request.save()
+        return ref_request
+
+class CandidateActionDetailSerializer(serializers.ModelSerializer):
+    """
+    Serializer for candidate actions detail view
+    """
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    full_name = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Candidate
+        fields = [
+            'id', 'user_id', 'full_name', 'title', 'skills', 'location',
+            'work_style', 'availability_type', 'is_available', 'profile_image'
+        ]
+        read_only_fields = fields
 
 
 class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating candidate profile sections
     """
-    profile_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    profile_image = serializers.ImageField(required=False, use_url=True)
     class Meta:
         model = Candidate
         # include privacy_completed so frontend can explicitly mark the privacy section complete
@@ -190,7 +486,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'preferred_roles', 'passion_projects', 'min_salary', 'max_salary', 
                  'salary_currency', 'portfolio_links', 'profile_image', 'resume_url', 
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
-                 'video_transcription',
+                 'video_transcription', 'seniority_level',
                  'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
     
     def to_internal_value(self, data):
@@ -211,9 +507,8 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
         # Update profile completion status based on filled fields
         updated_instance = super().update(instance, validated_data)
 
-        # If client did not send profile_image in the payload for PUT/PATCH,
-        # clear it by setting to None (so response shows null)
-        if 'profile_image' not in self.initial_data and 'profile_image' not in validated_data:
+        # Only clear profile_image if it's explicitly set to None or empty string in the request
+        if 'profile_image' in self.initial_data and self.initial_data.get('profile_image') in (None, ''):
             if getattr(updated_instance, 'profile_image', None):
                 updated_instance.profile_image = None
                 updated_instance.save(update_fields=['profile_image'])

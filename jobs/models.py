@@ -59,6 +59,7 @@ class Job(models.Model):
         ('senior', 'Senior'),
         ('lead', 'Lead'),
         ('executive', 'Executive'),
+        ('junior', 'Junior'),
     ]
     
     # Basic Information
@@ -76,7 +77,17 @@ class Job(models.Model):
         ('marketing', 'Marketing'),
         ('sales', 'Sales'),
         ('operations', 'Operations'),
+        ('writing', 'Writing'),
+        ('technology/Digital', 'Technology/Digital'),
+        ('creative/,media', 'Creative/Media'),
+        ('business/finance', 'Business/Finance'),
+        ('trades/labour', 'Trades/Labour'),
+        ('healthcare & welness', 'Healthcare & Wellness'),
+        ('education & training', 'Education & Training'),
+        ('hospitality & services', 'Hospitality & Services'),
+        ('nonprofit/community work', 'Nonprofit/Community Work'),
         ('other', 'Other'),
+
     ])
     skills = models.JSONField(default=list)  # List of required skills
     experienceLevel = models.CharField(max_length=20, choices=EXPERIENCE_LEVEL_CHOICES)
@@ -120,6 +131,11 @@ class Job(models.Model):
     applications_count = models.PositiveIntegerField(default=0)
     shortlisted_count = models.PositiveIntegerField(default=0)
     hired_count = models.PositiveIntegerField(default=0)
+
+    # Ml Endpoints
+    job_tags = models.JSONField(default=list, blank=True, null=True)  # List of tags for categorization
+    job_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate prjob
+    search_query=models.TextField(blank=True,null=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
