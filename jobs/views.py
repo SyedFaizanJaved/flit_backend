@@ -475,9 +475,11 @@ class JobViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='my-jobs')
     def my_jobs(self, request):
         jobs = Job.objects.filter(employer=request.user)
-        page = self.paginate_queryset(jobs)
-        serializer = JobSerializer(page or jobs, many=True, context=self.get_serializer_context())
-        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+        serializer = JobListSerializer(jobs, many=True, context=self.get_serializer_context())
+        return Response({
+            'count': jobs.count(),
+            'results': serializer.data
+        })
 
     @action(detail=True, methods=['get', 'post'], url_path='skills')
     def skills(self, request, pk=None):

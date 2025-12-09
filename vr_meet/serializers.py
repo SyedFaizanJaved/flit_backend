@@ -6,26 +6,55 @@ from django.core.exceptions import ValidationError
 
 User = get_user_model()
 
+class UserNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email']
+        read_only_fields = ['id', 'first_name', 'last_name', 'email']
+
 class MeetingRoomSerializer(serializers.ModelSerializer):
-    candidate = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(),required=False,
-    allow_null=True)
+    candidate = UserNameSerializer(read_only=True)
+    candidate_email = serializers.EmailField(write_only=True, required=False)
+    candidate_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source='candidate',
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
     duration = serializers.ReadOnlyField()
     meeting_date = serializers.ReadOnlyField()
 
     class Meta:
         model = MeetingRoom
-        fields = '__all__'
-        read_only_fields = ('created_at','id','room_code','meet_link','employer','duration','meeting_date')
-    
+        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code']
+        read_only_fields = ('created_at', 'id', 'meet_link', 'employer', 'duration', 'meeting_date')
+        
     def validate(self, data):
-        # time validation
+        data = super().validate(data)
+        candidate_email = data.pop('candidate_email', None)
+        
+        if candidate_email:
+            try:
+                candidate = User.objects.get(email=candidate_email)
+                data['candidate'] = candidate
+            except User.DoesNotExist:
+                raise serializers.ValidationError({
+                    'error': 'User with this email does not exist.'
+                })
+        elif 'candidate' not in data:
+            raise serializers.ValidationError({
+                'error': 'Either candidate_id or candidate_email is required.'
+            })
+            
+        # Time validation
         start_time = data.get('start_time')
         end_time = data.get('end_time')
         if start_time and end_time and end_time <= start_time:
             raise serializers.ValidationError("End time must be greater than start time")
-        
+            
         # hosts email validation
-        host_emails = data.get('host_email',[]) or []
+        host_emails = data.get('host_email', []) or []
         if isinstance(host_emails,str):
             host_emails = [host_emails]
         
