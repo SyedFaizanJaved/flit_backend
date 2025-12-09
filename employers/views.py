@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.http import Http404, JsonResponse
+import os
 import requests
 import logging
 from .models import Employer, EmployerPreference, EmployerCompliance, CandidateAction
