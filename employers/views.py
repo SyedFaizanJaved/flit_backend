@@ -233,7 +233,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     continue
                     
                 results.append({
-                    'id': app.id,
+                    'id': app.candidate.id,
                     'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
                     'name': app.candidate.full_name,
                     'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
@@ -249,7 +249,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     continue
                     
                 results.append({
-                    'id': app.id,
+                    'id': app.candidate.id,
                     'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
                     'name': app.candidate.full_name,
                     'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
@@ -558,7 +558,7 @@ def get_flitpass_data(request, company_id):
     """
     try:
         # The ML API endpoint URL
-        ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/flitpass/{company_id}"
+        ml_api_url = f"{settings.FLIT_AI_URL}/flitpass/{company_id}"
         
         # Make the GET request to the ML API
         response = requests.get(ml_api_url)

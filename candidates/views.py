@@ -294,7 +294,7 @@ class CandidateLatestJobsView(DashboardBaseView):
         latest_jobs = []
         try:
             # Get ML URL from environment variable with fallback
-            ml_base_url = os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com').rstrip('/')
+            ml_base_url = f"{settings.FLIT_AI_URL}/"
                 
             ml_url = f"{ml_base_url.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
             logger.info(f"Calling ML service at: {ml_url}")
@@ -418,7 +418,7 @@ class CandidateLatestProjectsView(DashboardBaseView):
         ml_data = None
         
         try:
-            ml_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/show_projects_for_candidate/{candidate.id}"
+            ml_url = f"{settings.FLIT_AI_URL}/show_projects_for_candidate/{candidate.id}"
             logger.info(f"Calling ML service for projects at: {ml_url}")
             
             # Add headers if needed (e.g., for authentication)
@@ -785,7 +785,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
 
         if candidate:
             # Prepare ML API URL and payload
-            ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/create_candidates/{candidate.id}"
+            ml_api_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
             ml_payload = {
                 "full_name": candidate.full_name,
                 "title": candidate.title,
@@ -1044,8 +1044,8 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 return False, error_msg, None
             
             # Prepare the ML API URLs
-            base_url = os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com').rstrip('/')
-            
+            base_url = f"{settings.FLIT_AI_URL}/"
+
             # First try to update existing candidate
             update_endpoint = f"update_candidate_data/{candidate_id}"
             update_url = f"{base_url}/{update_endpoint}"
@@ -1354,7 +1354,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
                             destination.write(chunk)
                     
                     # Call the ML API to parse the resume
-                    ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/parse_cv"
+                    ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
                     
                     try:
                         with open(temp_path, 'rb') as f:
@@ -1575,7 +1575,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
         video_file = request.FILES.get('video_file')
         if video_file:
             try:
-                analyze_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/analyze_intro_video"
+                analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
                 headers = {}
                 api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
                 if api_key:
@@ -1663,7 +1663,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
         ml_resp = {}
         matched_qs = Candidate.objects.none()
         try:
-            ml_service_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/get_candidates_for_job"
+            ml_service_url = f"{settings.FLIT_AI_URL}/get_candidates_for_job"
             headers = {'Content-Type': 'application/json'}
             response = requests.post(ml_service_url, data=json.dumps(payload), headers=headers)
             ml_resp = response.json()
@@ -1983,7 +1983,7 @@ class WorkDNAQuestionView(APIView):
         """Fetch work DNA questions from ML API and filter to include only questions 1 and 2"""
         try:
             # Call the ML API to get work DNA questions
-            ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/generate_work_dna_questions/{candidate.id}"
+            ml_api_url = f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}"
             response = requests.get(ml_api_url)
             
             if response.status_code == 200:
@@ -2036,7 +2036,7 @@ class CandidateAIMatchingView(APIView):
 
     def get(self, request, candidate_id):
         total = request.query_params.get('total')
-        ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/ai_matching/{candidate_id}"
+        ml_api_url = f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}"
 
         params = {}
         if total is not None:

@@ -24,6 +24,7 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
     )
     duration = serializers.ReadOnlyField()
     meeting_date = serializers.ReadOnlyField()
+    meeting_title = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = MeetingRoom

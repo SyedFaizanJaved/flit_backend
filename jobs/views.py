@@ -182,7 +182,7 @@ class JobViewSet(viewsets.ModelViewSet):
                 logger.error(ml_error)
 
         if job:
-            ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/create_jobs/{job.id}"
+            ml_api_url = f"{settings.FLIT_AI_URL}/create_jobs/{job.id}"
             ml_payload = {
                 "title": job.title,
                 "description": job.description,
@@ -282,7 +282,7 @@ class JobViewSet(viewsets.ModelViewSet):
                 job = self.get_object()
                 
                 # Prepare data for ML API
-                ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/update_job_data/{job.id}"
+                ml_api_url = f"{settings.FLIT_AI_URL}/update_job_data/{job.id}"
                 ml_payload = {
                     "title": job.title,
                     "description": job.description,
