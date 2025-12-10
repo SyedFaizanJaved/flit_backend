@@ -233,7 +233,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     continue
                     
                 results.append({
-                    'id': app.id,
+                    'id': app.candidate.id,
                     'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
                     'name': app.candidate.full_name,
                     'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
@@ -249,7 +249,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     continue
                     
                 results.append({
-                    'id': app.id,
+                    'id': app.candidate.id,
                     'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
                     'name': app.candidate.full_name,
                     'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
