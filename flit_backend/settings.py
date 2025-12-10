@@ -339,3 +339,8 @@ LOGGING = {
         'level': 'INFO',
     }
 }
+
+#  AI Related Variables
+
+FLIT_AI_URL=config('FLIT_AI_URL')
+

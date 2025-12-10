@@ -141,7 +141,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 logger.error(ml_error)
 
         if project:
-            ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/create_projects/{project.id}"
+            ml_api_url = f"{settings.FLIT_AI_URL}/create_projects/{project.id}"
             ml_payload = {
                 "title": project.title,
                 "description": project.description,
@@ -237,7 +237,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 project = self.get_object()
                 
                 # Prepare data for ML API
-                ml_api_url = f"{os.getenv('FLIT_AI_URL', 'https://dev-flit-ai.neurooceans.com/').rstrip('/')}/update_project_data/{project.id}"
+                ml_api_url = f"{settings.FLIT_AI_URL}/update_project_data/{project.id}"
                 ml_payload = {
                     "title": project.title,
                     "description": project.description,
