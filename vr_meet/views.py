@@ -15,7 +15,13 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 from .models import MeetingRoom, UserGoogleToken
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
 from .serializers import MeetingRoomSerializer
+from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
 
 from datetime import timedelta
 import json
@@ -302,9 +308,63 @@ def connect_google(request):
         logger.exception("Exception in connect_google")
         return Response({"detail": "Something went wrong. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# --------------------------
+#  CANDIDATE MEETINGS VIEW
+# --------------------------
+class CandidateMeetingsView(generics.ListAPIView):
+    serializer_class = MeetingRoomSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Get all non-deleted meetings where the current user is the candidate
+        return MeetingRoom.objects.filter(
+            is_deleted=False,
+            candidate=self.request.user
+        ).order_by('-start_time')
+    
+    def get_queryset(self):
+        # Get all non-deleted upcoming meetings where the current user is the candidate
+        return MeetingRoom.objects.filter(
+            is_deleted=False,
+            candidate=self.request.user,
+            start_time__gt=timezone.now()
+        ).order_by('start_time')  # Order by start_time in ascending order
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 #--------------------------
 #  GOOGLE OAUTH CALLBACK
 #--------------------------
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_google_connection(request):
+    """
+    Check if the authenticated user has connected their Google account.
+    Returns:
+        Response: {"connected": bool, "message": str}
+    """
+    try:
+        token_exists = UserGoogleToken.objects.filter(user=request.user).exists()
+        if token_exists:
+            return Response({
+                "connected": True,
+                "message": "Google account is connected"
+            })
+        return Response({
+            "connected": False,
+            "message": "Google account is not connected"
+        })
+    except Exception as e:
+        logger.error(f"Error checking Google connection: {str(e)}")
+        return Response({
+            "connected": False,
+            "message": "Error checking Google connection status"
+        }, status=500)
+
+
 def google_callback(request):
     try:
         user_id = request.GET.get("state")
