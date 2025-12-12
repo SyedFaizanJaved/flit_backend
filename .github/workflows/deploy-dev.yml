@@ -1,0 +1,44 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 1: Set up SSH key
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+          chmod 600 ~/.ssh/ec2_key.pem
+
+      # Step 2: Update code on EC2
+      - name: Update code on EC2 via Git
+        run: |
+          ssh -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no ubuntu@54.183.23.160 '
+            cd /home/ubuntu/flit_backend &&
+            git fetch origin &&
+            git reset --hard origin/dev &&
+            git clean -fd &&
+            git checkout dev &&
+            git pull origin dev
+          '
+
+      # Step 3: Install dependencies and restart services
+      - name: Install dependencies and Restart Gunicorn and Nginx
+        run: |
+          ssh -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no ubuntu@54.183.23.160 '
+            cd /home/ubuntu/flit_backend &&
+            source /home/ubuntu/flit_backend/venv/bin/activate &&
+            pip install -r requirements.txt &&
+            sudo systemctl restart gunicorn &&
+            sudo systemctl restart nginx
+          '
