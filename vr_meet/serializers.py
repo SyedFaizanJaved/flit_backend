@@ -14,6 +14,7 @@ class UserNameSerializer(serializers.ModelSerializer):
 
 class MeetingRoomSerializer(serializers.ModelSerializer):
     candidate = UserNameSerializer(read_only=True)
+    employer_company = serializers.SerializerMethodField()
     candidate_email = serializers.EmailField(write_only=True, required=False)
     candidate_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
@@ -22,14 +23,27 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
         allow_null=True,
         write_only=True
     )
-    duration = serializers.ReadOnlyField()
     meeting_date = serializers.ReadOnlyField()
     meeting_title = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = MeetingRoom
-        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code']
-        read_only_fields = ('created_at', 'id', 'meet_link', 'employer', 'duration', 'meeting_date')
+        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code', 'host_email']
+        read_only_fields = ('created_at', 'id', 'meet_link', 'employer', 'meeting_date', 'employer_company')
+    
+    def get_employer_company(self, obj):
+        try:
+            from employers.models import Employer
+            employer = Employer.objects.get(user=obj.employer)
+            if employer.company:
+                return {
+                    'id': employer.company.id,
+                    'name': employer.company.company_name,
+                    'logo': employer.company.logo.url if employer.company.logo else None
+                }
+        except Exception as e:
+            print(f"Error getting employer company: {str(e)}")
+        return None
         
     def validate(self, data):
         data = super().validate(data)
