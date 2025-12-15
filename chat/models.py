@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.db.models import Count, Q
 
 
 class ChatMessage(models.Model):
@@ -16,6 +17,9 @@ class ChatMessage(models.Model):
     sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages')
     recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='received_messages')
     
+    # Unread message count (cached count of unread messages per sender-recipient pair)
+    unread_count = models.PositiveIntegerField(default=0, editable=False, null=False, blank=True, help_text='Number of unread messages')
+    
     # Message Details
     message = models.TextField()
     messageType = models.CharField(max_length=20, choices=MESSAGE_TYPE_CHOICES, default='text')
@@ -24,9 +28,59 @@ class ChatMessage(models.Model):
     is_read = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
     
+    # Total unique candidates who messaged this employer
+    total_candidates = models.PositiveIntegerField(default=0, 
+        help_text='Total unique candidates who messaged this employer')
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def save(self, *args, **kwargs):
+        # Ensure total_candidates has a default value
+        if self.total_candidates is None:
+            self.total_candidates = 0
+            
+        # Check if this is a new message
+        is_new = self.pk is None
+        
+        # For new messages from candidate to employer
+        if is_new and hasattr(self.sender, 'user_type') and hasattr(self.recipient, 'user_type') and \
+           self.sender.user_type == 'candidate' and self.recipient.user_type == 'employer':
+            
+            # First, save the message with default total_candidates=0
+            if self.total_candidates == 0:
+                super().save(*args, **kwargs)
+            
+            # Get count of unique candidates who messaged this employer
+            # including the current sender
+            unique_candidates = ChatMessage.objects.filter(
+                recipient=self.recipient,
+                sender__user_type='candidate'
+            ).values('sender').distinct().count()
+            
+            # If this is a new candidate, increment the count
+            is_new_candidate = not ChatMessage.objects.filter(
+                recipient=self.recipient,
+                sender=self.sender,
+                sender__user_type='candidate'
+            ).exclude(pk=getattr(self, 'pk', None)).exists()
+            
+            if is_new_candidate:
+                self.total_candidates = unique_candidates
+                
+                # Update all messages to this employer with the new count
+                ChatMessage.objects.filter(
+                    recipient=self.recipient
+                ).update(
+                    total_candidates=unique_candidates
+                )
+            
+            # Save again with updated total_candidates
+            super().save(force_update=True)
+        else:
+            # For non-candidate messages or updates, just save normally
+            super().save(*args, **kwargs)
     
     class Meta:
         db_table = 'chat_messages'
@@ -36,6 +90,16 @@ class ChatMessage(models.Model):
     
     def __str__(self):
         return f"Message from {self.sender.email} to {self.recipient.email}"
+        
+    @classmethod
+    def get_candidate_count_for_employer(cls, employer_id):
+        """
+        Returns the count of unique candidates who have messaged this employer
+        """
+        return cls.objects.filter(
+            recipient_id=employer_id,
+            sender__user_type='candidate'
+        ).values('sender').distinct().count()
 
 
 class ChatRoom(models.Model):
