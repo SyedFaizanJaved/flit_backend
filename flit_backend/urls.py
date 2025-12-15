@@ -15,10 +15,13 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
+
+# Import WebSocket URL patterns
+from chat.routing import websocket_urlpatterns
 
 
 def welcome_root(request):
@@ -35,8 +38,14 @@ def health_check(request):
 
 urlpatterns = [
     path('', welcome_root, name='root'),
+    
+    # Chat HTTP URLs
+    path('chat/', include('chat.urls')),
     path('health', health_check, name='health'),
     path('admin/', admin.site.urls),
+    
+    # WebSocket URLs
+    path('ws/', include(websocket_urlpatterns)),
 
     # API routes
     path('api/auth/', include('accounts.urls')),

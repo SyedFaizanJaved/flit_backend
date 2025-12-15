@@ -69,11 +69,21 @@ LOCAL_APPS = [
     'applications',   
     'chat',
     'vr_meet',
-    'stories'
+    'stories',
 ]
 
+# Add 'channels' to the beginning of INSTALLED_APPS
+INSTALLED_APPS = ['channels'] + DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
-INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+# ASGI Application
+ASGI_APPLICATION = 'flit_backend.asgi.application'
+
+# Channel layer configuration
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 
 
@@ -106,6 +116,10 @@ TEMPLATES = [
     },
 ]
 
+# ASGI application for Django Channels
+ASGI_APPLICATION = 'flit_backend.asgi.application'
+
+# WSGI application for traditional WSGI
 WSGI_APPLICATION = 'flit_backend.wsgi.application'
 
 # Database
