@@ -725,6 +725,20 @@ class BaseListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # Get the model name
+        model_name = self.model._meta.model_name
+        
+        # Check if user is an employer
+        if hasattr(self.request.user, 'employer_profile'):
+            # For employers, only allow access to candidates
+            if model_name != 'candidate':
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied({
+                    'error': 'Access Denied',
+                    'message': 'You are not authorized to view this content. Please log in as a candidate to access this feature.'
+                })
+        
+        # For candidates or for candidate model when user is employer
         # Start with all objects
         queryset = self.model.objects.all()
         

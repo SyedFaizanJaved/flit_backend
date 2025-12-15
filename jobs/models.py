@@ -158,7 +158,23 @@ class Job(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             from django.utils.text import slugify
-            self.slug = slugify(f"{self.title}-{self.company.company_name}")
+            import uuid
+            
+            # First try with just title and company
+            base_slug = slugify(f"{self.title}-{self.company.company_name}")
+            self.slug = base_slug
+            
+            # If this is a new instance or the slug is being changed
+            if not self.pk or Job.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                # Append a unique identifier if the slug already exists
+                unique_id = str(uuid.uuid4())[:8]  # Take first 8 chars of UUID
+                self.slug = f"{base_slug}-{unique_id}"
+                
+                # If by any chance this still exists (highly unlikely), keep trying with new UUIDs
+                while Job.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                    unique_id = str(uuid.uuid4())[:8]
+                    self.slug = f"{base_slug}-{unique_id}"
+        
         super().save(*args, **kwargs)
 
 
