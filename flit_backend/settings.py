@@ -116,6 +116,11 @@ TEMPLATES = [
     },
 ]
 
+
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+
 # ASGI application for Django Channels
 ASGI_APPLICATION = 'flit_backend.asgi.application'
 
