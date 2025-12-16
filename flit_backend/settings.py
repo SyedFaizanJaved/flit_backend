@@ -359,7 +359,11 @@ LOGGING = {
     }
 }
 
-#  AI Related Variables
+# AI Related Variables
 
 FLIT_AI_URL=config('FLIT_AI_URL')
+
+
+# Reference Request Variable
+FLIT_REQUEST_URL = config('FLIT_REQUEST_URL')
 

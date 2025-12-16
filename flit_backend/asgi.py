@@ -30,5 +30,8 @@ application = ProtocolTypeRouter({
         URLRouter(
             websocket_urlpatterns
         )
-    ),
+    )
 })
+
+# This variable is used by Daphne/ASGI servers
+app = application

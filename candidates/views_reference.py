@@ -197,10 +197,10 @@ def send_reference_request_email(ref_request, request):
     Send reference request email with accept/deny buttons
     """
     try:
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://dev.flit.works/reference-response')
+        frontend_url = getattr(settings, 'FLIT_REQUEST_URL', 'https://dev.flit.works/reference-response')
         backend_url = request.build_absolute_uri('/')[:-1]  # Get current backend URL
         
-        logo_url = 'https://dev.flit.works/flit_icon.png'  # Integrated the provided logo URL
+        logo_url = f"{getattr(settings, 'FLIT_REQUEST_URL', 'https://dev.flit.works')}/flit_icon.png"  # Get logo URL from FLIT_REQUEST_URL
         
         accept_url = f"{frontend_url}?&token={ref_request.token}&action=accept"
         deny_url = f"{frontend_url}?&token={ref_request.token}&action=deny"  
