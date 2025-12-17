@@ -197,10 +197,11 @@ def send_reference_request_email(ref_request, request):
     Send reference request email with accept/deny buttons
     """
     try:
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://dev.flit.works/reference-response')
+        # Get base URL from settings (loaded from environment variables)
+        base_url = getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')
+        frontend_url = f"{base_url}/reference-response"
         backend_url = request.build_absolute_uri('/')[:-1]  # Get current backend URL
-        
-        logo_url = 'https://dev.flit.works/flit_icon.png'  # Integrated the provided logo URL
+        logo_url = f"{base_url}/flit_icon.png"  # Use the same base URL for assets
         
         accept_url = f"{frontend_url}?&token={ref_request.token}&action=accept"
         deny_url = f"{frontend_url}?&token={ref_request.token}&action=deny"  
@@ -209,27 +210,27 @@ def send_reference_request_email(ref_request, request):
         
         # Plain text version for email clients that don't support HTML
         text_content = f"""
-        Hello {ref_request.reference_name},
-        
-        {ref_request.candidate.full_name} has requested you as a reference.
-        
-        Message from {ref_request.candidate.full_name.split()[0]}:
-        {ref_request.request_message or 'No message provided.'}
-        
-        You can respond to this request by clicking one of the links below:
-        
-        Accept: {accept_url}
-        Deny: {deny_url}
-        
-        This link will expire on {ref_request.expires_at.strftime('%B %d, %Y')}.
-        
-        Thank you,
-        The {getattr(settings, 'SITE_NAME', 'Flit')} Team
-        """
+Hello {ref_request.reference_name},
+
+{ref_request.candidate.full_name} has requested you as a reference.
+
+Message from {ref_request.candidate.full_name.split()[0]}:
+{ref_request.request_message or 'No message provided.'}
+
+You can respond to this request by clicking one of the links below:
+
+Accept: {accept_url}
+Deny: {deny_url}
+
+This link will expire on {ref_request.expires_at.strftime('%B %d, %Y')}.
+
+Thank you,
+The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+"""
         
         # HTML version with eye-catching design and logo
         html_content = f"""
-        <!DOCTYPE html>
+<!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
