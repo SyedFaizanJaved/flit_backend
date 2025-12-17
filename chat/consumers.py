@@ -9,6 +9,8 @@ from django.db import models
 from django.db.models.functions import Coalesce
 from .models import ChatMessage
 from accounts.models import User
+from employers.models import Employer
+from candidates.models import Candidate
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -246,34 +248,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
 class ChatListConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         try:
-            self.employer_id = self.scope['url_route']['kwargs'].get('employer_id')
+            self.user_type = self.scope['url_route']['kwargs'].get('user_type')
+            self.user_id = self.scope['url_route']['kwargs'].get('user_id')
             
-            if self.employer_id:
-                # For specific employer's chat list
-                self.employer_id = str(self.employer_id)
-                self.group_name = f'employer_chat_list_{self.employer_id}'
+            if not self.user_type or not self.user_id:
+                await self.close(code=4003)  # Missing parameters
+                return
                 
-                # Join employer's chat list group
-                await self.channel_layer.group_add(
-                    self.group_name,
-                    self.channel_name
-                )
-                await self.accept()
-                await self.send_chat_list()
-            else:
-                # Close connection if no employer_id provided
-                await self.close(code=4003)  # Custom close code for missing employer_id
-                
-        except Exception as e:
-            print(f"[ERROR] WebSocket connection error: {str(e)}")
-            await self.close(code=4001)  # Custom close code for other errors
+            self.group_name = f'chat_list_{self.user_type}_{self.user_id}'
             
+            # Join user's chat list group
+            await self.channel_layer.group_add(
+                self.group_name,
+                self.channel_name
+            )
             await self.accept()
             await self.send_chat_list()
-            
+                
         except Exception as e:
             print(f"[ERROR] WebSocket connection error: {str(e)}")
-            await self.close(code=4001)  # Custom close code for other errors
+            await self.close(code=4001)  # Other errors
     
     async def disconnect(self, close_code):
         # Leave group
@@ -289,96 +283,219 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def get_chat_list_data(self):
         from .models import ChatMessage
+        from accounts.models import User
         from django.db.models import Q, Count, F, Subquery, OuterRef
         
-        # Get employer_id from URL parameters
-        employer_id = int(self.employer_id)
+        user_id = int(self.user_id)
+        is_employer = self.user_type == 'employer'
         
-        # Get all messages where employer (ID 1) is either sender or recipient
+        # Get all messages where the user is either sender or recipient
         message_query = ChatMessage.objects.filter(
-            Q(sender_id=employer_id) | Q(recipient_id=employer_id)
+            Q(sender_id=user_id) | Q(recipient_id=user_id)
         )
         
-        # Get all unique candidate IDs who have chatted with employer 1
-        candidate_user_ids = set()
+        # Get all unique user IDs who have chatted with this user
+        chat_partner_ids = set()
         for msg in message_query.values('sender', 'recipient'):
-            if msg['sender'] != employer_id:
-                candidate_user_ids.add(msg['sender'])
-            if msg['recipient'] != employer_id:
-                candidate_user_ids.add(msg['recipient'])
-        
-        # Get the latest message for each conversation
-        latest_msgs_subquery = ChatMessage.objects.filter(
-            Q(sender=employer_id, recipient=OuterRef('id')) |
-            Q(recipient=employer_id, sender=OuterRef('id'))
-        ).order_by('-created_at').values('created_at')[:1]
-        
-        # Get unread message count for each candidate
-        unread_count_subquery = ChatMessage.objects.filter(
-            sender=OuterRef('id'),
-            recipient=employer_id,
-            is_read=False
-        ).values('sender').annotate(count=Count('id')).values('count')
+            if msg['sender'] != user_id:
+                chat_partner_ids.add(msg['sender'])
+            if msg['recipient'] != user_id:
+                chat_partner_ids.add(msg['recipient'])
         
         # Get user details with latest message and unread count
-        users = User.objects.filter(id__in=candidate_user_ids).prefetch_related(
-            'candidate_profile'
-        ).annotate(
-            last_message_time=Subquery(
-                ChatMessage.objects.filter(
-                    (Q(sender=OuterRef('id'), recipient_id=employer_id) | 
-                     Q(recipient=OuterRef('id'), sender_id=employer_id))
-                ).order_by('-created_at').values('created_at')[:1],
-                output_field=models.DateTimeField()
-            ),
-            unread_count=Coalesce(
-                Subquery(
-                    ChatMessage.objects.filter(
-                        sender=OuterRef('id'),
-                        recipient=employer_id,
-                        is_read=False
-                    ).values('sender').annotate(count=Count('id')).values('count'),
-                    output_field=models.IntegerField()
-                ),
-                0
-            )
-        ).order_by('-last_message_time')
+        users = User.objects.filter(id__in=chat_partner_ids)
         
-        # Prepare the result list
-        result = []
-        for user in users:
-            # Get profile image from candidate profile
-            profile_image = None
-            if hasattr(user, 'candidate_profile') and user.candidate_profile:
-                profile_image = getattr(user.candidate_profile, 'profile_image', None)
+        if is_employer:
+            # For employer, show candidate profiles
+            users = users.prefetch_related('candidate_profile').annotate(
+                last_message_time=Subquery(
+                    ChatMessage.objects.filter(
+                        (Q(sender=OuterRef('id'), recipient_id=user_id) | 
+                         Q(recipient=OuterRef('id'), sender_id=user_id))
+                    ).order_by('-created_at').values('created_at')[:1],
+                    output_field=models.DateTimeField()
+                ),
+                unread_count=Coalesce(
+                    Subquery(
+                        ChatMessage.objects.filter(
+                            sender=OuterRef('id'),
+                            recipient_id=user_id,
+                            is_read=False
+                        ).values('sender').annotate(count=Count('id')).values('count'),
+                        output_field=models.IntegerField()
+                    ),
+                    0
+                )
+            ).order_by('-last_message_time')
             
-            # Get the URL if the image field exists and has a URL
-            profile_image_url = profile_image.url if profile_image and hasattr(profile_image, 'url') else None
+            # Prepare employer's view (showing candidates)
+            result = []
+            for user in users:
+                profile_image = None
+                if hasattr(user, 'candidate_profile') and user.candidate_profile:
+                    profile_image = getattr(user.candidate_profile, 'profile_image', None)
+                
+                profile_image_url = profile_image.url if profile_image and hasattr(profile_image, 'url') else None
+                full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or f"User {user.id}"
+                
+                latest_msg = ChatMessage.objects.filter(
+                    (Q(sender=user, recipient_id=user_id) | 
+                     Q(recipient=user, sender_id=user_id))
+                ).order_by('-created_at').first()
+                
+                result.append({
+                    'user_id': user.id,
+                    'full_name': full_name,
+                    'title': user.username or '',
+                    'profile_image': profile_image_url,
+                    'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
+                    'unread_count': user.unread_count or 0
+                })
+        else:
+            # For candidate, show both employer and candidate profiles with prefetched data
+            users = users.prefetch_related(
+                models.Prefetch(
+                    'employer_profile',
+                    queryset=Employer.objects.select_related('company').only(
+                        'id', 'user', 'first_name', 'last_name', 'company', 'profile_picture', 'position'
+                    )
+                ),
+                models.Prefetch(
+                    'candidate_profile',
+                    queryset=Candidate.objects.only(
+                        'id', 'user', 'full_name', 'title', 'profile_image'
+                    )
+                )
+            ).annotate(
+                last_message_time=Subquery(
+                    ChatMessage.objects.filter(
+                        (Q(sender=OuterRef('id'), recipient_id=user_id) | 
+                         Q(recipient=OuterRef('id'), sender_id=user_id))
+                    ).order_by('-created_at').values('created_at')[:1],
+                    output_field=models.DateTimeField()
+                ),
+                unread_count=Coalesce(
+                    Subquery(
+                        ChatMessage.objects.filter(
+                            sender=OuterRef('id'),
+                            recipient_id=user_id,
+                            is_read=False
+                        ).values('sender').annotate(count=Count('id')).values('count'),
+                        output_field=models.IntegerField()
+                    ),
+                    0
+                )
+            ).order_by('-last_message_time')
             
-            # Get user's full name
-            full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or f"User {user.id}"
-            
-            # Get the latest message between this user and employer 1
-            latest_msg = ChatMessage.objects.filter(
-                (Q(sender=user, recipient_id=employer_id) | 
-                 Q(recipient=user, sender_id=employer_id))
-            ).order_by('-created_at').first()
-            
-            result.append({
-                'user_id': user.id,
-                'full_name': full_name,
-                'title': user.username or '',
-                'profile_image': profile_image_url,
-                'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
-                'unread_count': user.unread_count or 0
-            })
+            # Prepare the chat list with all participants
+            result = []
+            for user in users:
+                company_name = ''
+                industry = ''
+                logo_url = None
+                
+                # Check if user is an employer
+                employer_profile = getattr(user, 'employer_profile', None)
+                candidate_profile = getattr(user, 'candidate_profile', None)
+                
+                if employer_profile:
+                    # Handle employer profile
+                    company = getattr(employer_profile, 'company', None)
+                    if company:
+                        # Get company name from various possible fields
+                        company_name = (
+                            getattr(company, 'company_name', None) or 
+                            getattr(company, 'name', None) or
+                            f"{getattr(employer_profile, 'first_name', '')} {getattr(employer_profile, 'last_name', '')}".strip() or
+                            f"Employer {user.id}"
+                        )
+                        
+                        # Get industry if available
+                        industry = getattr(company, 'industry', None) or getattr(employer_profile, 'position', '')
+                        
+                        # Get logo URL if available
+                        logo = getattr(company, 'logo', None)
+                        if logo and hasattr(logo, 'url'):
+                            try:
+                                logo_url = logo.url
+                                # Make sure the URL is absolute
+                                if logo_url and not (logo_url.startswith('http://') or logo_url.startswith('https://')):
+                                    logo_url = f"https://flit.s3.us-west-1.amazonaws.com/{logo_url}"
+                            except Exception as e:
+                                print(f"Error getting logo URL for company {getattr(company, 'id', 'unknown')}: {str(e)}")
+                                logo_url = None
+                    else:
+                        # If no company, use employer's name
+                        company_name = (
+                            f"{getattr(employer_profile, 'first_name', '')} {getattr(employer_profile, 'last_name', '')}".strip() or
+                            f"Employer {user.id}"
+                        )
+                        industry = getattr(employer_profile, 'position', '')
+                
+                elif candidate_profile:
+                    # Handle candidate profile
+                    company_name = getattr(candidate_profile, 'full_name', f"User {user.id}")
+                    industry = getattr(candidate_profile, 'title', 'Candidate')
+                    
+                    # Get candidate's profile image if available
+                    profile_image = getattr(candidate_profile, 'profile_image', None)
+                    if profile_image and hasattr(profile_image, 'url'):
+                        try:
+                            logo_url = profile_image.url
+                            # Make sure the URL is absolute
+                            if logo_url and not (logo_url.startswith('http://') or logo_url.startswith('https://')):
+                                logo_url = f"https://flit.s3.us-west-1.amazonaws.com/{logo_url}"
+                        except Exception as e:
+                            print(f"Error getting profile image for candidate {user.id}: {str(e)}")
+                            logo_url = None
+                
+                # Handle admin users (only if not already handled by employer or candidate profile)
+                if (user.is_staff or user.is_superuser) and not employer_profile and not candidate_profile:
+                    # For admin users, use their full name or username
+                    company_name = user.get_full_name() or user.username or f"User {user.id}"
+                    # Get role name from the database, default to 'admin' if not available
+                    if hasattr(user, 'role') and user.role:
+                        industry = getattr(user.role, 'name', '').lower() or 'admin'
+                    else:
+                        # If no role is set, check if user is in the admin group
+                        from django.contrib.auth.models import Group
+                        if user.groups.filter(name='admin').exists():
+                            industry = 'admin'
+                        else:
+                            industry = 'staff' if user.is_staff else 'admin'
+                    
+                    # Try to get profile image from user profile if available
+                    if hasattr(user, 'profile') and hasattr(user.profile, 'profile_picture'):
+                        try:
+                            logo_url = user.profile.profile_picture.url
+                            # Make sure the URL is absolute
+                            if logo_url and not (logo_url.startswith('http://') or logo_url.startswith('https://')):
+                                logo_url = f"https://flit.s3.us-west-1.amazonaws.com/{logo_url}"
+                        except Exception as e:
+                            print(f"Error getting profile image for admin {user.id}: {str(e)}")
+                            logo_url = None
+                
+                latest_msg = ChatMessage.objects.filter(
+                    (Q(sender=user, recipient_id=user_id) | 
+                     Q(recipient=user, sender_id=user_id))
+                ).order_by('-created_at').first()
+                
+                result.append({
+                    'id': user.id,
+                    'company_name': company_name,
+                    'industry': industry,
+                    'logo': logo_url,
+                    'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
+                    'last_seen': user.last_login.isoformat() if user.last_login else None,
+                    'unread_count': user.unread_count or 0
+                })
         
         # Sort by most recent message
-        result.sort(key=lambda x: x['last_message_time'] or '', reverse=True)
+        result.sort(key=lambda x: x.get('last_message_time') or '', reverse=True)
         
         return {
             'count': len(result),
-            'unread_candidates_count': sum(1 for u in result if u['unread_count'] > 0),
+            'unread_count': sum(1 for u in result if u.get('unread_count', 0) > 0),
             'next': None,
             'previous': None,
             'results': result

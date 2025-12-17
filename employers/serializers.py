@@ -97,6 +97,7 @@ class EmployerListSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    host_email = serializers.SerializerMethodField()
     
     def get_company_id(self, obj):
         """Return company ID only if company exists"""
@@ -109,7 +110,8 @@ class EmployerListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'full_name',
             'company_id', 'company_name',
-            'profile_completed', 'created_at'
+            'profile_completed', 'created_at',
+            'host_email'
         )
 
     def get_profile_completed(self, obj):
@@ -117,6 +119,13 @@ class EmployerListSerializer(serializers.ModelSerializer):
             return bool(getattr(obj, 'is_profile_complete', False))
         except Exception:
             return False
+            
+    def get_host_email(self, obj):
+        # Only show host email if the requesting user is an employer
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'employer_profile'):
+            return obj.user.email if obj.user else None
+        return None
 
 
 class EmployerProfileUpdateSerializer(serializers.ModelSerializer):

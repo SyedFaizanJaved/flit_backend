@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -16,6 +17,7 @@ from .serializers import (
     CandidateConversationSummarySerializer
 )
 from candidates.models import Candidate
+from employers.models import Employer
 import logging
 logger = logging.getLogger("exceptions")
 
@@ -201,15 +203,75 @@ class CandidateEmployerConversationListView(generics.ListAPIView):
             is_read=False
         ).values('sender').annotate(count=Count('id')).values('count')
 
+        # Get base queryset with all participants
         participants = User.objects.filter(id__in=all_participants).exclude(id=self.request.user.id)
-
-        return participants.select_related(
-            'employer_profile__company',
-            'candidate_profile'
-        ).annotate(
+        
+        # Prefetch related profiles and companies with all necessary fields
+        participants = participants.prefetch_related(
+            models.Prefetch(
+                'employer_profile',
+                queryset=Employer.objects.select_related('company').only(
+                    'id', 'user', 'first_name', 'last_name', 'company', 'profile_picture', 'position'
+                )
+            ),
+            models.Prefetch(
+                'candidate_profile',
+                queryset=Candidate.objects.only('id', 'user', 'title', 'profile_image', 'full_name')
+            ),
+            'role'  # Prefetch the role to avoid additional queries
+        )
+        
+        # Make sure to select related company data for employer_profile
+        participants = participants.select_related('employer_profile__company')
+        
+        # Annotate with message data
+        participants = participants.annotate(
             last_message_time=Subquery(latest_msg_subq, output_field=models.DateTimeField()),
             unread_count=Coalesce(Subquery(unread_count_subq, output_field=models.IntegerField()), 0)
-        ).order_by('-last_message_time', '-last_login')
+        )
+        
+        # Debug: Print detailed participant data
+        if settings.DEBUG:  # Only print in debug mode
+            print("\n=== DEBUG: Participant Data ===")
+            for p in participants:
+                print(f"\nParticipant ID: {p.id}")
+                print(f"Email: {getattr(p, 'email', 'No email')}")
+                print(f"Name: {getattr(p, 'first_name', '')} {getattr(p, 'last_name', '')}")
+                
+                # Check user role/type
+                if hasattr(p, 'role') and p.role:
+                    print(f"Role: {p.role.name}")
+                
+                # Check employer profile and company
+                employer = getattr(p, 'employer_profile', None)
+                if employer:
+                    print("Has employer_profile")
+                    print(f"  Employer Name: {getattr(employer, 'first_name', '')} {getattr(employer, 'last_name', '')}")
+                    company = getattr(employer, 'company', None)
+                    if company:
+                        print(f"  Company: {getattr(company, 'company_name', getattr(company, 'name', 'No company name'))}")
+                        print(f"  Industry: {getattr(company, 'industry', 'No industry')}")
+                        logo = getattr(company, 'logo', None)
+                        print(f"  Logo: {logo.url if logo else 'No logo'}")
+                    else:
+                        print("  No company associated")
+                
+                # Check candidate profile
+                candidate = getattr(p, 'candidate_profile', None)
+                if candidate:
+                    print("Has candidate_profile")
+                    print(f"  Candidate Name: {getattr(candidate, 'full_name', 'No name')}")
+                    print(f"  Title: {getattr(candidate, 'title', 'No title')}")
+                    profile_img = getattr(candidate, 'profile_image', None)
+                    print(f"  Profile Image: {profile_img.url if profile_img else 'No image'}")
+                
+                if not employer and not candidate:
+                    print("No employer or candidate profile found")
+                
+                print("-" * 50)
+            print("\n=== END DEBUG ===\n")
+        
+        return participants.order_by('-last_message_time', '-last_login')
 
 
 class ChatMessageListView(generics.ListCreateAPIView):

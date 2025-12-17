@@ -1,5 +1,6 @@
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
@@ -211,6 +212,8 @@ class MeetingRoomCreateView(generics.CreateAPIView):
 class MeetingRoomListView(generics.ListAPIView):
     serializer_class = MeetingRoomSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = PageNumberPagination
+    page_size = 20
 
     """
     return all non-deleted rooms where:
@@ -221,6 +224,34 @@ class MeetingRoomListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         return MeetingRoom.objects.filter(Q(is_deleted=False) & (Q(employer=user) | Q(privacy='public') | Q(candidate=user))).distinct()
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response_data = {
+                'count': self.paginator.page.paginator.count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'total_pages': self.paginator.page.paginator.num_pages,
+                'current_page': self.paginator.page.number,
+                'results': serializer.data
+            }
+            return Response(response_data)
+            
+        # Fallback to non-paginated response if pagination is not applied
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': queryset.count(),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
+            'results': serializer.data
+        })
 
 
 # --------------------------
