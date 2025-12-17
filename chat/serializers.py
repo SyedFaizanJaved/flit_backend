@@ -107,7 +107,6 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
     last_message_time = serializers.DateTimeField(allow_null=True)
     last_seen = serializers.SerializerMethodField()
     unread_count = serializers.IntegerField()
-    entity_type = serializers.SerializerMethodField()
     
     def _build_absolute_uri(self, path):
         """Helper to build absolute URLs when request context is available."""
@@ -117,58 +116,157 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
         return path
     
     def _get_employer_profile(self, obj):
-        return getattr(obj, 'employer_profile', None)
+        # First try to get employer_profile directly
+        employer = getattr(obj, 'employer_profile', None)
+        
+        # If not found, try to get through user relation
+        if not employer and hasattr(obj, 'user'):
+            employer = getattr(obj.user, 'employer_profile', None)
+            
+        # If still not found, try to get employer through candidate's user (for reverse lookups)
+        if not employer and hasattr(obj, 'candidate_profile'):
+            candidate = obj.candidate_profile
+            if hasattr(candidate, 'user'):
+                employer = getattr(candidate.user, 'employer_profile', None)
+                
+        return employer
     
     def _get_candidate_profile(self, obj):
-        return getattr(obj, 'candidate_profile', None)
+        # First try to get candidate_profile directly
+        candidate = getattr(obj, 'candidate_profile', None)
+        
+        # If not found, try to get through user relation
+        if not candidate and hasattr(obj, 'user'):
+            candidate = getattr(obj.user, 'candidate_profile', None)
+            
+        # If still not found, try to get candidate through employer's user (for reverse lookups)
+        if not candidate and hasattr(obj, 'employer_profile'):
+            employer = obj.employer_profile
+            if hasattr(employer, 'user'):
+                candidate = getattr(employer.user, 'candidate_profile', None)
+                
+        return candidate
     
     def get_company_name(self, obj):
-        employer = self._get_employer_profile(obj)
-        if employer and getattr(employer, 'company', None):
-            return employer.company.company_name or employer.company.name
-        if employer and (employer.first_name or employer.last_name):
-            return employer.full_name
-        
-        candidate = self._get_candidate_profile(obj)
-        if candidate and candidate.full_name:
-            return candidate.full_name
-        
-        return obj.get_full_name() or obj.email
+        try:
+            # Check if this is an employer with company
+            employer = self._get_employer_profile(obj)
+            if employer:
+                # If employer has a company
+                if hasattr(employer, 'company') and employer.company:
+                    return getattr(employer.company, 'company_name', None) or \
+                           getattr(employer.company, 'name', 'Company')
+                
+                # If no company but has name fields
+                if hasattr(employer, 'full_name') and employer.full_name:
+                    return employer.full_name.strip()
+                if hasattr(employer, 'first_name') or hasattr(employer, 'last_name'):
+                    return f"{getattr(employer, 'first_name', '')} {getattr(employer, 'last_name', '')}".strip()
+            
+            # Check if this is a candidate
+            candidate = self._get_candidate_profile(obj)
+            if candidate:
+                if hasattr(candidate, 'full_name') and candidate.full_name:
+                    return candidate.full_name.strip()
+                if hasattr(candidate, 'first_name') or hasattr(candidate, 'last_name'):
+                    return f"{getattr(candidate, 'first_name', '')} {getattr(candidate, 'last_name', '')}".strip()
+            
+            # Fallback to user's name or email
+            if hasattr(obj, 'get_full_name') and obj.get_full_name():
+                return obj.get_full_name().strip()
+            if hasattr(obj, 'email'):
+                return obj.email
+                
+        except Exception as e:
+            print(f"Error in get_company_name: {str(e)}")
+            
+        return 'User'
     
     def get_industry(self, obj):
-        employer = self._get_employer_profile(obj)
-        if employer and getattr(employer, 'company', None):
-            return employer.company.industry or employer.position or 'Industry not specified'
-        
-        candidate = self._get_candidate_profile(obj)
-        if candidate and candidate.title:
-            return candidate.title
-        
-        role_name = getattr(getattr(obj, 'role', None), 'name', None)
-        return role_name or 'User'
+        try:
+            # Check if this is an employer with company
+            employer = self._get_employer_profile(obj)
+            if employer:
+                # If employer has a company with industry
+                if hasattr(employer, 'company') and employer.company:
+                    industry = getattr(employer.company, 'industry', None)
+                    if industry:
+                        return industry
+                
+                # Fallback to position or default
+                return getattr(employer, 'position', 'Employer')
+            
+            # Check if this is a candidate
+            candidate = self._get_candidate_profile(obj)
+            if candidate:
+                if hasattr(candidate, 'title') and candidate.title:
+                    return candidate.title
+                return 'Candidate'
+            
+            # Fallback to role or user type
+            if hasattr(obj, 'role') and obj.role and hasattr(obj.role, 'name'):
+                return obj.role.name
+            if hasattr(obj, 'user_type'):
+                return str(obj.user_type).capitalize()
+                
+        except Exception as e:
+            print(f"Error in get_industry: {str(e)}")
+            
+        return 'User'
     
     def get_logo(self, obj):
-        logo_path = None
-        employer = self._get_employer_profile(obj)
-        if employer:
-            if getattr(employer, 'company', None) and employer.company.logo:
-                logo_path = employer.company.logo.url
-            elif employer.profile_picture:
-                logo_path = employer.profile_picture.url
-        if not logo_path:
+        try:
+            # First try to get employer logo
+            employer = self._get_employer_profile(obj)
+            if employer:
+                try:
+                    # Try to get company logo first
+                    if (hasattr(employer, 'company') and employer.company and 
+                        hasattr(employer.company, 'logo') and employer.company.logo):
+                        logo_url = getattr(employer.company.logo, 'url', None)
+                        if logo_url:
+                            return self._build_absolute_uri(logo_url)
+                    
+                    # Fall back to employer's profile picture
+                    if hasattr(employer, 'profile_picture') and employer.profile_picture:
+                        profile_pic_url = getattr(employer.profile_picture, 'url', None)
+                        if profile_pic_url:
+                            return self._build_absolute_uri(profile_pic_url)
+                            
+                except Exception as e:
+                    print(f"Error getting employer logo for user {getattr(obj, 'id', 'unknown')}: {str(e)}")
+            
+            # If no employer logo found, try candidate profile image
             candidate = self._get_candidate_profile(obj)
-            if candidate and candidate.profile_image:
-                logo_path = candidate.profile_image.url
-        return self._build_absolute_uri(logo_path) if logo_path else None
+            if candidate:
+                try:
+                    if hasattr(candidate, 'profile_image') and candidate.profile_image:
+                        profile_img_url = getattr(candidate.profile_image, 'url', None)
+                        if profile_img_url:
+                            return self._build_absolute_uri(profile_img_url)
+                except Exception as e:
+                    print(f"Error getting candidate profile image for user {getattr(obj, 'id', 'unknown')}: {str(e)}")
+            
+            # If we have a user object with a profile picture
+            user = getattr(obj, 'user', obj)
+            if hasattr(user, 'profile_picture') and user.profile_picture:
+                try:
+                    user_pic_url = getattr(user.profile_picture, 'url', None)
+                    if user_pic_url:
+                        return self._build_absolute_uri(user_pic_url)
+                except Exception as e:
+                    print(f"Error getting user profile image: {str(e)}")
+                    
+        except Exception as e:
+            print(f"Unexpected error in get_logo for user {getattr(obj, 'id', 'unknown')}: {str(e)}")
+            
+        # Return None if no logo/image found
+        return None
     
     def get_last_seen(self, obj):
         return getattr(obj, 'last_login', None)
     
-    def get_entity_type(self, obj):
-        if self._get_employer_profile(obj):
-            return 'employer'
-        if self._get_candidate_profile(obj):
-            return 'candidate'
+    # Removed entity_type field as per requirement
         return 'user'
 
 class ChatMessageSerializer(serializers.ModelSerializer):

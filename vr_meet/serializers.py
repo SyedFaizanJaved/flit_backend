@@ -25,10 +25,22 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
     )
     meeting_date = serializers.ReadOnlyField()
     meeting_title = serializers.CharField(required=False, allow_blank=True)
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'role') and request.user.role.name == 'employer':
+            self.fields['host_email'] = serializers.SerializerMethodField()
+        else:
+            # Remove host_email from fields if it exists
+            self.fields.pop('host_email', None)
+    
+    def get_host_email(self, obj):
+        return obj.host_email
 
     class Meta:
         model = MeetingRoom
-        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code', 'host_email']
+        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code']
         read_only_fields = ('created_at', 'id', 'meet_link', 'employer', 'meeting_date', 'employer_company')
     
     def get_employer_company(self, obj):
