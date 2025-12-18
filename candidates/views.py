@@ -1761,11 +1761,27 @@ class CandidateViewSet(viewsets.ModelViewSet):
             'results': serializer.data
         }, status=status.HTTP_200_OK)
 
+    def _get_clean_url(self, file_field):
+        """Helper method to get clean URL from a FileField"""
+        if not file_field:
+            return None
+        
+        # Get the storage-relative path
+        path = file_field.name
+        
+        # If using S3Boto3Storage, we need to handle the URL generation differently
+        if hasattr(file_field.storage, 'bucket_name'):
+            # For S3, use the storage's url method to generate the correct URL
+            # This handles all the URL encoding properly
+            return file_field.storage.url(path)
+        
+        # For default storage, use the storage's url method
+        return file_field.storage.url(path)
+
     @action(detail=False, methods=['post'], url_path='upload-resume', permission_classes=[permissions.IsAuthenticated])
     def upload_resume(self, request):
         """
-        Handle resume file upload and parsing
-        Only saves the parsed resume data to the database without updating other fields
+        Handle resume file upload, save to resume_url field, and parse using ML API
         """
         candidate = self._get_candidate_profile(request.user)
         if isinstance(candidate, Response):
@@ -1781,7 +1797,25 @@ class CandidateViewSet(viewsets.ModelViewSet):
         resume_file = request.FILES['resume']
         
         try:
-            # Save the resume file temporarily
+            # Generate a clean filename
+            import os
+            from django.utils.text import get_valid_filename
+            
+            # Get the file extension
+            filename = get_valid_filename(resume_file.name)
+            file_ext = os.path.splitext(filename)[1]
+            
+            # Generate a unique filename to prevent collisions
+            import uuid
+            unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+            
+            # Save the file with the new filename
+            candidate.resume_url.save(unique_filename, resume_file, save=False)
+            
+            # Save the candidate to ensure the file is saved to the correct location
+            candidate.save(update_fields=['resume_url', 'updated_at'])
+            
+            # Save the resume file temporarily for ML API processing
             temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_resumes')
             os.makedirs(temp_dir, exist_ok=True)
             temp_path = os.path.join(temp_dir, resume_file.name)
@@ -1794,7 +1828,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
             ml_api_url = "https://dev-flit-ai.neurooceans.com/parse_cv"
             
             with open(temp_path, 'rb') as f:
-                files = {'file': (resume_file.name, f, 'application/pdf')}
+                files = {'file': (resume_file.name, f, resume_file.content_type)}
                 response = requests.post(ml_api_url, files=files)
             
             # Remove the temporary file
@@ -1806,7 +1840,11 @@ class CandidateViewSet(viewsets.ModelViewSet):
             if response.status_code != 200:
                 logger.error(f"Failed to parse resume. Status: {response.status_code}, Response: {response.text}")
                 return Response(
-                    {"error": "Failed to parse resume", "status_code": response.status_code}, 
+                    {
+                        "error": "Failed to parse resume using ML service", 
+                        "status_code": response.status_code,
+                        "resume_url": self._get_clean_url(candidate.resume_url)
+                    }, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             
@@ -1818,33 +1856,55 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     error_msg = data.get('message', 'Unknown error from ML service')
                     logger.error(f"ML service returned error: {error_msg}")
                     return Response(
-                        {"error": "Failed to parse resume", "details": error_msg}, 
+                        {
+                            "error": "Failed to parse resume", 
+                            "details": error_msg,
+                            "resume_url": self._get_clean_url(candidate.resume_url)
+                        }, 
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Only update the resume_data field
+                # Update the resume_data field with parsed data
                 candidate.resume_data = data.get('data', {})
                 
-                # Save only the resume_data field to the database
+                # Save the updated resume_data
                 candidate.save(update_fields=['resume_data', 'updated_at'])
+                
+                # Get the URL and ensure it's not double-encoded
+                resume_url = None
+                if candidate.resume_url:
+                    # If the URL is already absolute, use it as is
+                    if candidate.resume_url.url.startswith(('http://', 'https://')):
+                        resume_url = candidate.resume_url.url
+                    else:
+                        # Otherwise, build the URL manually to prevent double encoding
+                        from django.core.files.storage import default_storage
+                        resume_url = default_storage.url(candidate.resume_url.name)
                 
                 return Response({
                     "success": True,
                     "message": "Resume uploaded and parsed successfully",
+                    "resume_url": resume_url,
                     "resume_data": candidate.resume_data
                 }, status=status.HTTP_200_OK)
                 
             except ValueError as e:
                 logger.error(f"Failed to parse JSON response from ML service: {str(e)}")
                 return Response(
-                    {"error": "Invalid response from resume parsing service"}, 
+                    {
+                        "error": "Invalid response from resume parsing service",
+                        "resume_url": self._get_clean_url(candidate.resume_url)
+                    }, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             
         except Exception as e:
             logger.error(f"Error processing resume: {str(e)}", exc_info=True)
             return Response(
-                {"error": f"Failed to process resume: {str(e)}"}, 
+                {
+                    "error": f"Failed to process resume: {str(e)}",
+                    "resume_url": self._get_clean_url(candidate.resume_url) if hasattr(candidate, 'resume_url') and candidate.resume_url else None
+                }, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -102,6 +102,8 @@ class CandidateSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
+    resume_url = serializers.SerializerMethodField()
+    video_intro_url = serializers.SerializerMethodField()
     viewers_count = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
     reference_responses = serializers.SerializerMethodField()
@@ -131,26 +133,39 @@ class CandidateSerializer(serializers.ModelSerializer):
     def get_preferred_roles(self, obj):
         return self._parse_json_field(obj.preferred_roles)
     
-    def get_profile_image(self, obj):
-        if not obj.profile_image:
+    def _get_file_url(self, file_field):
+        """Helper method to get the URL for a file field"""
+        if not file_field:
             return None
             
         # Get the URL from the file field
-        url = obj.profile_image.url
-        
-        # If the URL is already a full URL, return it as is
-        if url.startswith(('http://', 'https://')):
-            return url
+        try:
+            url = file_field.name  # Get the stored path/URL
             
-        # Otherwise, construct the proper S3 URL
-        from django.conf import settings
-        base_url = f'https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com'
+            # If it's already a full URL, return it as is
+            if url.startswith(('http://', 'https://')):
+                return url
+                
+            # If it's a path, construct the full URL
+            if hasattr(file_field.storage, 'bucket_name'):
+                # For S3 storage
+                return f"https://{file_field.storage.bucket_name}.s3.{file_field.storage.region_name}.amazonaws.com/{url.lstrip('/')}"
+            
+            # For other storage backends, use the storage's url method
+            return file_field.storage.url(url)
+            
+        except Exception as e:
+            logger.error(f"Error generating URL for {file_field}: {str(e)}")
+            return None
+    
+    def get_profile_image(self, obj):
+        return self._get_file_url(obj.profile_image)
         
-        # Remove any leading slashes from the path
-        path = url.lstrip('/')
+    def get_resume_url(self, obj):
+        return self._get_file_url(obj.resume_url)
         
-        # Combine the base URL with the path
-        return f'{base_url}/{path}'
+    def get_video_intro_url(self, obj):
+        return self._get_file_url(obj.video_intro_url)
     
     class Meta:
         model = Candidate
@@ -158,7 +173,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
             "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
-            "profile_image", "resume_url", "profile_views", "viewers_count", "profile_views_display",
+            "profile_image", "profile_views", "viewers_count", "profile_views_display",
             "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
             "resume_data" 
         ]

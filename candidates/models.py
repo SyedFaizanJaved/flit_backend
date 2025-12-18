@@ -66,8 +66,8 @@ class Candidate(models.Model):
     # Portfolio & Media
     portfolio_links = models.JSONField(default=list)  # List of dicts: {name, url}
     profile_image = models.FileField(upload_to='candidates/profile_images/', blank=True, null=True)
-    resume_url = models.URLField(blank=True, null=True)
-    video_intro_url = models.URLField(blank=True, null=True)
+    resume_url = models.FileField(upload_to='candidates/resumes/', blank=True, null=True)
+    video_intro_url = models.FileField(upload_to='candidates/videos/', blank=True, null=True)
     intro_video_description = models.TextField(blank=True, null=True)
     # Full raw transcription text returned by ML services
     video_transcription = models.TextField(blank=True, null=True)
