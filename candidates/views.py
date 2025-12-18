@@ -705,6 +705,7 @@ class CandidateViewSet(viewsets.ModelViewSet):
         try:
             filename = get_valid_filename(file_obj.name)
             storage_path = default_storage.save(f'{storage_path_prefix}/{filename}', file_obj)
+            logger.info(f"FINDING ERROR IN FILE UPLOADINGS >>> {storage_path} ENDED.!")
             public_url = default_storage.url(storage_path)
             return request.build_absolute_uri(public_url)
         except Exception:
