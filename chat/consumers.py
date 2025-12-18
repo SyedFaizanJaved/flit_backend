@@ -78,8 +78,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         ).count()
         
         return {
-            'unread_count': sender_unread,    # Unread from this specific sender
-            'total_count': unique_senders_count # Total number of people with unread messages
+            'unread_count': sender_unread,    
+            'total_count': unique_senders_count 
         }
 
     async def receive(self, text_data):
@@ -167,6 +167,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'total_count': unread_counts.get('total_count', 0)
                 }
             )
+            
+            # Notify both sender and recipient's chat lists to update
+            for user_id in [self.sender_id, self.recipient_id]:
+                # Determine user type for the group name
+                user_type = 'employer' if await self.is_employer(user_id) else 'candidate'
+                group_name = f'chat_list_{user_type}_{user_id}'
+                
+                # Send update to chat list group
+                await self.channel_layer.group_send(
+                    group_name,
+                    {
+                        'type': 'chat_message',
+                        'sender_id': self.sender_id,
+                        'recipient_id': self.recipient_id
+                    }
+                )
                 
         except json.JSONDecodeError:
             error_msg = 'Invalid JSON format'
@@ -191,6 +207,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'status': 'error'
             }))
 
+    @database_sync_to_async
+    def is_employer(self, user_id):
+     
+        return Employer.objects.filter(user_id=user_id).exists()
+        
     async def chat_message(self, event):
         # Send message to WebSocket
         await self.send(text_data=json.dumps({
