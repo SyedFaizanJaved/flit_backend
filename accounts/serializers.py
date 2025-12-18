@@ -58,8 +58,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         if len(password) < 8:
             raise ValidationError({'password': 'Password must be at least 8 characters long.'})
         
-        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
-            raise ValidationError({'password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        if not re.match(r'^.+$', password):
+            raise ValidationError({'password': 'Invalid password format.'})
         
         validate_password(password)
         
