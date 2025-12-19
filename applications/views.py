@@ -1,6 +1,7 @@
 from rest_framework import generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db import models
@@ -29,13 +30,16 @@ from rest_framework.exceptions import ValidationError
 from vr_meet.views import create_google_event
 from vr_meet.models import MeetingRoom
 import logging
+from utils.pagination import CustomPagination
+
 logger = logging.getLogger("exceptions")
+
 
 class JobApplicationListView(generics.ListCreateAPIView):
     """
     Job application list and create view
     """
-
+    pagination_class = CustomPagination
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["status", "is_shortlisted", "is_rejected"]
@@ -71,7 +75,7 @@ class ProjectApplicationListView(generics.ListCreateAPIView):
     """
     Project application list and create view
     """
-
+    pagination_class = CustomPagination
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["status", "is_shortlisted", "is_rejected"]

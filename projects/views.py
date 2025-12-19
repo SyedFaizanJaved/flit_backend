@@ -15,6 +15,8 @@ import requests
 import time
 import os
 from django.conf import settings
+from django.db import models
+from utils.pagination import CustomPagination
 
 exception_logger = logging.getLogger("exceptions")
 logger = logging.getLogger(__name__)
@@ -42,8 +44,38 @@ class PublicProjectViewSet(mixins.ListModelMixin,
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'paymentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
+    ordering_fields = ['created_at', 'budget_min', 'budget_max']
     ordering = ['-created_at']
-    pagination_class = None  # Disable pagination to show all projects on one page
+    pagination_class = CustomPagination
+    
+    def get_queryset(self):
+        """
+        Return only active projects and apply any additional filtering
+        """
+        queryset = super().get_queryset()
+        
+        # Apply any additional filtering from query parameters
+        category = self.request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+            
+        payment_type = self.request.query_params.get('paymentType')
+        if payment_type:
+            queryset = queryset.filter(paymentType=payment_type)
+            
+        company_id = self.request.query_params.get('company')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+            
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                models.Q(title__icontains=search_query) |
+                models.Q(description__icontains=search_query) |
+                models.Q(company__company_name__icontains=search_query)
+            )
+            
+        return queryset.distinct()
 
 
 

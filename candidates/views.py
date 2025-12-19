@@ -3,11 +3,15 @@ import json
 import logging
 import os
 import requests
+from django.http import Http404
+from rest_framework.exceptions import PermissionDenied
 import boto3
 # Set up logging
 logger = logging.getLogger(__name__)
 from django.conf import settings
 from projects.models import Project, ProjectSkill  # Add ProjectSkill import
+from projects.serializers import ProjectListSerializer
+from jobs.serializers import JobListSerializer
 from django.utils import timezone
 import time
 from django.db import transaction, models, IntegrityError
@@ -38,7 +42,9 @@ class IsCandidateUser(permissions.BasePermission):
         # For object-level permission, check if the object belongs to the user's candidate profile
         return obj.candidate.user == request.user
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
+from utils.pagination import CustomPagination
 from accounts.views import BaseRoleRegistrationView
 from jobs.models import Job
 from .models import ReferenceRequest
@@ -126,8 +132,8 @@ class DashboardBaseView(APIView):
         try:
             return user.candidate_profile
         except Candidate.DoesNotExist:
-            exception_logger.error("Candidate.DoesNotExist: Candidate profile not found")
-            raise Http404('Candidate profile not found')
+            exception_logger.error(f"User {user.id} tried to access candidate endpoint but has no candidate profile")
+            raise PermissionDenied('You must be logged in as a candidate to access this resource.')
 
 
 class CandidateDashboardView(DashboardBaseView):
@@ -297,15 +303,19 @@ class CandidateApplicationsView(DashboardBaseView):
         
 
 
-class CandidateLatestJobsView(DashboardBaseView):
+class CandidateLatestJobsView(DashboardBaseView, generics.ListAPIView):
     """Endpoint for latest jobs relevant to candidate."""
-    def get(self, request):
-        candidate = self.get_candidate_profile(request.user)
+    pagination_class = CustomPagination
+    serializer_class = JobListSerializer
+    
+    def get_queryset(self):
+        candidate = self.get_candidate_profile(self.request.user)
         logger = logging.getLogger(__name__)
         
         # Try to get personalized jobs from ML endpoint
-        ml_success = False
+        self.ml_success = False
         latest_jobs = []
+        
         try:
             # Get ML URL from environment variable with fallback
             ml_base_url = f"{settings.FLIT_AI_URL}/"
@@ -331,92 +341,202 @@ class CandidateLatestJobsView(DashboardBaseView):
                         # Process each job in the ML response
                         for job_data in ranked_opportunities:
                             try:
-                                job_id = job_data.get('job_id')
-                                if not job_id:
+                                job_id = job_data.get('job_id') or job_data.get('id')
+                                if job_id is None:
                                     logger.warning("Skipping job without job_id")
                                     continue
-                                                                # Only include jobs with 'ml' in title or description (case-insensitive)
-                                title = job_data.get('title', '').lower()
-                                description = job_data.get('description', '').lower()
                                 
-                                if 'ml' in title or 'ml' in description:
-                                    # Create a dictionary with the transformed job data
-                                    job = {
-                                        'id': job_id,
-                                        'title': job_data.get('title', 'No Title'),
-                                        'description': job_data.get('description', ''),
-                                        'workStyle': job_data.get('work_style', 'remote'),
-                                        'category': job_data.get('category', 'other'),
-                                        'experienceLevel': job_data.get('experience_level', 'mid'),
-                                        'employmentType': job_data.get('employment_type', 'full-time'),
-                                        'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
-                                        'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
-                                        'status': job_data.get('status', 'active'),
-                                        'created_at': job_data.get('created_at', timezone.now().isoformat()),
-                                        'location': job_data.get('location'),
-                                        'skills': job_data.get('skills', [])
-                                    }
-                                    
-                                    # Add company information if available
-                                    company_data = job_data.get('company', {})
-                                    if company_data:
-                                        job.update({
-                                            'company_name': company_data.get('company_name', 'Unknown Company'),
-                                            'company_id': company_data.get('id')
-                                        })
-                                    
-                                    latest_jobs.append(job)
-                                    logger.info(f"Added ML job from ML data: {job_id} - {job['title']}")
-                                else:
-                                    logger.info(f"Skipping non-ML job: {job_id} - {job_data.get('title', 'No Title')}")
+                                # Create a dictionary with the transformed job data
+                                job = {
+                                    'id': job_id,
+                                    'title': job_data.get('title', 'No Title'),
+                                    'description': job_data.get('description', ''),
+                                    'workStyle': job_data.get('work_style', 'remote'),
+                                    'category': job_data.get('category', 'other'),
+                                    'experienceLevel': job_data.get('experience_level', 'mid'),
+                                    'employmentType': job_data.get('employment_type', 'full-time'),
+                                    'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
+                                    'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
+                                    'status': job_data.get('status', 'active'),
+                                    'created_at': job_data.get('created_at', timezone.now().isoformat()),
+                                    'location': job_data.get('location'),
+                                    'skills': job_data.get('skills', [])
+                                }
+                                
+                                # Add company information if available
+                                company_data = job_data.get('company', {})
+                                if company_data:
+                                    job.update({
+                                        'company_name': company_data.get('company_name', 'Unknown Company'),
+                                        'company_id': company_data.get('id')
+                                    })
+                                
+                                latest_jobs.append(job)
+                                logger.info(f"Added job from ML data: {job_id} - {job['title']}")
                                 
                                 # Limit to 10 jobs
                                 if len(latest_jobs) >= 10:
                                     break
-                            
-                            except Exception as e:
-                                exception_logger.exception("Error processing job from ML data")
-                                logger.error(f"Error processing job from ML data: {str(e)}", exc_info=True)
+                                    
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Invalid job ID format: {job_data.get('job_id') or job_data.get('id')}")
+                                logger.error(f"Error processing job data: {str(e)}", exc_info=True)
                         
                         if latest_jobs:
-                            ml_success = True
+                            self.ml_success = True
                             logger.info(f"Successfully got {len(latest_jobs)} jobs from ML service")
+                            return latest_jobs
                         else:
                             logger.warning("No valid jobs processed from ML response")
                     else:
                         logger.warning("No ranked_opportunities found or empty in ML response")
-                except ValueError as e:
-                    exception_logger.exception("Invalid JSON in ML response")
-                    logger.error(f"Invalid JSON in ML response: {str(e)}")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse ML service response: {e}")
             else:
                 logger.warning(f"ML service returned status code: {ml_response.status_code}")
                 logger.warning(f"Response content: {ml_response.text}")
                 
-        except requests.exceptions.RequestException as e:
-            exception_logger.exception("Network error calling ML service")
-            logger.error(f"Network error calling ML service: {str(e)}", exc_info=True)
+        except requests.RequestException as e:
+            logger.error(f"Request to ML service failed: {str(e)}")
         except Exception as e:
-            exception_logger.exception("Unexpected error calling ML service")
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
-        # Only return jobs if we successfully got them from ML service
-        if ml_success and latest_jobs:
-            return Response({
-                'latest_jobs': latest_jobs,
-                'ml_success': True,
-                'message': f'Found {len(latest_jobs)} ML-related jobs' if latest_jobs else 'No ML-related jobs found'
-            })
+        # Fallback to original logic if ML fails or no results
+        if not ml_success:
+            logger.info("Falling back to database query for latest jobs")
+            # Get candidate's skills for filtering (original logic) - but you're not using skills filter here?
+            # candidate_skills = candidate.skills or []  # Unused in fallback?
             
-        # If we get here, either ML service failed or returned no jobs
-        logger.warning("No ML jobs found or ML service failed")
+            # Get latest active jobs, ordered by creation date
+            latest_jobs = Job.objects.filter(
+                status='active'
+            ).select_related('company').order_by('-created_at')[:10]
+        
+        # If we have Job objects (from fallback), serialize them
+        if latest_jobs and isinstance(latest_jobs[0], Job):
+            job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
+            return Response({
+                'latest_jobs': job_serializer.data
+            })
+        # If we have dictionaries (from ML API), return them directly
+        elif latest_jobs and isinstance(latest_jobs[0], dict):
+            return Response({
+                'latest_jobs': latest_jobs
+            })
+        # Fallback to empty list if no jobs found
         return Response({
-            'latest_jobs': [],
-            'ml_success': False,
-            'message': 'No ML-related jobs found'
+            'latest_jobs': []
         })
 
 class CandidateLatestProjectsView(DashboardBaseView):
     """Endpoint for latest projects relevant to candidate."""
+    pagination_class = CustomPagination
+    serializer_class = ProjectListSerializer
+    
+    def get_queryset(self):
+        candidate = self.get_candidate_profile(self.request.user)
+        logger = logging.getLogger(__name__)
+        
+        # Try to get personalized projects from ML endpoint
+        self.ml_success = False
+        latest_projects = []
+        
+        try:
+            # Get ML URL from environment variable with fallback
+            ml_base_url = f"{settings.FLIT_AI_URL}/"
+            ml_url = f"{ml_base_url.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
+            logger.info(f"Calling ML service at: {ml_url}")
+            
+            # Increased timeout to 5 minutes (300 seconds)
+            ml_response = requests.get(ml_url, timeout=300)
+            logger.info(f"ML service response status: {ml_response.status_code}")
+            
+            if ml_response.status_code == 200:
+                try:
+                    ml_data = ml_response.json()
+                    ranked_projects = ml_data.get('ranked_projects', [])
+                    
+                    if isinstance(ranked_projects, list) and ranked_projects:
+                        logger.info(f"Found {len(ranked_projects)} project opportunities in ML response")
+                        
+                        for project_data in ranked_projects:
+                            try:
+                                project_id = project_data.get('id')
+                                if project_id is not None:
+                                    project = {
+                                        'id': project_id,
+                                        'title': project_data.get('title', 'No Title'),
+                                        'description': project_data.get('description', ''),
+                                        'category': project_data.get('category', 'other'),
+                                        'status': project_data.get('status', 'active'),
+                                        'created_at': project_data.get('created_at', timezone.now().isoformat()),
+                                        'skills': project_data.get('skills', [])
+                                    }
+                                    latest_projects.append(project)
+                                    
+                                    if len(latest_projects) >= 10:
+                                        break
+                                        
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Invalid project data: {str(e)}")
+                        
+                        if latest_projects:
+                            self.ml_success = True
+                            logger.info(f"Successfully got {len(latest_projects)} projects from ML service")
+                            return latest_projects
+                            
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse ML service response: {e}")
+            else:
+                logger.warning(f"ML service returned status code: {ml_response.status_code}")
+                
+        except requests.RequestException as e:
+            logger.error(f"Request to ML service failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
+        
+        # Fallback to database if ML service fails or returns no results
+        logger.info("Falling back to database query for latest projects")
+        return Project.objects.filter(
+            status='active'
+        ).select_related('company').order_by('-created_at')[:10]
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        # Check if we have Project objects or dictionaries
+        if not queryset:
+            return self.get_paginated_response({
+                'latest_projects': [],
+                'ml_success': getattr(self, 'ml_success', False)
+            })
+            
+        if isinstance(queryset[0], dict):
+            # For dictionaries from ML service
+            # Apply pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                return self.get_paginated_response({
+                    'latest_projects': page,
+                    'ml_success': getattr(self, 'ml_success', False)
+                })
+                
+            # Fallback if pagination is not applied
+            return Response({
+                'count': len(queryset),
+                'next': None,
+                'previous': None,
+                'total_pages': 1,
+                'current_page': 1,
+                'latest_projects': queryset,
+                'ml_success': getattr(self, 'ml_success', False)
+            })
+        else:
+            # For Project objects from database, use the standard list method
+            return super().list(request, *args, **kwargs)
+    
+    # Keep the original get method for backward compatibility
     def get(self, request):
         candidate = self.get_candidate_profile(request.user)
         logger = logging.getLogger(__name__)
@@ -661,7 +781,21 @@ class CandidateLatestProjectsView(DashboardBaseView):
                 
                 response_data.append(project_data)
         
+        # Apply pagination
+        page = self.paginate_queryset(response_data)
+        if page is not None:
+            return self.get_paginated_response({
+                'latest_projects': page,
+                'ml_success': ml_success
+            })
+            
+        # Fallback if pagination is not applied
         return Response({
+            'count': len(response_data),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
             'latest_projects': response_data,
             'ml_success': ml_success,
             'message': 'ML projects retrieved successfully' if ml_success and response_data else 'No ML projects found'
@@ -1562,10 +1696,20 @@ class CandidateViewSet(viewsets.ModelViewSet):
         
         # Add ML update status to response
         response_data = serializer.data
-        response_data['ml_update_status'] = {
-            'success': ml_success,
-            'message': ml_message
-        }
+        # Apply pagination
+        page = self.paginate_queryset(latest_jobs)
+        if page is not None:
+            return self.get_paginated_response({
+                'success': True,
+                'ml_success': ml_success,
+                'latest_jobs': page
+            })
+            
+        return Response({
+            'success': True,
+            'ml_success': ml_success,
+            'latest_jobs': latest_jobs
+        })
         
         # Initialize response data with updated candidate data
         response_data = serializer.data
@@ -2237,40 +2381,38 @@ class CandidateAIMatchingView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
-class DiscoverTalentView(APIView):
+class DiscoverTalentView(generics.ListAPIView):
     """
     API endpoint to discover talent with minimal required fields
     """
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
+    serializer_class = DiscoverTalentSerializer
     
-    def get(self, request):
+    def get_queryset(self):
         # Get all active candidates
-        candidates = Candidate.objects.select_related('user').filter(
+        queryset = Candidate.objects.select_related('user').filter(
             user__is_active=True
         )
         
         # Apply filters if provided in query params
-        skills = request.query_params.getlist('skills', [])
+        skills = self.request.query_params.getlist('skills', [])
         if skills:
-            candidates = candidates.filter(skills__name__in=skills).distinct()
+            queryset = queryset.filter(skills__name__in=skills).distinct()
             
-        location = request.query_params.get('location')
+        location = self.request.query_params.get('location')
         if location:
-            candidates = candidates.filter(
+            queryset = queryset.filter(
                 Q(current_location__icontains=location) | 
                 Q(user__city__icontains=location) |
                 Q(user__country__icontains=location)
             )
             
-        availability = request.query_params.get('availability')
+        availability = self.request.query_params.get('availability')
         if availability:
-            candidates = candidates.filter(availability=availability)
+            queryset = queryset.filter(availability=availability)
             
-        # Serialize all candidates without pagination
-        serializer = DiscoverTalentSerializer(candidates, many=True)
-        
-        # Return all results directly
-        return Response(serializer.data)
+        return queryset
 
 
 class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):

@@ -17,7 +17,9 @@ from accounts.permissions import IsEmployer
 import requests
 import time
 from django.conf import settings
+from django.db import models
 import os
+from utils.pagination import CustomPagination
 
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
@@ -42,13 +44,50 @@ class PublicJobViewSet(mixins.ListModelMixin,
     """
     queryset = Job.objects.all()
     serializer_class = JobListSerializer
+    pagination_class = CustomPagination
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
-    pagination_class = None  # Disable pagination to show all jobs on one page
+    
+    def get_queryset(self):
+        """
+        Return only active jobs and apply any additional filtering
+        """
+        queryset = super().get_queryset()
+        
+        # Apply any additional filtering from query parameters
+        work_style = self.request.query_params.get('workStyle')
+        if work_style:
+            queryset = queryset.filter(workStyle=work_style)
+            
+        category = self.request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+            
+        experience_level = self.request.query_params.get('experienceLevel')
+        if experience_level:
+            queryset = queryset.filter(experienceLevel=experience_level)
+            
+        employment_type = self.request.query_params.get('employmentType')
+        if employment_type:
+            queryset = queryset.filter(employmentType=employment_type)
+            
+        company_id = self.request.query_params.get('company')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+            
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                models.Q(title__icontains=search_query) |
+                models.Q(description__icontains=search_query) |
+                models.Q(company__company_name__icontains=search_query)
+            )
+            
+        return queryset.distinct()
 
 
 class JobViewSet(viewsets.ModelViewSet):
