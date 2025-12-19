@@ -1733,19 +1733,11 @@ class CandidateViewSet(viewsets.ModelViewSet):
         
         # Add ML update status to response
         response_data = serializer.data
-        # Apply pagination
-        page = self.paginate_queryset(latest_jobs)
-        if page is not None:
-            return self.get_paginated_response({
-                'success': True,
-                'ml_success': ml_success,
-                'latest_jobs': page
-            })
-            
+        
         return Response({
             'success': True,
             'ml_success': ml_success,
-            'latest_jobs': latest_jobs
+            'candidate': response_data
         })
         
         # Initialize response data with updated candidate data
