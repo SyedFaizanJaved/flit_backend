@@ -26,6 +26,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework import permissions
 
@@ -303,11 +304,19 @@ class CandidateApplicationsView(DashboardBaseView):
         
 
 
-class CandidateLatestJobsView(DashboardBaseView, generics.ListAPIView):
+class CandidateLatestJobsView(ListAPIView):
     """Endpoint for latest jobs relevant to candidate."""
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = JobListSerializer
     
+    def get_candidate_profile(self, user):
+        """Get the candidate profile for the authenticated user."""
+        try:
+            return user.candidate_profile
+        except Candidate.DoesNotExist:
+            raise NotFound("Candidate profile not found for this user.")
+            
     def get_queryset(self):
         candidate = self.get_candidate_profile(self.request.user)
         logger = logging.getLogger(__name__)
@@ -413,24 +422,45 @@ class CandidateLatestJobsView(DashboardBaseView, generics.ListAPIView):
                 status='active'
             ).select_related('company').order_by('-created_at')[:10]
         
-        # If we have Job objects (from fallback), serialize them
-        if latest_jobs and isinstance(latest_jobs[0], Job):
-            job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
-            return Response({
-                'latest_jobs': job_serializer.data
+        return latest_jobs or []
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        # Check if we have Job objects or dictionaries
+        if not queryset:
+            return self.get_paginated_response({
+                'latest_jobs': [],
+                'ml_success': getattr(self, 'ml_success', False)
             })
-        # If we have dictionaries (from ML API), return them directly
-        elif latest_jobs and isinstance(latest_jobs[0], dict):
+            
+        if isinstance(queryset[0], dict):
+            # For dictionaries from ML service
+            # Apply pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                return self.get_paginated_response({
+                    'latest_jobs': page,
+                    'ml_success': getattr(self, 'ml_success', False)
+                })
+                
+            # Fallback if pagination is not applied
             return Response({
-                'latest_jobs': latest_jobs
+                'count': len(queryset),
+                'next': None,
+                'previous': None,
+                'total_pages': 1,
+                'current_page': 1,
+                'latest_jobs': queryset,
+                'ml_success': getattr(self, 'ml_success', False)
             })
-        # Fallback to empty list if no jobs found
-        return Response({
-            'latest_jobs': []
-        })
+        else:
+            # For Job objects from database, use the standard list method
+            return super().list(request, *args, **kwargs)
 
-class CandidateLatestProjectsView(DashboardBaseView):
+class CandidateLatestProjectsView(ListAPIView):
     """Endpoint for latest projects relevant to candidate."""
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = ProjectListSerializer
     
@@ -536,6 +566,13 @@ class CandidateLatestProjectsView(DashboardBaseView):
             # For Project objects from database, use the standard list method
             return super().list(request, *args, **kwargs)
     
+    def get_candidate_profile(self, user):
+        """Get the candidate profile for the authenticated user."""
+        try:
+            return user.candidate_profile
+        except Candidate.DoesNotExist:
+            raise NotFound("Candidate profile not found for this user.")
+
     # Keep the original get method for backward compatibility
     def get(self, request):
         candidate = self.get_candidate_profile(request.user)
