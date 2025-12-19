@@ -412,7 +412,7 @@ class CandidateLatestJobsView(ListAPIView):
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
         # Fallback to original logic if ML fails or no results
-        if not ml_success:
+        if not getattr(self, 'ml_success', False):
             logger.info("Falling back to database query for latest jobs")
             # Get candidate's skills for filtering (original logic) - but you're not using skills filter here?
             # candidate_skills = candidate.skills or []  # Unused in fallback?
@@ -963,47 +963,80 @@ class CandidateViewSet(viewsets.ModelViewSet):
         if candidate:
             # Prepare ML API URL and payload
             ml_api_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
+            
+            # Log the ML API URL being called
+            logger.info(f"Preparing to call ML API at: {ml_api_url}")
+            logger.info(f"ML API Key configured: {'Yes' if hasattr(settings, 'ML_API_KEY') else 'No'}")
+            
+            # Prepare the basic candidate data
             ml_payload = {
-                "full_name": candidate.full_name,
-                "title": candidate.title,
+                "full_name": candidate.full_name or "",
+                "title": candidate.title or "",
                 "bio": candidate.bio or "",
-                "location": candidate.location,
-                "work_style": candidate.work_style,
-                "availability_type": candidate.availability_type,
-                "is_available": candidate.is_available,
-                "skills": candidate.skills or [],
-                "superpowers": candidate.superpowers or [],
-                "preferred_roles": candidate.preferred_roles or [],
-                "seniority_level": candidate.seniority_level,
-                "min_salary": candidate.min_salary,
-                "max_salary": candidate.max_salary,
-                "salary_currency": candidate.salary_currency,
-                "portfolio_links": candidate.portfolio_links or [],
-                "resume_url": candidate.resume_url,
-                "video_intro_url": candidate.video_intro_url,
-                "profile_visibility": candidate.profile_visibility,
-                "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
-                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
-                "resume_data": getattr(candidate, 'resume_data', None),  # Include resume data if available
+                "location": candidate.location or "",
+                "work_style": candidate.work_style or "",
+                "availability_type": candidate.availability_type or "",
+                "is_available": bool(candidate.is_available),
+                "skills": list(candidate.skills) if hasattr(candidate, 'skills') and candidate.skills else [],
+                "superpowers": list(candidate.superpowers) if hasattr(candidate, 'superpowers') and candidate.superpowers else [],
+                "preferred_roles": list(candidate.preferred_roles) if hasattr(candidate, 'preferred_roles') and candidate.preferred_roles else [],
+                "seniority_level": candidate.seniority_level or "",
+                "min_salary": float(candidate.min_salary) if candidate.min_salary is not None else None,
+                "max_salary": float(candidate.max_salary) if candidate.max_salary is not None else None,
+                "salary_currency": candidate.salary_currency or "USD",
+                "portfolio_links": list(candidate.portfolio_links) if hasattr(candidate, 'portfolio_links') and candidate.portfolio_links else [],
+                "profile_visibility": candidate.profile_visibility or "public",
+                "passion_projects": getattr(candidate, 'passion_projects', '') or "",
+                "user_id": str(candidate.user.id) if hasattr(candidate, 'user') and candidate.user else None,
+                "email": str(candidate.user.email) if hasattr(candidate, 'user') and candidate.user else None,
             }
+            
+            # Handle file fields - convert to string URLs if they exist
+            if candidate.resume_url:
+                ml_payload["resume_url"] = str(candidate.resume_url)
+                
+            if candidate.video_intro_url:
+                ml_payload["video_intro_url"] = str(candidate.video_intro_url)
+            
+            # Handle resume_data if it exists and is a dictionary
+            resume_data = getattr(candidate, 'resume_data', None)
+            if isinstance(resume_data, dict):
+                ml_payload["resume_data"] = resume_data
+            
+            # Ensure all values are JSON serializable
+            for key, value in list(ml_payload.items()):
+                if value is None:
+                    ml_payload[key] = ""
+                elif isinstance(value, (list, dict, str, int, float, bool)) or value is None:
+                    continue  # These types are JSON serializable
+                else:
+                    # Convert any other type to string
+                    ml_payload[key] = str(value)
 
             max_retries = 3  # Increased retries for better reliability
             timeout_seconds = 45  # Increased timeout for ML processing
             ml_response = None
 
-            # Configure headers with content type
+            # Configure headers with content type and API key if available
             headers = {
-                "Content-Type": "application/json",
-                # Uncomment and update if API key is required
-                # "Authorization": f"Bearer {settings.ML_API_KEY}"
+                "Content-Type": "application/json"
             }
+            
+            # Add API key if available in settings
+            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+                logger.info("ML API key added to request headers")
+            else:
+                logger.warning("No ML API key found in settings or environment variables")
 
             # Make the API call with retry logic
             for attempt in range(max_retries + 1):
                 try:
                     logger.info(f"Calling Candidate create ML API (attempt {attempt + 1}/{max_retries + 1}) for candidate {candidate.id}")
-                    logger.debug(f"ML API URL: {ml_api_url}")
-                    logger.debug(f"ML Payload: {json.dumps(ml_payload, indent=2)}")
+                    logger.info(f"ML API URL: {ml_api_url}")
+                    logger.info(f"ML Payload keys: {', '.join(ml_payload.keys())}")
+                    logger.info(f"ML Payload (first 500 chars): {json.dumps(ml_payload)[:500]}...")
                     
                     ml_response = requests.post(
                         ml_api_url,
@@ -1014,7 +1047,12 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     
                     # Log the response status and content for debugging
                     logger.info(f"ML API Response Status: {ml_response.status_code}")
-                    logger.debug(f"ML API Response: {ml_response.text}")
+                    logger.info(f"ML API Response Headers: {dict(ml_response.headers)}")
+                    logger.info(f"ML API Response Content (first 500 chars): {ml_response.text[:500]}")
+                    
+                    # Log full response if it's an error
+                    if ml_response.status_code not in (200, 201):
+                        logger.error(f"ML API Error Response: {ml_response.text}")
                     
                     # If we get a successful response, break out of the retry loop
                     if ml_response.status_code in (200, 201):
@@ -1056,16 +1094,35 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     ml_data = ml_response.json()
                     logger.info(f"Successfully received data from ML API for candidate {candidate.id}")
                     
-                    # Extract data from ML API response
-                    candidate_profile_summary = ml_data.get('candidate_profile_summary')
-                    candidate_tags = ml_data.get('candidate_tags', [])
-                    
-                    # You can add more fields from ML response as needed
+                    # Extract and process data from ML API response
                     updates = {}
-                    if candidate_profile_summary is not None:
-                        updates['candidate_profile_summary'] = candidate_profile_summary
-                    if candidate_tags:
-                        updates['candidate_tags'] = candidate_tags
+                    
+                    # Always update these fields if present in the response
+                    for field in [
+                        'candidate_profile_summary',
+                        'candidate_tags',
+                        'search_query',
+                        'passion_projects'
+                    ]:
+                        if field in ml_data and ml_data[field] is not None:
+                            updates[field] = ml_data[field]
+                    
+                    # Only update these fields if they're not already set on the candidate
+                    for field in [
+                        'skills',
+                        'superpowers',
+                        'preferred_roles',
+                        'title',
+                        'bio'
+                    ]:
+                        if field in ml_data and ml_data[field] and not getattr(candidate, field, None):
+                            updates[field] = ml_data[field]
+                    
+                    # Log the updates that will be applied
+                    if updates:
+                        logger.info(f"Preparing to update candidate {candidate.id} with ML data: {json.dumps(updates, default=str)}")
+                    else:
+                        logger.info("No updates to apply from ML API response")
                     
                     # Update candidate with ML data if any updates are available
                     if updates:
@@ -1103,6 +1160,9 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 except:
                     pass  # If we can't parse the error, use the default message
 
+        # Log the final status before preparing response
+        logger.info(f"Final ML API status - Success: {ml_success}, Error: {ml_error or 'None'}")
+        
         # Prepare the response data
         response_data = {
             'message': 'Candidate created successfully',
@@ -1216,49 +1276,75 @@ class CandidateViewSet(viewsets.ModelViewSet):
             try:
                 candidate = Candidate.objects.get(id=candidate_id)
             except Candidate.DoesNotExist:
-                error_msg = f"Candidate with ID {candidate_id} not found"
-                logger.error(error_msg)
-                return False, error_msg, None
+                return False, f"Candidate with ID {candidate_id} not found", None
+                
+            # Prepare the ML API URL
+            base_url = settings.FLIT_AI_URL.rstrip('/')
+            update_url = f"{base_url}/update_candidate_data/{candidate_id}"
+            create_url = f"{base_url}/create_candidates/{candidate_id}"
             
-            # Prepare the ML API URLs
-            base_url = f"{settings.FLIT_AI_URL}/"
-
-            # First try to update existing candidate
-            update_endpoint = f"update_candidate_data/{candidate_id}"
-            update_url = f"{base_url}/{update_endpoint}"
-            
-            # Fallback to create if update fails
-            create_endpoint = f"create_candidates/{candidate_id}"
-            create_url = f"{base_url}/{create_endpoint}"
-            
-            logger.info(f"Preparing to update ML service for candidate {candidate_id}")
-            
-            # Prepare the candidate data for ML service
+            # Prepare the payload with candidate data
             ml_payload = {
-                "id": candidate_id,
                 "full_name": candidate.full_name or "",
                 "title": candidate.title or "",
                 "bio": candidate.bio or "",
                 "location": candidate.location or "",
                 "work_style": candidate.work_style or "",
                 "availability_type": candidate.availability_type or "",
-                "is_available": getattr(candidate, 'is_available', False),
-                "skills": getattr(candidate, 'skills', []) or [],
-                "superpowers": getattr(candidate, 'superpowers', []) or [],
-                "preferred_roles": getattr(candidate, 'preferred_roles', []) or [],
-                "seniority_level": candidate.seniority_level or "",
-                "min_salary": getattr(candidate, 'min_salary', None),
-                "max_salary": getattr(candidate, 'max_salary', None),
-                "resume_url": getattr(candidate, 'resume_url', ''),
-                "video_intro_url": getattr(candidate, 'video_intro_url', ''),
-                "video_transcription": getattr(candidate, 'video_transcription', ''),
+                "is_available": bool(getattr(candidate, 'is_available', False)),
+                "skills": list(getattr(candidate, 'skills', []) or []),
+                "superpowers": list(getattr(candidate, 'superpowers', []) or []),
+                "preferred_roles": list(getattr(candidate, 'preferred_roles', []) or []),
+                "seniority_level": getattr(candidate, 'seniority_level', '') or "",
+                "min_salary": float(getattr(candidate, 'min_salary', 0)) if getattr(candidate, 'min_salary', None) is not None else None,
+                "max_salary": float(getattr(candidate, 'max_salary', 0)) if getattr(candidate, 'max_salary', None) is not None else None,
+                "salary_currency": getattr(candidate, 'salary_currency', 'USD'),
+                "portfolio_links": list(getattr(candidate, 'portfolio_links', []) or []),
                 "profile_visibility": getattr(candidate, 'profile_visibility', 'public'),
-                "user_id": candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
-                "email": candidate.user.email if hasattr(candidate, 'user') and candidate.user else None,
-                "resume_data": getattr(candidate, 'resume_data', {}) or {},
-                "profile_completed": getattr(candidate, 'profile_completed', False),
-                "passion_projects": getattr(candidate, 'passion_projects', '') or ''
+                "profile_completed": bool(getattr(candidate, 'profile_completed', False)),
+                "passion_projects": str(getattr(candidate, 'passion_projects', '') or '')
             }
+            
+            # Handle file fields - convert to string URLs if they exist
+            if hasattr(candidate, 'resume_url') and candidate.resume_url:
+                ml_payload["resume_url"] = str(candidate.resume_url)
+            else:
+                ml_payload["resume_url"] = ""
+                
+            if hasattr(candidate, 'video_intro_url') and candidate.video_intro_url:
+                ml_payload["video_intro_url"] = str(candidate.video_intro_url)
+            else:
+                ml_payload["video_intro_url"] = ""
+                
+            if hasattr(candidate, 'video_transcription') and candidate.video_transcription:
+                ml_payload["video_transcription"] = str(candidate.video_transcription)
+            else:
+                ml_payload["video_transcription"] = ""
+            
+            # Handle resume_data if it exists and is a dictionary
+            resume_data = getattr(candidate, 'resume_data', None)
+            if isinstance(resume_data, dict):
+                ml_payload["resume_data"] = resume_data
+            else:
+                ml_payload["resume_data"] = {}
+            
+            # Add user info if available
+            if hasattr(candidate, 'user') and candidate.user:
+                ml_payload["user_id"] = str(candidate.user.id)
+                ml_payload["email"] = str(candidate.user.email)
+            else:
+                ml_payload["user_id"] = None
+                ml_payload["email"] = None
+            
+            # Ensure all values are JSON serializable
+            for key, value in list(ml_payload.items()):
+                if value is None:
+                    ml_payload[key] = ""
+                elif isinstance(value, (list, dict, str, int, float, bool)):
+                    continue  # These types are JSON serializable
+                else:
+                    # Convert any other type to string
+                    ml_payload[key] = str(value)
             
             # Set up headers
             headers = {
@@ -1266,13 +1352,17 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 'Accept': 'application/json'
             }
             
-            # Try to update first
+            # Add API key if available
+            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            
+            # First try to update the candidate
             response = None
             try:
                 logger.info(f"Attempting to update candidate at: {update_url}")
                 logger.debug(f"Update payload: {json.dumps(ml_payload, indent=2, default=str)}")
                 
-                # First try PATCH to update
                 response = requests.patch(
                     update_url,
                     json=ml_payload,
@@ -1291,44 +1381,41 @@ class CandidateViewSet(viewsets.ModelViewSet):
                         timeout=30
                     )
                     logger.debug(f"Create response: {response.status_code} - {response.text}")
+                
+                # Check if we got a valid response
+                if response is None:
+                    error_msg = "No response received from ML service"
+                    logger.error(error_msg)
+                    return False, error_msg, None
+                
+                # Log the raw response for debugging
+                logger.debug(f"ML service response status: {response.status_code}")
+                logger.debug(f"ML service response content: {response.text}")
+                
+                # Process successful response
+                if response.status_code in (200, 201):
+                    try:
+                        response_data = response.json()
+                        logger.info(f"Successfully updated ML service for candidate {candidate_id}")
+                        return True, "Successfully updated ML service", response_data
+                    except ValueError:
+                        # If response is not JSON, return the text
+                        logger.info(f"Non-JSON response from ML service: {response.text}")
+                        return True, "Successfully updated ML service", {"response": response.text}
+                else:
+                    error_msg = f"ML service returned {response.status_code}: {response.text}"
+                    logger.error(error_msg)
+                    return False, error_msg, None
                     
             except requests.exceptions.RequestException as e:
                 error_msg = f"Error calling ML service: {str(e)}"
                 logger.error(error_msg, exc_info=True)
                 return False, error_msg, None
-            
-            # Check if we got a valid response
-            if response is None:
-                error_msg = "No response received from ML service"
-                logger.error(error_msg)
-                return False, error_msg, None
-                
-            # Log the raw response for debugging
-            logger.debug(f"ML service response status: {response.status_code}")
-            logger.debug(f"ML service response content: {response.text}")
-            
-            # Check response status for success
-            if response.status_code in (200, 201, 204):
-                try:
-                    response_data = response.json()
-                    logger.info(f"Successfully updated ML service for candidate {candidate_id}")
-                    return True, "Successfully updated ML service", response_data
-                except json.JSONDecodeError as e:
-                    error_msg = f"Invalid JSON response from ML service: {str(e)}. Response: {response.text[:500]}"
-                    logger.error(error_msg)
-                    return False, "Invalid response from ML service", None
-            elif response.status_code == 404:
-                error_msg = f"ML service endpoint not found (404). Please check the URL: {update_url}"
-                logger.error(error_msg)
-                return False, error_msg, None
-            else:
-                error_msg = f"ML service returned status {response.status_code}: {response.text[:500]}"
-                logger.error(error_msg)
-                return False, f"ML service error: {response.status_code}", None
                 
         except Exception as e:
-            logger.exception(f"Unexpected error in _update_ml_candidate_data for candidate {candidate_id}")
-            return False, f"Unexpected error: {str(e)}", None
+            error_msg = f"Error updating ML candidate data: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, None
 
     def _parse_form_data(self, data):
         """Helper method to parse form data"""
@@ -1725,20 +1812,6 @@ class CandidateViewSet(viewsets.ModelViewSet):
         
         # Get the updated data using the serializer
         serializer = self.get_serializer(candidate)
-        
-        # Skip ML service updates as requested
-        ml_success = True
-        ml_message = "ML service updates are disabled"
-        logger.info("Skipping ML service update as requested")
-        
-        # Add ML update status to response
-        response_data = serializer.data
-        
-        return Response({
-            'success': True,
-            'ml_success': ml_success,
-            'candidate': response_data
-        })
         
         # Initialize response data with updated candidate data
         response_data = serializer.data
