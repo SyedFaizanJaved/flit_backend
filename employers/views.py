@@ -3,6 +3,7 @@ from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
+from utils.pagination import CustomPagination
 from django.shortcuts import get_object_or_404
 from django.http import Http404, JsonResponse
 import os
@@ -210,11 +211,16 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     def shortlisted(self, request):
         """
         Get all candidates that have been shortlisted by the current employer.
+        Paginated with 20 items per page by default.
+        Query Parameters:
+            page: Page number to retrieve (default: 1)
+            page_size: Number of items per page (default: 20, max: 100)
         """
         try:
-          
             # Get the employer's profile
             employer = request.user.employer_profile
+            
+            # Get shortlisted job applications
             job_applications = JobApplication.objects.filter(
                 employer=request.user,
                 is_shortlisted=True
@@ -262,8 +268,16 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             
             # Sort by applied_at in descending order (newest first)
             results.sort(key=lambda x: x.get('applied_at', ''), reverse=True)
-                
-            return Response(results)
+            
+            # Apply pagination using CustomPagination
+            paginator = CustomPagination()
+            paginator.page_size = request.query_params.get('page_size', 20)  # Default to 20 items per page
+            
+            # Get paginated results
+            paginated_results = paginator.paginate_queryset(results, request)
+            
+            # Return paginated response
+            return paginator.get_paginated_response(paginated_results)
             
         except Exception as e:
             exception_logger.exception("Error fetching shortlisted candidates")

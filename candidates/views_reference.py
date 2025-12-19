@@ -1,5 +1,5 @@
 import logging
-from rest_framework import status
+from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
@@ -9,24 +9,51 @@ from django.conf import settings
 from .models import ReferenceRequest
 from .serializers import ReferenceRequestSerializer
 from uuid import UUID
+from utils.pagination import CustomPagination
 
 logger = logging.getLogger(__name__)
 
 
-class ReferenceResponsesView(APIView):
+class ReferenceResponsesView(generics.ListAPIView):
     """
-    Get all reference responses for the authenticated candidate
+    Get all reference responses for the authenticated candidate with pagination
     """
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
+    serializer_class = ReferenceRequestSerializer
     
-    def get(self, request, *args, **kwargs):
+    def get_queryset(self):
         # Get all reference requests for the current user's candidate profile
-        reference_requests = ReferenceRequest.objects.filter(
-            candidate=request.user.candidate_profile,
-            status__in=['accepted', 'declined', 'completed'] 
+        return ReferenceRequest.objects.filter(
+            candidate=self.request.user.candidate_profile,
+            status__in=['accepted', 'declined', 'completed']
         ).order_by('-updated_at')
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
         
-        serializer = ReferenceRequestSerializer(reference_requests, many=True)
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            
+            # Get total counts for different statuses
+            status_counts = {
+                'total': queryset.count(),
+                'accepted': queryset.filter(status='accepted').count(),
+                'declined': queryset.filter(status='declined').count(),
+                'completed': queryset.filter(status='completed').count(),
+            }
+            
+            # Prepare response data
+            response_data = {
+                'reference_responses': serializer.data,
+                'counts': status_counts
+            }
+            
+            return self.get_paginated_response(response_data)
+        
+        # Fallback if pagination is not used
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
     
 

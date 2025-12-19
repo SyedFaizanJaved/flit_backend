@@ -1,8 +1,10 @@
 from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
+from django.core.paginator import Paginator
+from utils.pagination import CustomPagination
 from django.contrib.auth.hashers import check_password
 from django.conf import settings
 from .models import User, Role
@@ -212,6 +214,22 @@ def admin_dashboard(request):
     if not (getattr(user, 'is_staff', False) or role_name == admin_role):
         return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
 
+    # Initialize pagination
+    pagination = CustomPagination()
+    page_size = request.query_params.get('page_size', 20)  # Default page size is 20
+    
+    # Get recent items with pagination
+    recent_candidates = Candidate.objects.order_by('-created_at').values('id', 'full_name', 'title')
+    recent_employers = Employer.objects.order_by('-created_at').values('id', 'first_name', 'last_name', 'company__company_name')
+    recent_jobs = Job.objects.order_by('-created_at').values('id', 'title', 'status')
+    recent_projects = Project.objects.order_by('-created_at').values('id', 'title', 'status')
+    
+    # Paginate each queryset
+    paginated_candidates = pagination.paginate_queryset(recent_candidates, request)
+    paginated_employers = pagination.paginate_queryset(recent_employers, request)
+    paginated_jobs = pagination.paginate_queryset(recent_jobs, request)
+    paginated_projects = pagination.paginate_queryset(recent_projects, request)
+    
     data = {
         'summary': {
             'total_users': User.objects.count(),
@@ -223,10 +241,16 @@ def admin_dashboard(request):
             'total_project_applications': ProjectApplication.objects.count(),
         },
         'recent': {
-            'candidates': list(Candidate.objects.order_by('-created_at').values('id', 'full_name', 'title')),
-            'employers': list(Employer.objects.order_by('-created_at').values('id', 'first_name', 'last_name','company__company_name')),
-            'jobs': list(Job.objects.order_by('-created_at').values('id', 'title', 'status')),
-            'projects': list(Project.objects.order_by('-created_at').values('id', 'title', 'status')),
+            'candidates': list(paginated_candidates),
+            'employers': list(paginated_employers),
+            'jobs': list(paginated_jobs),
+            'projects': list(paginated_projects),
+        },
+        'pagination': {
+            'count': pagination.page.paginator.count,
+            'next': pagination.get_next_link(),
+            'previous': pagination.get_previous_link(),
+            'page_size': int(page_size)
         }
     }
 
@@ -351,6 +375,11 @@ def admin_candidate_detail(request, pk):
             reverse=True
         )
         
+        # Paginate applications
+        pagination = CustomPagination()
+        page_size = request.query_params.get('page_size', 20)
+        paginated_applications = pagination.paginate_queryset(all_applications, request)
+        
         data = {
             'id': candidate.id,
             'full_name': getattr(candidate, 'full_name', ''),
@@ -386,8 +415,14 @@ def admin_candidate_detail(request, pk):
             'updated_at': getattr(candidate, 'updated_at', None),
             'user': candidate.user.id if hasattr(candidate, 'user') and candidate.user else None,
             'reference_responses': list(reference_responses),
-            'applications': all_applications,
-            'applications_count': len(all_applications)
+            'applications': paginated_applications,
+            'applications_count': len(all_applications),
+            'pagination': {
+                'count': len(all_applications),
+                'next': pagination.get_next_link(),
+                'previous': pagination.get_previous_link(),
+                'page_size': int(page_size)
+            }
         }
         return Response(data, status=status.HTTP_200_OK)
     except Candidate.DoesNotExist:
