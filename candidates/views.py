@@ -23,6 +23,20 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
 from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework import permissions
+
+
+class IsCandidateUser(permissions.BasePermission):
+    """
+    Custom permission to only allow candidate users to access the view.
+    """
+    def has_permission(self, request, view):
+        # Check if the user is authenticated and has a candidate profile
+        return bool(request.user and hasattr(request.user, 'candidate_profile'))
+
+    def has_object_permission(self, request, view, obj):
+        # For object-level permission, check if the object belongs to the user's candidate profile
+        return obj.candidate.user == request.user
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from accounts.views import BaseRoleRegistrationView
@@ -321,34 +335,40 @@ class CandidateLatestJobsView(DashboardBaseView):
                                 if not job_id:
                                     logger.warning("Skipping job without job_id")
                                     continue
+                                                                # Only include jobs with 'ml' in title or description (case-insensitive)
+                                title = job_data.get('title', '').lower()
+                                description = job_data.get('description', '').lower()
                                 
-                                # Create a dictionary with the transformed job data
-                                job = {
-                                    'id': job_id,
-                                    'title': job_data.get('title', 'No Title'),
-                                    'description': job_data.get('description', ''),
-                                    'workStyle': job_data.get('work_style', 'remote'),
-                                    'category': job_data.get('category', 'other'),
-                                    'experienceLevel': job_data.get('experience_level', 'mid'),
-                                    'employmentType': job_data.get('employment_type', 'full-time'),
-                                    'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
-                                    'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
-                                    'status': job_data.get('status', 'active'),
-                                    'created_at': job_data.get('created_at', timezone.now().isoformat()),
-                                    'location': job_data.get('location'),
-                                    'skills': job_data.get('skills', [])
-                                }
-                                
-                                # Add company information if available
-                                company_data = job_data.get('company', {})
-                                if company_data:
-                                    job.update({
-                                        'company_name': company_data.get('company_name', 'Unknown Company'),
-                                        'company_id': company_data.get('id')
-                                    })
-                                
-                                latest_jobs.append(job)
-                                logger.info(f"Added job from ML data: {job_id} - {job['title']}")
+                                if 'ml' in title or 'ml' in description:
+                                    # Create a dictionary with the transformed job data
+                                    job = {
+                                        'id': job_id,
+                                        'title': job_data.get('title', 'No Title'),
+                                        'description': job_data.get('description', ''),
+                                        'workStyle': job_data.get('work_style', 'remote'),
+                                        'category': job_data.get('category', 'other'),
+                                        'experienceLevel': job_data.get('experience_level', 'mid'),
+                                        'employmentType': job_data.get('employment_type', 'full-time'),
+                                        'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
+                                        'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
+                                        'status': job_data.get('status', 'active'),
+                                        'created_at': job_data.get('created_at', timezone.now().isoformat()),
+                                        'location': job_data.get('location'),
+                                        'skills': job_data.get('skills', [])
+                                    }
+                                    
+                                    # Add company information if available
+                                    company_data = job_data.get('company', {})
+                                    if company_data:
+                                        job.update({
+                                            'company_name': company_data.get('company_name', 'Unknown Company'),
+                                            'company_id': company_data.get('id')
+                                        })
+                                    
+                                    latest_jobs.append(job)
+                                    logger.info(f"Added ML job from ML data: {job_id} - {job['title']}")
+                                else:
+                                    logger.info(f"Skipping non-ML job: {job_id} - {job_data.get('title', 'No Title')}")
                                 
                                 # Limit to 10 jobs
                                 if len(latest_jobs) >= 10:
@@ -379,31 +399,20 @@ class CandidateLatestJobsView(DashboardBaseView):
             exception_logger.exception("Unexpected error calling ML service")
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
-        # Fallback to original logic if ML fails or no results
-        if not ml_success:
-            logger.info("Falling back to database query for latest jobs")
-            # Get candidate's skills for filtering (original logic) - but you're not using skills filter here?
-            # candidate_skills = candidate.skills or []  # Unused in fallback?
+        # Only return jobs if we successfully got them from ML service
+        if ml_success and latest_jobs:
+            return Response({
+                'latest_jobs': latest_jobs,
+                'ml_success': True,
+                'message': f'Found {len(latest_jobs)} ML-related jobs' if latest_jobs else 'No ML-related jobs found'
+            })
             
-            # Get latest active jobs, ordered by creation date
-            latest_jobs = Job.objects.filter(
-                status='active'
-            ).select_related('company').order_by('-created_at')[:10]
-        
-        # If we have Job objects (from fallback), serialize them
-        if latest_jobs and isinstance(latest_jobs[0], Job):
-            job_serializer = JobListSerializer(latest_jobs, many=True, context={'request': request})
-            return Response({
-                'latest_jobs': job_serializer.data
-            })
-        # If we have dictionaries (from ML API), return them directly
-        elif latest_jobs and isinstance(latest_jobs[0], dict):
-            return Response({
-                'latest_jobs': latest_jobs
-            })
-        # Fallback to empty list if no jobs found
+        # If we get here, either ML service failed or returned no jobs
+        logger.warning("No ML jobs found or ML service failed")
         return Response({
-            'latest_jobs': []
+            'latest_jobs': [],
+            'ml_success': False,
+            'message': 'No ML-related jobs found'
         })
 
 class CandidateLatestProjectsView(DashboardBaseView):
@@ -590,18 +599,11 @@ class CandidateLatestProjectsView(DashboardBaseView):
                                 exception_logger.exception(f"Error processing project with project_id={project_id}")
                                 logger.error(f"Error processing project {project_id}: {str(e)}", exc_info=True)
                     
-                    # If we still don't have projects, try to get them from the database as fallback
-                    if not latest_projects:
-                        logger.info("No projects from ML response, falling back to database")
-                        latest_projects = list(Project.objects.filter(status='active')
-                                           .select_related('company')
-                                           .prefetch_related('required_skills')
-                                           .order_by('-created_at')[:10])
                     if latest_projects:
                         ml_success = True
                         logger.info(f"Successfully got {len(latest_projects)} projects from ML service")
                     else:
-                        logger.warning("No projects found in ML response")
+                        logger.warning("No projects found in ML service")
                         
                 except json.JSONDecodeError as e:
                     exception_logger.exception("Failed to parse ML service response as JSON")
@@ -628,48 +630,41 @@ class CandidateLatestProjectsView(DashboardBaseView):
             exception_logger.exception("Unexpected error calling ML service")
             logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
         
-        # Fallback to original logic if ML fails or no results
-        if not ml_success or not latest_projects:
-            logger.info("Falling back to default project list")
-            # Get latest active projects, ordered by creation date
-            latest_projects = list(Project.objects.filter(status='active')
-                                        .select_related('company')
-                                        .prefetch_related('required_skills')
-                                        .order_by('-created_at')[:10])
-        
-        # Prepare the response data
+        # Prepare the response data - only include projects if we successfully got them from ML service
         response_data = []
         
-        for project in latest_projects:
-            # Get project data from the database or ML response
-            project_data = {
-                'id': project.id,
-                'title': project.title,
-                'description': project.description or '',
-                'category': project.category or 'other',
-                'estimatedHours': project.estimatedHours or '1-2 weeks',
-                'paymentType': project.paymentType or 'fixed',
-                'paymentAmount': project.paymentAmount or 0,
-                'deadline': project.deadline.strftime('%Y-%m-%d') if hasattr(project, 'deadline') and project.deadline else None,
-                'status': project.status,
-                'created_at': project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if project.created_at else None,
-                'company_name': project.company.company_name if hasattr(project, 'company') and project.company else None,
-                'company_id': project.company.id if hasattr(project, 'company') and project.company else None,
-                'skills': []
-            }
-            
-            # Add skills from _skills if available, otherwise use the related skills
-            if hasattr(project, '_skills') and project._skills:
-                project_data['skills'] = project._skills
-            else:
-                # Fall back to database skills if _skills is not set
-                project_data['skills'] = list(project.required_skills.values_list('name', flat=True))
-            
-            response_data.append(project_data)
+        if ml_success and latest_projects:
+            for project in latest_projects:
+                # Get project data from the database or ML response
+                project_data = {
+                    'id': project.id,
+                    'title': project.title,
+                    'description': project.description or '',
+                    'category': project.category or 'other',
+                    'estimatedHours': project.estimatedHours or '1-2 weeks',
+                    'paymentType': project.paymentType or 'fixed',
+                    'paymentAmount': project.paymentAmount or 0,
+                    'deadline': project.deadline.strftime('%Y-%m-%d') if hasattr(project, 'deadline') and project.deadline else None,
+                    'status': project.status,
+                    'created_at': project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if project.created_at else None,
+                    'company_name': project.company.company_name if hasattr(project, 'company') and project.company else None,
+                    'company_id': project.company.id if hasattr(project, 'company') and project.company else None,
+                    'skills': []
+                }
+                
+                # Add skills from _skills if available, otherwise use the related skills
+                if hasattr(project, '_skills') and project._skills:
+                    project_data['skills'] = project._skills
+                else:
+                    # Fall back to database skills if _skills is not set
+                    project_data['skills'] = list(project.required_skills.values_list('name', flat=True))
+                
+                response_data.append(project_data)
         
         return Response({
             'latest_projects': response_data,
-            'ml_success': ml_success
+            'ml_success': ml_success,
+            'message': 'ML projects retrieved successfully' if ml_success and response_data else 'No ML projects found'
         })
 
 
@@ -703,12 +698,23 @@ class CandidateViewSet(viewsets.ModelViewSet):
 
     def _save_file(self, file_obj, storage_path_prefix, request):
         try:
-            filename = get_valid_filename(file_obj.name)
-            storage_path = default_storage.save(f'{storage_path_prefix}/{filename}', file_obj)
-            public_url = default_storage.url(storage_path)
-            return request.build_absolute_uri(public_url)
-        except Exception:
-            exception_logger.exception("File saving failed in _save_file")
+            # Get file extension and name without extension
+            file_name, file_ext = os.path.splitext(get_valid_filename(file_obj.name))
+            # Add timestamp to filename to prevent overwrites
+            timestamp = int(time.time())
+            unique_filename = f"{file_name}_{timestamp}{file_ext}"
+            
+            # Save the file with the new unique filename
+            storage_path = default_storage.save(
+                f'{storage_path_prefix}/{unique_filename}', 
+                file_obj
+            )
+            
+            # Always return the relative storage path (not the full URL)
+            # The URL will be constructed when needed using request.build_absolute_uri()
+            return storage_path
+        except Exception as e:
+            exception_logger.exception(f"File saving failed in _save_file: {str(e)}")
             return None
 
     def retrieve(self, request, pk=None):
@@ -1241,6 +1247,21 @@ class CandidateViewSet(viewsets.ModelViewSet):
         if not candidate or not hasattr(candidate, 'user'):
             return None
             
+        # Handle file fields properly
+        profile_picture_url = ''
+        if hasattr(candidate, 'profile_picture') and candidate.profile_picture:
+            try:
+                profile_picture_url = candidate.profile_picture.url
+            except (ValueError, AttributeError):
+                profile_picture_url = ''
+        
+        resume_url = getattr(candidate, 'resume_url', '')
+        if hasattr(resume_url, 'url'):  # If it's a FileField/ImageField
+            try:
+                resume_url = resume_url.url
+            except (ValueError, AttributeError):
+                resume_url = ''
+            
         return {
             'first_name': candidate.user.first_name or '',
             'last_name': candidate.user.last_name or '',
@@ -1249,8 +1270,8 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 'headline': getattr(candidate, 'headline', '') or '',
                 'summary': getattr(candidate, 'summary', '') or '',
                 'skills': [skill.name for skill in getattr(candidate, 'skills', []) if hasattr(skill, 'name')],
-                'resume_url': getattr(candidate, 'resume_url', '') or '',
-                'profile_picture': candidate.profile_picture.url if hasattr(candidate, 'profile_picture') and candidate.profile_picture else '',
+                'resume_url': resume_url or '',
+                'profile_picture': profile_picture_url,
                 'work_experience': [
                     {
                         'title': getattr(exp, 'title', ''),
@@ -1489,6 +1510,9 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     request
                 )
                 if video_url:
+                    # Update the video URL in the candidate model
+                    candidate.video_intro_url = video_url
+                    candidate.save(update_fields=['video_intro_url', 'updated_at'])
                     data['video_intro_url'] = video_url
             except Exception as e:
                 exception_logger.exception("Error saving video")
@@ -1797,22 +1821,16 @@ class CandidateViewSet(viewsets.ModelViewSet):
         resume_file = request.FILES['resume']
         
         try:
-            # Generate a clean filename
-            import os
-            from django.utils.text import get_valid_filename
+            # Save the resume file using our _save_file method
+            storage_path = self._save_file(resume_file, 'candidates/resumes', request)
+            if not storage_path:
+                return Response(
+                    {"error": "Failed to save resume file"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
-            # Get the file extension
-            filename = get_valid_filename(resume_file.name)
-            file_ext = os.path.splitext(filename)[1]
-            
-            # Generate a unique filename to prevent collisions
-            import uuid
-            unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-            
-            # Save the file with the new filename
-            candidate.resume_url.save(unique_filename, resume_file, save=False)
-            
-            # Save the candidate to ensure the file is saved to the correct location
+            # Update the resume_url in the candidate model
+            candidate.resume_url = storage_path
             candidate.save(update_fields=['resume_url', 'updated_at'])
             
             # Save the resume file temporarily for ML API processing
@@ -1943,13 +1961,30 @@ class WorkDNAQuestionView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
     
-    def get(self, request):
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        For evaluate_answers, only allow candidate access.
+        """
+        if self.request.method == 'GET' and 'candidate_id' in self.kwargs:
+            # For evaluation endpoint, only allow the candidate to access their own evaluation
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated()]
+    
+    def get(self, request, candidate_id=None):
         """
         Get work DNA questions for the authenticated candidate
         If no questions exist, fetch them from the ML API
         Response includes questions and any existing answers
+        
+        If candidate_id is provided in the URL, it's an evaluation request
         """
         try:
+            # If candidate_id is provided in URL, handle evaluation
+            if candidate_id is not None:
+                return self.evaluate_answers(request, candidate_id)
+                
+            # Otherwise, handle normal questions retrieval
             candidate = request.user.candidate_profile
             
             # Check if questions exist for this candidate
@@ -2039,6 +2074,76 @@ class WorkDNAQuestionView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def evaluate_answers(self, request, candidate_id):
+        """
+        Evaluate work DNA answers by calling the ML API
+        """
+        try:
+            # Get the candidate
+            try:
+                candidate = Candidate.objects.get(id=candidate_id)
+            except Candidate.DoesNotExist:
+                logger.error(f"Candidate with ID {candidate_id} not found")
+                return Response(
+                    {'error': 'Candidate not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get the work DNA question record
+            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+            
+            if not work_dna_question:
+                logger.error(f"No work DNA questions found for candidate {candidate_id}")
+                return Response(
+                    {'error': 'No work DNA questions found'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            if not work_dna_question.answers:
+                logger.error(f"No answers found for candidate {candidate_id}")
+                return Response(
+                    {'error': 'No answers found for evaluation'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                # Call the ML API to evaluate the answers
+                ml_api_url = f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}"
+                logger.info(f"Calling ML API: {ml_api_url}")
+                
+                # Add a timeout to the request
+                response = requests.get(ml_api_url, timeout=30)
+                response.raise_for_status()  # This will raise an exception for 4XX/5XX responses
+                
+                evaluation_result = response.json()
+                
+                # Save the evaluation result
+                work_dna_question.evaluation_result = evaluation_result
+                work_dna_question.save()
+                
+                logger.info(f"Successfully evaluated work DNA for candidate {candidate_id}")
+                return Response(evaluation_result)
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error calling ML API: {str(e)}")
+                return Response(
+                    {'error': f'Failed to connect to evaluation service: {str(e)}'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+                
+        except requests.RequestException as e:
+            exception_logger.exception("Error connecting to ML service for evaluation")
+            return Response(
+                {'error': f'Error connecting to ML service: {str(e)}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        except Exception as e:
+            exception_logger.exception("Error in work DNA evaluation")
+            return Response(
+                {'error': f'An error occurred during evaluation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def fetch_work_dna_questions(self, candidate):
         """Fetch work DNA questions from ML API and filter to include only questions 1 and 2"""
         try:

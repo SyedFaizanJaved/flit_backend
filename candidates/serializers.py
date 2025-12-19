@@ -146,6 +146,19 @@ class CandidateSerializer(serializers.ModelSerializer):
             if url.startswith(('http://', 'https://')):
                 return url
                 
+            # Determine the base path based on the field name
+            if hasattr(file_field, 'field'):
+                if file_field.field.name == 'resume_url':
+                    base_path = 'candidate_resume/'
+                elif file_field.field.name == 'video_intro_url':
+                    base_path = 'candidate_video/'
+                else:
+                    base_path = ''
+                
+                # If the URL is just a filename, prepend the base path
+                if '/' not in url and base_path:
+                    url = f"{base_path}{url}"
+            
             # If it's a path, construct the full URL
             if hasattr(file_field.storage, 'bucket_name'):
                 # For S3 storage

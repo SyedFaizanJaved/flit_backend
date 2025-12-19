@@ -78,8 +78,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         ).count()
         
         return {
-            'unread_count': sender_unread,    
-            'total_count': unique_senders_count 
+            'unread_count': sender_unread,    # Unread from this specific sender
+            'total_count': unique_senders_count # Total number of people with unread messages
         }
 
     async def receive(self, text_data):
@@ -364,10 +364,15 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                      Q(recipient=user, sender_id=user_id))
                 ).order_by('-created_at').first()
                 
+                # Get candidate's title from their profile if available
+                title = ''
+                if hasattr(user, 'candidate_profile') and user.candidate_profile:
+                    title = getattr(user.candidate_profile, 'title', '') or ''
+                
                 result.append({
                     'user_id': user.id,
                     'full_name': full_name,
-                    'title': user.username or '',
+                    'title': title,  
                     'profile_image': profile_image_url,
                     'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
                     'unread_count': user.unread_count or 0

@@ -133,6 +133,7 @@ class WorkDNAQuestion(models.Model):
     candidate_name = models.CharField(max_length=255)
     questions = models.JSONField()
     answers = models.JSONField(default=dict, blank=True)  # Stores selected answers in format: {"1": "option_text", "2": "option_text"}
+    evaluation_result = models.JSONField(null=True, blank=True)  # Stores the evaluation results from ML API
     total_questions = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

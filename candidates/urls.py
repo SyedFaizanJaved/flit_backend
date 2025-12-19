@@ -37,6 +37,9 @@ urlpatterns = [
     # Talent discovery endpoint
     path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
     
+    # Work DNA evaluation endpoint
+    path('evaluate-work-dna-answers/<int:candidate_id>/', views.WorkDNAQuestionView.as_view(), name='evaluate-work-dna-answers'),
+    
     # Router-based endpoints for list/profile/dashboard/complete-section
     path('', include(router.urls)),
 ]
