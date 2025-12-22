@@ -2540,18 +2540,25 @@ class ReferenceRequestListView(generics.ListCreateAPIView):
     """Reference request list and create view."""
     serializer_class = ReferenceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None  # Disable pagination
+    pagination_class = CustomPagination  # Enable custom pagination
 
     def get_queryset(self):
-        return ReferenceRequest.objects.filter(candidate__user=self.request.user)
+        # Order by created_at in descending order (newest first)
+        return ReferenceRequest.objects.filter(
+            candidate__user=self.request.user
+        ).select_related('candidate__user').order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
+        
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+            
         serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            'count': queryset.count(),
-            'results': serializer.data
-        })
+        return Response(serializer.data)
 
     def perform_create(self, serializer):
         candidate = self.request.user.candidate_profile

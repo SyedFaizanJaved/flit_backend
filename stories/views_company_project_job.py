@@ -1,5 +1,6 @@
 from rest_framework import generics, status, serializers
 from rest_framework.pagination import PageNumberPagination
+from utils.pagination import CustomPagination
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -37,23 +38,21 @@ from projects.models import Project
 from jobs.models import Job
 from candidates.models import Candidate
 
-class AllSavedItemsView(APIView):
+class AllSavedItemsView(generics.ListAPIView):
     """
     View to list all saved items (projects, jobs, candidates, companies) for the current user
+    with pagination support
     """
     permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
     
-    def get(self, request, *args, **kwargs):
+    def get_queryset(self):
+        # Return empty queryset since we're handling pagination manually
+        return SavedItem.objects.none()
+    
+    def list(self, request, *args, **kwargs):
         # Get all saved items for the current user
         saved_items = SavedItem.objects.filter(user=request.user).order_by('-created_at')
-        
-        # Initialize response data
-        response_data = {
-            'projects': [],
-            'jobs': [],
-            'candidates': [],
-            'companies': []
-        }
         
         # Get IDs for each type
         project_ids = [item.project_id for item in saved_items if item.item_type == 'project' and item.project_id]
@@ -62,27 +61,53 @@ class AllSavedItemsView(APIView):
         company_ids = [item.company_id for item in saved_items if item.item_type == 'company' and item.company_id]
         
         # Fetch all items in bulk for better performance
-        # Note: Removed is_active filter as it's not present in all models
-        projects = Project.objects.filter(id__in=project_ids) if project_ids else []
-        jobs = Job.objects.filter(id__in=job_ids) if job_ids else []
-        candidates = Candidate.objects.filter(id__in=candidate_ids) if candidate_ids else []
-        companies = Company.objects.filter(id__in=company_ids) if company_ids else []
+        all_items = []
         
-        # Serialize each type of item
-        project_serializer = ProjectSerializer(projects, many=True, context={'request': request})
-        job_serializer = JobSerializer(jobs, many=True, context={'request': request})
-        candidate_serializer = CandidateSerializer(candidates, many=True, context={'request': request})
-        company_serializer = CompanySerializer(companies, many=True, context={'request': request})
+        # Add projects
+        if project_ids:
+            projects = Project.objects.filter(id__in=project_ids)
+            project_serializer = ProjectSerializer(projects, many=True, context={'request': request})
+            all_items.extend([
+                {**item, 'item_type': 'project'} 
+                for item in project_serializer.data
+            ])
         
-        # Add to response data
-        response_data.update({
-            'projects': project_serializer.data,
-            'jobs': job_serializer.data,
-            'candidates': candidate_serializer.data,
-            'companies': company_serializer.data
-        })
+        # Add jobs
+        if job_ids:
+            jobs = Job.objects.filter(id__in=job_ids)
+            job_serializer = JobSerializer(jobs, many=True, context={'request': request})
+            all_items.extend([
+                {**item, 'item_type': 'job'} 
+                for item in job_serializer.data
+            ])
         
-        return Response(response_data)
+        # Add candidates
+        if candidate_ids:
+            candidates = Candidate.objects.filter(id__in=candidate_ids)
+            candidate_serializer = CandidateSerializer(candidates, many=True, context={'request': request})
+            all_items.extend([
+                {**item, 'item_type': 'candidate'} 
+                for item in candidate_serializer.data
+            ])
+        
+        # Add companies
+        if company_ids:
+            companies = Company.objects.filter(id__in=company_ids)
+            company_serializer = CompanySerializer(companies, many=True, context={'request': request})
+            all_items.extend([
+                {**item, 'item_type': 'company'} 
+                for item in company_serializer.data
+            ])
+        
+        # Sort all items by creation date (newest first)
+        all_items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        # Paginate the results
+        page = self.paginate_queryset(all_items)
+        if page is not None:
+            return self.get_paginated_response(page)
+            
+        return Response(all_items)
 
 
 class BaseInteractionView(APIView):
@@ -93,9 +118,7 @@ class BaseInteractionView(APIView):
     model = None  # Should be set by child classes
     
     def get_object(self, pk):
-        # Check if the model has is_active field
-        if hasattr(self.model, 'is_active'):
-            return get_object_or_404(self.model, pk=pk, is_active=True)
+        # Get object by primary key without checking is_active
         return get_object_or_404(self.model, pk=pk)
     
 
@@ -249,12 +272,21 @@ class CandidateSaveView(APIView):
         )
 
 
-class CompanyLikeView(BaseInteractionView):
-    model = Company
+class CompanyLikeView(APIView):
+    """
+    View for liking/unliking a company
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_company(self, pk):
+        try:
+            return Company.objects.get(pk=pk)
+        except Company.DoesNotExist:
+            raise Http404("Company not found")
     
     def get(self, request, pk):
         """Check if the current user has liked the company"""
-        company = self.get_object(pk)
+        company = self.get_company(pk)
         
         is_liked = Like.objects.filter(
             user=request.user,
@@ -265,7 +297,7 @@ class CompanyLikeView(BaseInteractionView):
     
     def post(self, request, pk):
         """Like or unlike the company"""
-        company = self.get_object(pk)
+        company = self.get_company(pk)
         
         like, created = Like.objects.get_or_create(
             user=request.user,
@@ -860,10 +892,10 @@ class BaseListView(generics.ListAPIView):
 class CompanyListView(generics.ListAPIView):
     serializer_class = CompanySerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = None  # Disable pagination
+    pagination_class = CustomPagination
     
     def get_queryset(self):
-        from django.db.models import Count, Exists, OuterRef, Q, Subquery, IntegerField
+        from django.db.models import Count, Exists, OuterRef, Q, Subquery, IntegerField, Case, When, Value, BooleanField
         from django.db.models.functions import Coalesce
         from stories.models import Like, Comment, SavedItem
         
@@ -888,12 +920,6 @@ class CompanyListView(generics.ListAPIView):
             .values('count')[:1]
         )
         
-        # Annotate the queryset with like and comment counts
-        queryset = queryset.annotate(
-            like_count=Coalesce(Subquery(like_count_subquery, output_field=IntegerField()), 0),
-            comment_count=Coalesce(Subquery(comment_count_subquery, output_field=IntegerField()), 0)
-        )
-        
         # Check if current user has liked/saved each company
         if self.request.user.is_authenticated:
             # Subquery for is_liked
@@ -909,78 +935,24 @@ class CompanyListView(generics.ListAPIView):
                 user=self.request.user
             )
             
+            # Annotate the queryset with like, comment counts and user-specific flags
             queryset = queryset.annotate(
+                like_count=Coalesce(Subquery(like_count_subquery, output_field=IntegerField()), 0),
+                comment_count=Coalesce(Subquery(comment_count_subquery, output_field=IntegerField()), 0),
                 is_liked=Exists(is_liked_subquery),
                 is_saved=Exists(is_saved_subquery)
+            )
+        else:
+            # For unauthenticated users, just include the counts
+            queryset = queryset.annotate(
+                like_count=Coalesce(Subquery(like_count_subquery, output_field=IntegerField()), 0),
+                comment_count=Coalesce(Subquery(comment_count_subquery, output_field=IntegerField()), 0),
+                is_liked=Value(False, output_field=BooleanField()),
+                is_saved=Value(False, output_field=BooleanField())
             )
         
         # Order by creation date (newest first)
         return queryset.order_by('-created_at')
-        
-    def list(self, request, *args, **kwargs):
-        # Get the base queryset
-        queryset = self.filter_queryset(self.get_queryset())
-        
-        # Get all item IDs in a single query
-        item_ids = list(queryset.values_list('id', flat=True))
-        
-        # Get all like counts in a single query
-        like_counts = {}
-        if item_ids:
-            like_counts = dict(Like.objects
-                .filter(project_id__in=item_ids)
-                .values('project_id')
-                .annotate(count=Count('id'))
-                .values_list('project_id', 'count')
-            )
-        
-        # Get user's liked and saved status in single queries if user is authenticated
-        user_liked = set()
-        user_saved = set()
-        
-        if request.user.is_authenticated and item_ids:
-            user_id = request.user.id
-            user_liked = set(Like.objects.filter(
-                project_id__in=item_ids,
-                user_id=user_id
-            ).values_list('project_id', flat=True))
-            
-            user_saved = set(SavedItem.objects.filter(
-                item_type='project',
-                project_id__in=item_ids,
-                user_id=user_id
-            ).values_list('project_id', flat=True))
-        
-        # Annotate the queryset with all the data
-        queryset = queryset.annotate(
-            like_count=Case(
-                *[When(pk=pid, then=Value(count)) for pid, count in like_counts.items()],
-                default=Value(0),
-                output_field=IntegerField()
-            ),
-            is_liked=Case(
-                *[When(pk=pid, then=Value(True)) for pid in user_liked],
-                default=Value(False),
-                output_field=BooleanField()
-            ) if request.user.is_authenticated else Value(False, output_field=BooleanField()),
-            is_saved=Case(
-                *[When(pk=pid, then=Value(True)) for pid in user_saved],
-                default=Value(False),
-                output_field=BooleanField()
-            ) if request.user.is_authenticated else Value(False, output_field=BooleanField())
-        )
-        
-        # Get the count of all results
-        count = queryset.count()
-        
-        # Serialize the data
-        serializer = self.get_serializer(queryset, many=True)
-        
-        # Return response with count and results (no pagination)
-        return Response({
-            'count': count,
-            'results': serializer.data
-        })
 
 class ProjectListView(generics.ListAPIView):
     serializer_class = ProjectSerializer

@@ -4,6 +4,7 @@ from rest_framework.decorators import action, authentication_classes
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
@@ -87,6 +88,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     filterset_fields = ['category', 'paymentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
     ordering = ['-created_at']
+    pagination_class = CustomPagination
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -140,11 +142,24 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
     @action(detail=False, methods=['get'], url_path='my-projects')
     def my_projects(self, request):
-        # Filter projects by the employer's user ID
-        projects = Project.objects.filter(employer_id=request.user.id)
-        serializer = ProjectListSerializer(projects, many=True, context=self.get_serializer_context())
+        # Get and filter the queryset
+        queryset = self.filter_queryset(self.get_queryset())
+        queryset = queryset.filter(employer_id=request.user.id)
+        
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = ProjectListSerializer(page, many=True, context=self.get_serializer_context())
+            return self.get_paginated_response(serializer.data)
+            
+        # Fallback if pagination is not applied
+        serializer = ProjectListSerializer(queryset, many=True, context=self.get_serializer_context())
         return Response({
-            'count': projects.count(),
+            'count': queryset.count(),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
             'results': serializer.data
         })
         
