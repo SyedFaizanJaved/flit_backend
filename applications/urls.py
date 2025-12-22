@@ -2,6 +2,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Combined Applications
+    path('combined/', views.CombinedApplicationsView.as_view(), name='combined-applications'),
+    
     # Job Applications
     path('jobs/', views.JobApplicationListView.as_view(), name='job-application-list'),
     path('jobs/<int:pk>/', views.JobApplicationDetailView.as_view(), name='job-application-detail'),

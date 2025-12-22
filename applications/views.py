@@ -34,6 +34,98 @@ from utils.pagination import CustomPagination
 
 logger = logging.getLogger("exceptions")
 
+from projects.models import Project
+from django.core.exceptions import PermissionDenied
+from datetime import timedelta , datetime
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+from vr_meet.views import create_google_event
+from vr_meet.models import MeetingRoom
+import logging
+from utils.pagination import CustomPagination
+
+logger = logging.getLogger("exceptions")
+
+
+
+class CombinedApplicationsView(generics.ListAPIView):
+    """
+    Combined view for job and project applications with pagination
+    """
+    pagination_class = CustomPagination
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        from applications.models import JobApplication, ProjectApplication
+        
+        # Get the company_id from query params if provided
+        company_id = self.request.query_params.get('company_id')
+        
+        # Base querysets with select_related/prefetch_related for performance
+        job_apps = JobApplication.objects.select_related('job', 'candidate__user')
+        project_apps = ProjectApplication.objects.select_related('project', 'candidate__user')
+        
+        # Apply company filter if company_id is provided
+        if company_id:
+            job_apps = job_apps.filter(job__company_id=company_id)
+            project_apps = project_apps.filter(project__company_id=company_id)
+        
+        # Filter by user role
+        user_role = getattr(getattr(self.request.user, 'role', None), 'name', None)
+        if user_role == "candidate":
+            job_apps = job_apps.filter(candidate__user=self.request.user)
+            project_apps = project_apps.filter(candidate__user=self.request.user)
+        elif user_role == "employer":
+            job_apps = job_apps.filter(employer=self.request.user)
+            project_apps = project_apps.filter(employer=self.request.user)
+        else:
+            return []
+        
+        # Convert to list of dicts for combined sorting
+        combined = []
+        
+        # Add job applications
+        for app in job_apps:
+            combined.append({
+                'id': app.id,
+                'type': 'job',
+                'title': getattr(app.job, 'title', 'No Job'),
+                'status': app.status,
+                'applied_at': app.applied_at,
+                'application': JobApplicationListSerializer(app, context={'request': self.request}).data
+            })
+            
+        # Add project applications
+        for app in project_apps:
+            combined.append({
+                'id': app.id,
+                'type': 'project',
+                'title': getattr(app.project, 'title', 'No Project'),
+                'status': app.status,
+                'applied_at': app.applied_at,
+                'application': ProjectApplicationListSerializer(app, context={'request': self.request}).data
+            })
+        
+        # Sort by applied_at in descending order (newest first)
+        combined.sort(key=lambda x: x['applied_at'], reverse=True)
+        return combined
+    
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            
+            # Apply pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                return self.get_paginated_response(page)
+                
+            return Response(queryset)
+        except Exception as e:
+            logger.error(f"Error in CombinedApplicationsView: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "An error occurred while fetching applications"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class JobApplicationListView(generics.ListCreateAPIView):
     """

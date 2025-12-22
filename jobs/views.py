@@ -98,6 +98,7 @@ class JobViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'description', 'company__company_name']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
+    pagination_class = CustomPagination
 
     def get_queryset(self):
         """
@@ -514,10 +515,19 @@ class JobViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='my-jobs')
     def my_jobs(self, request):
-        jobs = Job.objects.filter(employer=request.user)
-        serializer = JobListSerializer(jobs, many=True, context=self.get_serializer_context())
+        queryset = self.filter_queryset(self.get_queryset())
+        queryset = queryset.filter(employer=request.user)
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = JobListSerializer(page, many=True, context=self.get_serializer_context())
+            return self.get_paginated_response(serializer.data)
+        serializer = JobListSerializer(queryset, many=True, context=self.get_serializer_context())
         return Response({
-            'count': jobs.count(),
+            'count': queryset.count(),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
             'results': serializer.data
         })
 
