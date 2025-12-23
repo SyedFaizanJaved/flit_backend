@@ -1,35 +1,52 @@
 
 import json
 import logging
-import os
-import requests
 from django.http import Http404
-from rest_framework.exceptions import PermissionDenied
-import boto3
-# Set up logging
-logger = logging.getLogger(__name__)
+from rest_framework.exceptions import PermissionDenied, NotFound
 from django.conf import settings
-from projects.models import Project, ProjectSkill  # Add ProjectSkill import
-from projects.serializers import ProjectListSerializer
-from jobs.serializers import JobListSerializer
-from django.utils import timezone
-import time
-from django.db import transaction, models, IntegrityError
+from django.db import transaction
+from django.db.models import Q, Count
 from django.core.files.storage import default_storage
-from django.db import models
-from django.db.models import Case, Q, When, F, OuterRef, Subquery, Count
-from django.db.models.functions import Coalesce
 from django.utils.text import get_valid_filename
-from applications.models import JobApplication as Application
-from rest_framework import status, permissions, viewsets, filters, mixins, generics
+from django.utils import timezone
+from rest_framework import status, permissions, viewsets, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
-from rest_framework import permissions
-from utils.file_validators import resume_upload_path,video_upload_path, image_upload_path
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.pagination import PageNumberPagination
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Disable debug logging for chat and other noisy modules
+logging.getLogger('websockets').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+# Local imports
+from projects.models import Project
+from projects.serializers import ProjectListSerializer
+from jobs.serializers import JobListSerializer
+from applications.models import JobApplication as Application
+from .models import Candidate, ReferenceRequest
+from .serializers import (
+    CandidateSerializer, 
+    CandidateListSerializer,
+    ReferenceRequestSerializer,
+    DiscoverTalentSerializer,
+)
+from utils.pagination import CustomPagination
+
+# Set up logging
+logger = logging.getLogger(__name__)
+exception_logger = logging.getLogger("exceptions")
              
 class IsCandidateUser(permissions.BasePermission):
     """
@@ -138,46 +155,67 @@ class DashboardBaseView(APIView):
 
 
 class CandidateDashboardView(DashboardBaseView):
-    """Legacy dashboard endpoint that combines all dashboard data."""
+    """Optimized dashboard endpoint that combines all dashboard data."""
+    
     def get(self, request):
-        # This is the original dashboard endpoint that combines all data
-        # It's kept for backward compatibility but can be deprecated later
-  
-        base_url = request.build_absolute_uri('/')
+        candidate = self.get_candidate_profile(request.user)
         
-        # Get profile data
-        profile_url = base_url.rstrip('/') + drf_reverse('candidate-profile-dashboard')
-        profile_response = requests.get(
-            profile_url,
-            headers={'Authorization': request.META.get('HTTP_AUTHORIZATION', '')}
-        )
-        
-        if profile_response.status_code != 200:
-            return Response(
-                {'error': 'Could not fetch profile data'}, 
-                status=profile_response.status_code
-            )
-            
-        response_data = profile_response.json()
-        
-        # Add other dashboard data
-        endpoints = [
-            ('applications', 'candidate-applications'),
-            ('latest_jobs', 'candidate-latest-jobs'),
-            ('latest_projects', 'candidate-latest-projects')
-        ]
-        
-        for key, url_name in endpoints:
-            endpoint_url = base_url.rstrip('/') + drf_reverse(url_name)
-            endpoint_response = requests.get(
-                endpoint_url,
-                headers={'Authorization': request.META.get('HTTP_AUTHORIZATION', '')}
-            )
-            
-            if endpoint_response.status_code == 200:
-                response_data.update(endpoint_response.json())
+        # Get all data in a single response
+        response_data = {
+            'profile': self._get_profile_data(candidate),
+            'applications': self._get_applications_data(candidate),
+            'latest_jobs': self._get_latest_jobs(candidate),
+            'latest_projects': self._get_latest_projects(candidate)
+        }
         
         return Response(response_data)
+    
+    def _get_profile_data(self, candidate):
+        """Get candidate profile data with optimized queries."""
+        from .serializers import CandidateSerializer
+        return CandidateSerializer(candidate, context={'request': self.request}).data
+    
+    def _get_applications_data(self, candidate):
+        """Get applications data with optimized queries."""
+        from django.db.models import Count, Q
+        
+        # Single query to get all application counts
+        counts = Application.objects.filter(
+            candidate=candidate,
+            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
+        ).aggregate(
+            total=Count('id'),
+            job_apps=Count('id', filter=Q(job__isnull=False)),
+            project_apps=Count('id', filter=Q(project__isnull=False))
+        )
+        
+        return {
+            'total_applications': counts['total'] or 0,
+            'job_applications_count': counts['job_apps'] or 0,
+            'project_applications_count': counts['project_apps'] or 0,
+            'references_count': ReferenceRequest.objects.filter(
+                candidate=candidate,
+                is_public=True
+            ).count()
+        }
+    
+    def _get_latest_jobs(self, candidate, limit=5):
+        """Get latest jobs with optimized query."""
+        from jobs.models import Job
+        
+        jobs = Job.objects.filter(
+            status='active'
+        ).select_related('company').order_by('-created_at')[:limit]
+        
+        return JobListSerializer(jobs, many=True, context={'request': self.request}).data
+    
+    def _get_latest_projects(self, candidate, limit=5):
+        """Get latest projects with optimized query."""
+        projects = Project.objects.filter(
+            status='active'
+        ).select_related('company').order_by('-created_at')[:limit]
+        
+        return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
 
 
 class CandidateProfileDashboardView(DashboardBaseView):
@@ -215,100 +253,111 @@ class CandidateProfileDashboardView(DashboardBaseView):
             'applications_count': applications_count,
             'job_applications_count': job_applications_count,
             'project_applications_count': project_applications_count,
-            'references_count': references_count,
+            'references_count': references_count,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
             'reference_requests_count': reference_requests_count,
         })
 
 
-class CandidateApplicationsView(DashboardBaseView):
-    """Endpoint for candidate's recent applications."""
-    def get(self, request):
-        import logging
-        logger = logging.getLogger(__name__)
+class CandidateApplicationsView(DashboardBaseView, generics.ListAPIView):
+    """Optimized endpoint for candidate's applications with pagination."""
+    pagination_class = CustomPagination
+    
+    def get_queryset(self):
+        """Get combined queryset of job and project applications."""
+        candidate = self.get_candidate_profile(self.request.user)
         
+        # Get job applications with select_related to avoid N+1 queries
+        job_apps = Application.objects.filter(
+            candidate=candidate
+        ).select_related('job__company').order_by('-applied_at')
+        
+        # Get project applications with select_related
+        project_apps = ProjectApplication.objects.filter(
+            candidate=candidate
+        ).select_related('project__company').order_by('-applied_at')
+        
+        # Convert both to list of dicts with consistent structure
+        job_apps_list = [
+            self._format_application(app, 'job') 
+            for app in job_apps
+        ]
+        
+        project_apps_list = [
+            self._format_application(app, 'project')
+            for app in project_apps
+        ]
+        
+        # Combine and sort all applications
+        all_apps = job_apps_list + project_apps_list
+        all_apps.sort(key=lambda x: x['applied_at'], reverse=True)
+        
+        return all_apps
+    
+    def _format_application(self, app, app_type):
+        """Format application data consistently."""
+        if app_type == 'job':
+            return {
+                'app_id': app.id,
+                'id': app.job.id if app.job else None,
+                'title': app.job.title if app.job else 'Unknown Job',
+                'company': app.job.company.name if app.job and app.job.company else 'Unknown Company',
+                'status': app.status,
+                'applied_at': app.applied_at,
+                'type': 'job'
+            }
+        else:  # project application
+            return {
+                'app_id': app.id,
+                'id': app.project.id if app.project else None,
+                'title': app.project.title if app.project else 'Unknown Project',
+                'company': app.project.company.name if app.project and app.project.company else 'Unknown Company',
+                'status': app.status,
+                'applied_at': app.applied_at,
+                'type': 'project'
+            }
+    
+    def list(self, request, *args, **kwargs):
+        """List applications with pagination and counts."""
         try:
             candidate = self.get_candidate_profile(request.user)
+            queryset = self.filter_queryset(self.get_queryset())
             
-            # Get job applications
-            job_applications = list(Application.objects.filter(
-                candidate=candidate
-            ).select_related('job', 'job__company').order_by('-applied_at'))
+            # Get counts in a single query
+            counts = {
+                'job': Application.objects.filter(candidate=candidate).count(),
+                'project': ProjectApplication.objects.filter(candidate=candidate).count()
+            }
             
-            # Get project applications
-            project_applications = list(ProjectApplication.objects.filter(
-                candidate=candidate
-            ).select_related('project', 'project__company').order_by('-applied_at'))
-            
-            # Log counts for debugging
-            logger.info(f"Found {len(job_applications)} job applications and {len(project_applications)} project applications")
-            
-            # Combine and sort all applications by applied_at
-            all_applications = []
-            
-            for app in job_applications:
-                all_applications.append({
-                    'type': 'job',
-                    'object': app,
-                    'applied_at': app.applied_at
+            # Apply pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                return self.get_paginated_response({
+                    'applications': page,
+                    'total_applications': counts['job'] + counts['project'],
+                    'job_applications_count': counts['job'],
+                    'project_applications_count': counts['project']
                 })
-                
-            for app in project_applications:
-                all_applications.append({
-                    'type': 'project',
-                    'object': app,
-                    'applied_at': app.applied_at
-                })
-            
-            # Sort by applied_at in descending order
-            all_applications.sort(key=lambda x: x['applied_at'], reverse=True)
-            
-            # Prepare response data - using all applications now
-            applications_data = []
-            for app in all_applications:
-                app_obj = app['object']
-                if app['type'] == 'job':
-                    applications_data.append({
-                        'app_id': app_obj.id,
-                        'id': app_obj.job.id,
-                        'title': app_obj.job.title if hasattr(app_obj, 'job') and app_obj.job else 'Unknown Job',
-                        'company': app_obj.job.company.name if hasattr(app_obj, 'job') and hasattr(app_obj.job, 'company') and app_obj.job.company else 'Unknown Company',
-                        'status': app_obj.status,
-                        'applied_at': app_obj.applied_at,
-                        'type': 'job'
-                    })
-                else:  # project application
-                    applications_data.append({
-                        'app_id': app_obj.id,
-                        'id': app_obj.project.id,
-                        'title': app_obj.project.title if hasattr(app_obj, 'project') and app_obj.project else 'Unknown Project',
-                        'company': app_obj.project.company.name if hasattr(app_obj, 'project') and hasattr(app_obj.project, 'company') and app_obj.project.company else 'Unknown Company',
-                        'status': app_obj.status,
-                        'applied_at': app_obj.applied_at,
-                        'type': 'project'
-                    })
             
             return Response({
-                'applications': applications_data,
-                'total_applications': len(job_applications) + len(project_applications),
-                'job_applications_count': len(job_applications),
-                'project_applications_count': len(project_applications)
+                'applications': queryset,
+                'total_applications': counts['job'] + counts['project'],
+                'job_applications_count': counts['job'],
+                'project_applications_count': counts['project']
             })
             
         except Exception as e:
             exception_logger.exception("Error fetching applications")
-            logger.error(f"Error fetching applications: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'An error occurred while fetching applications'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-
-
 class CandidateLatestJobsView(ListAPIView):
     """Endpoint for latest jobs relevant to candidate."""
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = JobListSerializer
+    page_size = 20  # Set default page size
     
     def get_candidate_profile(self, user):
         """Get the candidate profile for the authenticated user."""
@@ -318,240 +367,210 @@ class CandidateLatestJobsView(ListAPIView):
             raise NotFound("Candidate profile not found for this user.")
             
     def get_queryset(self):
+        from django.core.cache import cache
+        
         candidate = self.get_candidate_profile(self.request.user)
         logger = logging.getLogger(__name__)
+        cache_key = f'candidate_{candidate.id}_latest_jobs'
         
-        # Try to get personalized jobs from ML endpoint
-        self.ml_success = False
-        latest_jobs = []
+        # Try to get from cache first
+        cached_result = cache.get(cache_key)
+        if cached_result is not None and cached_result.get('ml_success', False):
+            self.ml_success = True
+            return cached_result.get('jobs', [])
         
         try:
-            # Get ML URL from environment variable with fallback
             ml_base_url = f"{settings.FLIT_AI_URL}/"
-                
             ml_url = f"{ml_base_url.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-            logger.info(f"Calling ML service at: {ml_url}")
             
-            # Increased timeout to 5 minutes (300 seconds)
-            ml_response = requests.get(ml_url, timeout=300)
-            logger.info(f"ML service response status: {ml_response.status_code}")
-            logger.debug(f"ML service response content: {ml_response.text}")
+            # Timeout after 15 seconds
+            ml_response = requests.get(ml_url, timeout=15)
             
             if ml_response.status_code == 200:
-                try:
-                    ml_data = ml_response.json()
-                    logger.info(f"ML service response data: {json.dumps(ml_data, indent=2)}")
-                    
-                    # Check for 'ranked_opportunities' key and that it's a list
-                    ranked_opportunities = ml_data.get('ranked_opportunities')
-                    if isinstance(ranked_opportunities, list) and ranked_opportunities:
-                        logger.info(f"Found {len(ranked_opportunities)} job opportunities in ML response")
-                        
-                        # Process each job in the ML response
-                        for job_data in ranked_opportunities:
-                            try:
-                                job_id = job_data.get('job_id') or job_data.get('id')
-                                if job_id is None:
-                                    logger.warning("Skipping job without job_id")
-                                    continue
-                                
-                                # Create a dictionary with the transformed job data
-                                job = {
-                                    'id': job_id,
-                                    'title': job_data.get('title', 'No Title'),
-                                    'description': job_data.get('description', ''),
-                                    'workStyle': job_data.get('work_style', 'remote'),
-                                    'category': job_data.get('category', 'other'),
-                                    'experienceLevel': job_data.get('experience_level', 'mid'),
-                                    'employmentType': job_data.get('employment_type', 'full-time'),
-                                    'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
-                                    'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
-                                    'status': job_data.get('status', 'active'),
-                                    'created_at': job_data.get('created_at', timezone.now().isoformat()),
-                                    'location': job_data.get('location'),
-                                    'skills': job_data.get('skills', [])
-                                }
-                                
-                                # Add company information if available
-                                company_data = job_data.get('company', {})
-                                if company_data:
-                                    job.update({
-                                        'company_name': company_data.get('company_name', 'Unknown Company'),
-                                        'company_id': company_data.get('id')
-                                    })
-                                
-                                latest_jobs.append(job)
-                                logger.info(f"Added job from ML data: {job_id} - {job['title']}")
-                                
-                                # Limit to 10 jobs
-                                if len(latest_jobs) >= 10:
-                                    break
-                                    
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Invalid job ID format: {job_data.get('job_id') or job_data.get('id')}")
-                                logger.error(f"Error processing job data: {str(e)}", exc_info=True)
-                        
-                        if latest_jobs:
-                            self.ml_success = True
-                            logger.info(f"Successfully got {len(latest_jobs)} jobs from ML service")
-                            return latest_jobs
-                        else:
-                            logger.warning("No valid jobs processed from ML response")
-                    else:
-                        logger.warning("No ranked_opportunities found or empty in ML response")
-                        
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse ML service response: {e}")
-            else:
-                logger.warning(f"ML service returned status code: {ml_response.status_code}")
-                logger.warning(f"Response content: {ml_response.text}")
+                ml_data = ml_response.json()
+                ranked_opportunities = ml_data.get('ranked_opportunities', [])
                 
-        except requests.RequestException as e:
-            logger.error(f"Request to ML service failed: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
+                if not isinstance(ranked_opportunities, list) or not ranked_opportunities:
+                    logger.warning("No job opportunities found in ML response")
+                    return []
+                
+                latest_jobs = []
+                for job_data in ranked_opportunities:
+                    try:
+                        job = self._process_job_data(job_data)
+                        if job:
+                            latest_jobs.append(job)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid job data: {str(e)}")
+                
+                if latest_jobs:
+                    # Cache successful ML result for 5 minutes
+                    result = {'jobs': latest_jobs, 'ml_success': True}
+                    cache.set(cache_key, result, timeout=300)
+                    self.ml_success = True
+                    return latest_jobs
         
-        # Fallback to original logic if ML fails or no results
-        if not getattr(self, 'ml_success', False):
-            logger.info("Falling back to database query for latest jobs")
-            # Get candidate's skills for filtering (original logic) - but you're not using skills filter here?
-            # candidate_skills = candidate.skills or []  # Unused in fallback?
+        except (requests.RequestException, json.JSONDecodeError, Exception) as e:
+            logger.warning(f"ML service request failed: {str(e)}")
+        
+        # Return empty list if ML API fails or returns no jobs
+        return []
+    
+    def _process_job_data(self, job_data):
+        """Process and validate job data from ML service."""
+        job_id = job_data.get('job_id') or job_data.get('id')
+        if not job_id:
+            return None
+        
+        job = {
+            'id': job_id,
+            'title': job_data.get('title', 'No Title'),
+            'description': job_data.get('description', ''),
+            'workStyle': job_data.get('work_style', 'remote'),
+            'category': job_data.get('category', 'other'),
+            'experienceLevel': job_data.get('experience_level', 'mid'),
+            'employmentType': job_data.get('employment_type', 'full-time'),
+            'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
+            'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
+            'status': job_data.get('status', 'active'),
+            'created_at': job_data.get('created_at', timezone.now().isoformat()),
+            'location': job_data.get('location'),
+            'skills': job_data.get('skills', [])
+        }
+        
+        # Add company information if available
+        company_data = job_data.get('company', {})
+        if company_data:
+            job.update({
+                'company_name': company_data.get('company_name', 'Unknown Company'),
+                'company_id': company_data.get('id')
+            })
             
-            # Get latest active jobs, ordered by creation date
-            latest_jobs = Job.objects.filter(
-                status='active'
-            ).select_related('company').order_by('-created_at')[:10]
-        
-        return latest_jobs or []
+        return job
     
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
         
-        # Check if we have Job objects or dictionaries
-        if not queryset:
+        if page is not None:
             return self.get_paginated_response({
-                'latest_jobs': [],
+                'latest_jobs': page,
                 'ml_success': getattr(self, 'ml_success', False)
             })
             
-        if isinstance(queryset[0], dict):
-            # For dictionaries from ML service
-            # Apply pagination
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                return self.get_paginated_response({
-                    'latest_jobs': page,
-                    'ml_success': getattr(self, 'ml_success', False)
-                })
-                
-            # Fallback if pagination is not applied
-            return Response({
-                'count': len(queryset),
-                'next': None,
-                'previous': None,
-                'total_pages': 1,
-                'current_page': 1,
-                'latest_jobs': queryset,
-                'ml_success': getattr(self, 'ml_success', False)
-            })
-        else:
-            # For Job objects from database, use the standard list method
-            return super().list(request, *args, **kwargs)
+        return Response({
+            'count': len(queryset),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
+            'latest_jobs': [],
+            'ml_success': getattr(self, 'ml_success', False)
+        })
 
 class CandidateLatestProjectsView(ListAPIView):
-    """Endpoint for latest projects relevant to candidate."""
+    """
+    Endpoint for latest projects relevant to candidate.
+    Only shows projects from ML service, returns empty if no projects from ML.
+    """
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = ProjectListSerializer
+    page_size = 20  # Default page size
+    
+    def get_candidate_profile(self, user):
+        """Get the candidate profile for the authenticated user."""
+        try:
+            return user.candidate_profile
+        except Candidate.DoesNotExist:
+            raise NotFound("Candidate profile not found for this user.")
     
     def get_queryset(self):
+        from django.core.cache import cache
+        import time
+        
         candidate = self.get_candidate_profile(self.request.user)
         logger = logging.getLogger(__name__)
         
-        # Try to get personalized projects from ML endpoint
-        self.ml_success = False
-        latest_projects = []
+        # Get page number and size from query params
+        page = int(self.request.query_params.get('page', 1))
+        page_size = int(self.request.query_params.get('page_size', self.page_size))
         
+        # Generate cache key
+        cache_key = f'candidate_{candidate.id}_ml_projects_page_{page}_size_{page_size}'
+        
+        # Try to get from cache first
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        # Fetch projects from ML service
         try:
-            # Get ML URL from environment variable with fallback
             ml_base_url = f"{settings.FLIT_AI_URL}/"
             ml_url = f"{ml_base_url.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-            logger.info(f"Calling ML service at: {ml_url}")
             
-            # Increased timeout to 5 minutes (300 seconds)
-            ml_response = requests.get(ml_url, timeout=300)
-            logger.info(f"ML service response status: {ml_response.status_code}")
+            # Call ML service without timeout
+            ml_response = requests.get(ml_url)
             
             if ml_response.status_code == 200:
-                try:
-                    ml_data = ml_response.json()
-                    ranked_projects = ml_data.get('ranked_projects', [])
-                    
-                    if isinstance(ranked_projects, list) and ranked_projects:
-                        logger.info(f"Found {len(ranked_projects)} project opportunities in ML response")
-                        
-                        for project_data in ranked_projects:
-                            try:
-                                project_id = project_data.get('id')
-                                if project_id is not None:
-                                    project = {
-                                        'id': project_id,
-                                        'title': project_data.get('title', 'No Title'),
-                                        'description': project_data.get('description', ''),
-                                        'category': project_data.get('category', 'other'),
-                                        'status': project_data.get('status', 'active'),
-                                        'created_at': project_data.get('created_at', timezone.now().isoformat()),
-                                        'skills': project_data.get('skills', [])
-                                    }
-                                    latest_projects.append(project)
-                                    
-                                    if len(latest_projects) >= 10:
-                                        break
-                                        
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Invalid project data: {str(e)}")
-                        
-                        if latest_projects:
-                            self.ml_success = True
-                            logger.info(f"Successfully got {len(latest_projects)} projects from ML service")
-                            return latest_projects
-                            
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse ML service response: {e}")
-            else:
-                logger.warning(f"ML service returned status code: {ml_response.status_code}")
+                ml_data = ml_response.json()
+                ranked_projects = ml_data.get('ranked_projects', [])
                 
-        except requests.RequestException as e:
-            logger.error(f"Request to ML service failed: {str(e)}")
+                if not isinstance(ranked_projects, list) or not ranked_projects:
+                    logger.info("No projects found in ML service response")
+                    return []
+                
+                # Process and format the ML projects
+                latest_projects = []
+                for project_data in ranked_projects:
+                    try:
+                        project_id = project_data.get('id')
+                        if project_id is not None:
+                            project = {
+                                'id': project_id,
+                                'title': project_data.get('title', 'No Title'),
+                                'description': project_data.get('description', ''),
+                                'category': project_data.get('category', 'other'),
+                                'status': project_data.get('status', 'active'),
+                                'created_at': project_data.get('created_at', timezone.now().isoformat()),
+                                'skills': project_data.get('skills', [])
+                            }
+                            latest_projects.append(project)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid project data: {str(e)}")
+                
+                # Cache the result for 5 minutes
+                cache.set(cache_key, latest_projects, timeout=300)
+                self.ml_success = True
+                return latest_projects
+            
+            logger.warning(f"ML service returned status code: {ml_response.status_code}")
+            return []
+            
         except Exception as e:
-            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
-        
-        # Fallback to database if ML service fails or returns no results
-        logger.info("Falling back to database query for latest projects")
-        return Project.objects.filter(
-            status='active'
-        ).select_related('company').order_by('-created_at')[:10]
+            logger.error(f"Error in ML service call: {str(e)}")
+            return []
     
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        
-        # Check if we have Project objects or dictionaries
-        if not queryset:
-            return self.get_paginated_response({
-                'latest_projects': [],
-                'ml_success': getattr(self, 'ml_success', False)
-            })
+        try:
+            queryset = self.get_queryset()
             
-        if isinstance(queryset[0], dict):
-            # For dictionaries from ML service
+            # Always return empty list if no projects from ML
+            if not queryset:
+                return self.get_paginated_response({
+                    'latest_projects': [],
+                    'ml_success': getattr(self, 'ml_success', False)
+                })
+            
             # Apply pagination
             page = self.paginate_queryset(queryset)
+            
             if page is not None:
                 return self.get_paginated_response({
                     'latest_projects': page,
                     'ml_success': getattr(self, 'ml_success', False)
                 })
-                
+            
             # Fallback if pagination is not applied
             return Response({
                 'count': len(queryset),
@@ -562,8 +581,13 @@ class CandidateLatestProjectsView(ListAPIView):
                 'latest_projects': queryset,
                 'ml_success': getattr(self, 'ml_success', False)
             })
-        else:
-            # For Project objects from database, use the standard list method
+            
+        except Exception as e:
+            logger.error(f"Error in project list view: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'An error occurred while fetching projects'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
             return super().list(request, *args, **kwargs)
     
     def get_candidate_profile(self, user):
@@ -593,44 +617,9 @@ class CandidateLatestProjectsView(ListAPIView):
                 'Accept': 'application/json'
             }
             
-            # Increase timeout to 30 seconds and add retry logic
-            max_retries = 2
-            retry_delay = 5  # seconds
-            
-            for attempt in range(max_retries + 1):
-                try:
-                    logger.info(f"Attempt {attempt + 1}/{max_retries + 1} to call ML service")
-                    
-                    # Log the full request details
-                    logger.info(f"Sending GET request to ML service with headers: {headers}")
-                    
-                    # Increased timeout to 5 minutes (300 seconds)
-                    ml_response = requests.get(ml_url, headers=headers, timeout=300)
-                    logger.info(f"ML service response status: {ml_response.status_code}")
-                    logger.info(f"Response headers: {dict(ml_response.headers)}")
-                    
-                    # Log response content for debugging (first 1000 chars)
-                    response_preview = ml_response.text[:1000]
-                    logger.info(f"Response preview: {response_preview}")
-                    
-                    # If we got a successful response, break out of the retry loop
-                    if ml_response.status_code == 200:
-                        break
-                        
-                except requests.exceptions.Timeout:
-                    if attempt == max_retries:
-                        exception_logger.error(f"ML service timed out after {max_retries + 1}attempts")
-                        logger.error(f"ML service timed out after {max_retries + 1} attempts")
-                        raise
-                    logger.warning(f"ML service timed out, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(retry_delay)
-                except requests.exceptions.RequestException as e:
-                    if attempt == max_retries:
-                        exception_logger.exception(f"Failed to call ML service after {max_retries + 1} attempts")
-                        logger.error(f"Failed to call ML service after {max_retries + 1} attempts: {str(e)}")
-                        raise
-                    logger.warning(f"Error calling ML service, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    time.sleep(retry_delay)
+            # Make a single request with a reasonable timeout
+            logger.info("Calling ML service")
+            ml_response = requests.get(ml_url, headers=headers, timeout=30)  # 30 second timeout
             
             if ml_response.status_code == 200:
                 try:
@@ -1025,9 +1014,6 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     ml_payload[key] = str(value)
 
             max_retries = 3  # Increased retries for better reliability
-            timeout_seconds = 45  # Increased timeout for ML processing
-            ml_response = None
-
             # Configure headers with content type and API key if available
             headers = {
                 "Content-Type": "application/json"
@@ -1040,64 +1026,27 @@ class CandidateViewSet(viewsets.ModelViewSet):
                 logger.info("ML API key added to request headers")
             else:
                 logger.warning("No ML API key found in settings or environment variables")
-
-            # Make the API call with retry logic
-            for attempt in range(max_retries + 1):
-                try:
-                    logger.info(f"Calling Candidate create ML API (attempt {attempt + 1}/{max_retries + 1}) for candidate {candidate.id}")
-                    logger.info(f"ML API URL: {ml_api_url}")
-                    logger.info(f"ML Payload keys: {', '.join(ml_payload.keys())}")
-                    logger.info(f"ML Payload (first 500 chars): {json.dumps(ml_payload)[:500]}...")
-                    
-                    ml_response = requests.post(
-                        ml_api_url,
-                        json=ml_payload,
-                        headers=headers,
-                        timeout=timeout_seconds
-                    )
-                    
-                    # Log the response status and content for debugging
-                    logger.info(f"ML API Response Status: {ml_response.status_code}")
-                    logger.info(f"ML API Response Headers: {dict(ml_response.headers)}")
-                    logger.info(f"ML API Response Content (first 500 chars): {ml_response.text[:500]}")
-                    
-                    # Log full response if it's an error
-                    if ml_response.status_code not in (200, 201):
-                        logger.error(f"ML API Error Response: {ml_response.text}")
-                    
-                    # If we get a successful response, break out of the retry loop
-                    if ml_response.status_code in (200, 201):
-                        break
-                        
-                except requests.exceptions.Timeout:
-                    if attempt == max_retries:
-                        exception_logger.error("Candidate create ML API timed out after maximum retries")
-                        ml_error = "Candidate create ML API timed out after retries"
-                        logger.error(ml_error)
-                        break
-                    logger.warning(f"Candidate create ML API timeout (attempt {attempt + 1}), retrying...")
-                    time.sleep(1)  # Wait before retry
-                except requests.exceptions.RequestException as exc:
-                    if attempt == max_retries:
-                        exception_logger.exception("Candidate create ML API request failed after all retries")
-                        ml_error = f"Candidate create ML API request failed: {str(exc)}"
-                        logger.error(ml_error, exc_info=True)
-                        break
-                    logger.warning(f"Candidate create ML API request failed (attempt {attempt + 1}), retrying...")
-                    time.sleep(1)  # Wait before retry
-                except requests.exceptions.Timeout:
-                    if attempt == max_retries:
-                        exception_logger.error("Candidate create ML API timed out after maximum retries")
-                        ml_error = "Candidate create ML API timed out after retries"
-                        logger.error(ml_error)
-                        break
-                    logger.warning(f"Candidate create ML API timeout (attempt {attempt + 1}), retrying...")
-                    time.sleep(1)
-                except requests.exceptions.RequestException as exc:
-                    exception_logger.exception("Candidate create ML API request failed")
-                    ml_error = f"Candidate create ML API request failed: {str(exc)}"
-                    logger.error(ml_error, exc_info=True)
-                    break
+            
+            try:
+                logger.info("Calling ML API...")
+                ml_response = requests.post(
+                    ml_api_url,
+                    json=ml_payload,
+                    headers=headers,
+                    timeout=30  # 30 second timeout
+                )
+                logger.info(f"ML API Response Status: {ml_response.status_code}")
+                
+            except requests.exceptions.Timeout:
+                exception_logger.error("Candidate create ML API timed out")
+                ml_error = "Candidate create ML API timed out"
+                logger.error(ml_error)
+                raise
+            except requests.exceptions.RequestException as exc:
+                exception_logger.exception("Candidate create ML API request failed")
+                ml_error = f"Candidate create ML API request failed: {str(exc)}"
+                logger.error(ml_error, exc_info=True)
+                raise
 
             # Process the ML API response
             if ml_response is not None and ml_response.status_code in (200, 201):
@@ -2321,6 +2270,17 @@ class DiscoverTalentView(generics.ListAPIView):
         queryset = Candidate.objects.select_related('user').filter(
             user__is_active=True
         )
+        
+        # Apply search if provided
+        search_query = self.request.query_params.get('search', '').strip()
+        if search_query:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search_query) |
+                Q(user__last_name__icontains=search_query) |
+                Q(user__first_name__icontains=search_query.split()[0]) |
+                Q(title__icontains=search_query) |
+                Q(bio__icontains=search_query)
+            )
         
         # Apply filters if provided in query params
         skills = self.request.query_params.getlist('skills', [])

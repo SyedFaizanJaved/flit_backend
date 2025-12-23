@@ -202,33 +202,26 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 "status": project.status
             }
 
-            max_retries = 2
-            timeout_seconds = 30
-            ml_response = None
-
-            for attempt in range(max_retries + 1):
-                try:
-                    logger.info(f"Calling Project create ML API (attempt {attempt + 1}/{max_retries + 1}) for project {project.id}")
-                    ml_response = requests.post(
-                        ml_api_url,
-                        json=ml_payload,
-                        headers={"Content-Type": "application/json"},
-                        timeout=timeout_seconds
-                    )
-                    break
-                except requests.exceptions.Timeout:
-                    if attempt == max_retries:
-                        exception_logger.error("Project create ML API timed out after retries")
-                        ml_error = "Project create ML API timed out after retries"
-                        logger.error(ml_error)
-                        break
-                    logger.warning(f"Project create ML API timeout (attempt {attempt + 1}), retrying...")
-                    time.sleep(1)
-                except requests.exceptions.RequestException as exc:
-                    exception_logger.exception("Project create ML API request failed")
-                    ml_error = f"Project create ML API request failed: {str(exc)}"
-                    logger.error(ml_error, exc_info=True)
-                    break
+            try:
+                logger.info(f"Calling Project create ML API for project {project.id}")
+                ml_response = requests.post(
+                    ml_api_url,
+                    json=ml_payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30  # 30 second timeout
+                )
+                logger.info(f"Project create ML API response status: {ml_response.status_code}")
+                
+            except requests.exceptions.Timeout:
+                exception_logger.error("Project create ML API timed out")
+                ml_error = "Project create ML API timed out"
+                logger.error(ml_error)
+                raise
+            except requests.exceptions.RequestException as exc:
+                exception_logger.exception("Project create ML API request failed")
+                ml_error = f"Project create ML API request failed: {str(exc)}"
+                logger.error(ml_error, exc_info=True)
+                raise
 
             if ml_response is not None:
                 if ml_response.status_code in (200, 201):

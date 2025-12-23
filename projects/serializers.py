@@ -76,12 +76,13 @@ class ProjectListSerializer(serializers.ModelSerializer):
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     skills = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
+    application_details = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
-                 'created_at', 'skills', 'is_applied')
+                 'created_at', 'skills', 'is_applied', 'application_details')
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model
@@ -122,9 +123,63 @@ class ProjectListSerializer(serializers.ModelSerializer):
         
         print(f"[DEBUG] Application exists for project {obj.id}: {application_exists}")
         return application_exists
-        # fields = ('id', 'title', 'company_name', 'company_logo', 'category', 'complexity',
-        #          'paymentType', 'paymentAmount', 'estimatedHours', 'budget_min', 'budget_max',
-        #          'budget_currency', 'work_style', 'status', 'created_at')
+        
+    def get_application_details(self, obj):
+        """
+        Return application details for the project.
+        For candidates: returns their own application if exists
+        For employers: returns the 2 most recent applications if any exist
+        """
+        request = self.context.get('request')
+        
+        if not request or not request.user.is_authenticated:
+            return None
+        
+        # For candidates - show their own application
+        if hasattr(request.user, 'candidate_profile'):
+            candidate = request.user.candidate_profile
+            try:
+                application = obj.applications.get(
+                    candidate=candidate,
+                    is_withdrawn=False
+                )
+                return {
+                    'application_id': application.id,
+                    'candidate_name': application.candidate.full_name,
+                    'status': application.status,
+                    'user_id': request.user.id,
+                    'candidate_id': application.candidate.id,
+                    'profile_image': request.build_absolute_uri(application.candidate.profile_image.url) if hasattr(application.candidate, 'profile_image') and application.candidate.profile_image else None
+                }
+            except obj.applications.model.DoesNotExist:
+                return None
+        
+        # For employers - show the 2 most recent applications if any exist
+        elif hasattr(request.user, 'employer_profile') and obj.applications.exists():
+            # Get the 2 most recent applications, ordered by application date (newest first)
+            recent_applications = obj.applications.filter(
+                is_withdrawn=False
+            ).order_by('-applied_at')[:2]
+            
+            applications_data = []
+            for application in recent_applications:
+                profile_image = None
+                if hasattr(application.candidate, 'profile_image') and application.candidate.profile_image:
+                    profile_image = request.build_absolute_uri(application.candidate.profile_image.url)
+                
+                applications_data.append({
+                    'application_id': application.id,
+                    'candidate_name': application.candidate.full_name,
+                    'status': application.status,
+                    'user_id': application.candidate.user.id,
+                    'candidate_id': application.candidate.id,
+                    'profile_image': profile_image,
+                    'applied_at': application.applied_at
+                })
+                
+            return applications_data
+            
+        return None
 
 
 class ProjectCreateSerializer(serializers.ModelSerializer):
