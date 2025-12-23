@@ -213,37 +213,18 @@ class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
 
 
 class CandidateActionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for candidate actions (pass/reject)
-    """
     employer = serializers.PrimaryKeyRelatedField(read_only=True)
     
     class Meta:
         model = CandidateAction
         fields = ['id', 'employer', 'candidate_id', 'action', 'created_at']
         read_only_fields = ['employer', 'created_at']
-    
-    def validate(self, data):
-        """
-        Validate that the same employer can't have multiple actions for the same candidate
-        """
-        employer = self.context['request'].user.employer_profile
-        candidate_id = data.get('candidate_id')
-        action = data.get('action')
-        
-        # Check if action already exists
-        existing_action = CandidateAction.objects.filter(
-            employer=employer,
-            candidate_id=candidate_id
-        ).first()
-        
-        if self.instance is None and existing_action:
-            raise serializers.ValidationError(
-                f"You have already {existing_action.action}ed this candidate."
-            )
-            
-        return data
 
+    def validate(self, data):
+        action = data.get('action')
+        if action not in ['pass', 'reject']:
+            raise serializers.ValidationError("action must be 'pass' or 'reject'")
+        return data
 
 class CandidateActionDetailSerializer(serializers.ModelSerializer):
     """Serializer for candidate actions with candidate details"""
