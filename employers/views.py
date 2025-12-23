@@ -67,225 +67,93 @@ class EmployerDashboardBaseView(APIView):
             exception_logger.error("Employer.DoesNotExist: Employer profile not found")
             raise Http404('Employer profile not found')
 
-
 class CandidateActionViewSet(viewsets.ModelViewSet):
     """
-    API endpoint that allows candidate actions to be viewed or edited.
+    API endpoint for employer to pass (FLIT) or reject a candidate.
+    Only one action per employer per candidate allowed.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_serializer_class(self):
-        """
-        Use different serializers for different actions
-        """
         if self.action in ['list', 'retrieve', 'by_candidate', 'shortlisted']:
             return CandidateActionDetailSerializer
         return CandidateActionSerializer
-    
+
     def get_queryset(self):
-        """
-        Return all candidate actions for the currently authenticated employer.
-        """
         return CandidateAction.objects.filter(
             employer__user=self.request.user
-        ).select_related('employer')
-    
-    def perform_create(self, serializer):
-        """
-        Automatically set the employer to the current user's employer profile.
-        """
-        employer = self.request.user.employer_profile
-        serializer.save(employer=employer)
-    
-    def partial_update(self, request, *args, **kwargs):
-        """
-        Update a candidate action (e.g., change from 'pass' to 'reject' or vice versa)
-        """
-        try:
-            # Get the candidate action for the current employer
-            instance = self.get_queryset().get(pk=kwargs.get('pk'))
-            
-            # Ensure the employer can only update their own actions
-            if instance.employer.user != request.user:
-                return Response(
-                    {"detail": "You can only update your own candidate actions"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-                
-            serializer = self.get_serializer(instance, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-            
-            # Return the updated data with the detail serializer
-            detail_serializer = CandidateActionDetailSerializer(instance)
-            return Response(detail_serializer.data)
-            
-        except CandidateAction.DoesNotExist:
-            exception_logger.error("CandidateAction.DoesNotExist: Candidate action not found or you don't have permission to update it")
+        ).select_related('employer', 'candidate')
+
+    def create(self, request, *args, **kwargs):
+        employer = request.user.employer_profile
+
+        # candidate_id ko body ya query params se flexibly le lo
+        candidate_id = request.data.get('candidate_id') or request.query_params.get('candidate_id')
+        requested_action = request.data.get('action')
+
+        if not candidate_id:
             return Response(
-                {"detail": "Candidate action not found or you don't have permission to update it"},
-                status=status.HTTP_404_NOT_FOUND
+                {"detail": "candidate_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-    @action(detail=False, methods=['get'])
-    def list_ids(self, request):
-        """
-        List all candidate action IDs for the current employer (for debugging).
-        """
-        action_ids = list(self.get_queryset().values_list('id', flat=True))
-        return Response({
-            'count': len(action_ids),
-            'action_ids': action_ids
-        })
-
-    @action(detail=False, methods=['get'])
-    def by_candidate(self, request, candidate_id=None):
-        """
-        Get action for a specific candidate with full details.
-        """
-        try:
-            action = self.get_queryset().get(candidate_id=candidate_id)
-            serializer = self.get_serializer(action, context={'request': request})
-            return Response(serializer.data)
-        except CandidateAction.DoesNotExist:
-            exception_logger.error("CandidateAction.DoesNotExist: No action found for this candidate.")
+        if not requested_action:
             return Response(
-                {"detail": "No action found for this candidate."}, 
-                status=status.HTTP_404_NOT_FOUND
+                {"detail": "action is required"},
+                status=status.HTTP_400_BAD_REQUEST
             )
-    
-    @action(detail=True, methods=['patch'])
-    def update_status(self, request, pk=None):
-        """
-        Update candidate status from 'reject' to 'pass' with confirmation.
-        """
+
+        if requested_action not in ['pass', 'reject']:
+            return Response(
+                {"detail": "action must be either 'pass' or 'reject'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            # Get the candidate action for the current employer
-            instance = self.get_queryset().get(pk=pk)
-            
-            # Ensure the employer can only update their own actions
-            if instance.employer.user != request.user:
+            # Check if already acted on this candidate
+            instance = CandidateAction.objects.get(
+                employer=employer,
+                candidate_id=candidate_id
+            )
+
+            # Agar same action dobara kar raha hai
+            if instance.action == requested_action:
+                if requested_action == "pass":
+                    message = "You have already flited this candidate"
+                else:
+                    message = "You have already rejected this candidate"
+
                 return Response(
-                    {"detail": "You can only update your own candidate actions"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Check if the candidate is currently rejected
-            if instance.action != 'reject':
-                return Response(
-                    {"detail": "This candidate is not in 'rejected' status."},
+                    {"detail": message},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Update the status to 'pass'
-            instance.action = 'pass'
-            instance.save()
-            
-            # Return the updated data with the detail serializer
-            detail_serializer = CandidateActionDetailSerializer(instance, context={'request': request})
-            return Response(detail_serializer.data)
-            
-        except CandidateAction.DoesNotExist:
-            exception_logger.error("CandidateAction.DoesNotExist: Candidate action not found or you don't have permission to update it")
-            return Response(
-                {"detail": "Candidate action not found or you don't have permission to update it"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-    
-    def list(self, request, *args, **kwargs):
-        """
-        List all candidate actions with candidate details.
-        """
-        queryset = self.filter_queryset(self.get_queryset())
-        
-        # Get paginated queryset if needed
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True, context={'request': request})
-            return self.get_paginated_response(serializer.data)
-            
-        serializer = self.get_serializer(queryset, many=True, context={'request': request})
-        return Response(serializer.data)
-        
-    @action(detail=False, methods=['get'])
-    def shortlisted(self, request):
-        """
-        Get all candidates that have been shortlisted by the current employer.
-        Paginated with 20 items per page by default.
-        Query Parameters:
-            page: Page number to retrieve (default: 1)
-            page_size: Number of items per page (default: 20, max: 100)
-        """
-        try:
-            # Get the employer's profile
-            employer = request.user.employer_profile
-            
-            # Get shortlisted job applications
-            job_applications = JobApplication.objects.filter(
-                employer=request.user,
-                is_shortlisted=True
-            ).select_related('candidate', 'job', 'company')
-            
-            # Get shortlisted project applications
-            project_applications = ProjectApplication.objects.filter(
-                employer=request.user,
-                is_shortlisted=True
-            ).select_related('candidate', 'project', 'company')
-            
-            # Combine and serialize the results
-            results = []
-            for app in job_applications:
-                if not hasattr(app, 'candidate'):
-                    continue
-                    
-                results.append({
-                    'id': app.candidate.id,
-                    'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
-                    'name': app.candidate.full_name,
-                    'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
-                    'profile_picture': app.candidate.profile_image.url if hasattr(app.candidate, 'profile_image') and app.candidate.profile_image else None,
-                    'title': app.job.title if hasattr(app, 'job') and app.job else 'No title',
-                    'type': 'job',
-                    'application_id': app.id,
-                    'applied_at': app.applied_at.isoformat() if hasattr(app, 'applied_at') else None,
-                })
-                
-            for app in project_applications:
-                if not hasattr(app, 'candidate'):
-                    continue
-                    
-                results.append({
-                    'id': app.candidate.id,
-                    'user_id': app.candidate.user.id if hasattr(app.candidate, 'user') else None,
-                    'name': app.candidate.full_name,
-                    'email': app.candidate.user.email if hasattr(app.candidate, 'user') else None,
-                    'profile_picture': app.candidate.profile_image.url if hasattr(app.candidate, 'profile_image') and app.candidate.profile_image else None,
-                    'title': app.project.title if hasattr(app, 'project') and app.project else 'No title',
-                    'type': 'project',
-                    'application_id': app.id,
-                    'applied_at': app.applied_at.isoformat() if hasattr(app, 'applied_at') else None,
-                })
-            
-            # Sort by applied_at in descending order (newest first)
-            results.sort(key=lambda x: x.get('applied_at', ''), reverse=True)
-            
-            # Apply pagination using CustomPagination
-            paginator = CustomPagination()
-            paginator.page_size = request.query_params.get('page_size', 20)  # Default to 20 items per page
-            
-            # Get paginated results
-            paginated_results = paginator.paginate_queryset(results, request)
-            
-            # Return paginated response
-            return paginator.get_paginated_response(paginated_results)
-            
-        except Exception as e:
-            exception_logger.exception("Error fetching shortlisted candidates")
-            return Response(
-                {'error': f'An error occurred while fetching shortlisted candidates: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
+            # Different action → update kar do (e.g., pass → reject ya reject → pass)
+            instance.action = requested_action
+            instance.save()
+
+            serializer = CandidateActionDetailSerializer(instance, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except CandidateAction.DoesNotExist:
+            # Pehli baar action → naya record create karo
+            serializer = self.get_serializer(data={
+                'candidate_id': candidate_id,
+                'action': requested_action
+            })
+            serializer.is_valid(raise_exception=True)
+            serializer.save(employer=employer)
+
+            detail_serializer = CandidateActionDetailSerializer(
+                serializer.instance,
+                context={'request': request}
+            )
+            return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
+
+    # Optional: partial_update ko disable kar do ya redirect kar do create pe
+    # Kyunki ab sab create endpoint se ho raha hai
+    def partial_update(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
 
 class EmployerProfileDashboardView(EmployerDashboardBaseView):
     """Endpoint for employer profile data in dashboard."""
