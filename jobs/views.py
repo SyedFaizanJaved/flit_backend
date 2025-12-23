@@ -617,17 +617,51 @@ class JobViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/reject')
     def reject_application(self, request, pk=None, application_id=None):
         try:
+            # Ensure request.data is not None
+            if request.data is None:
+                return Response({'error': 'Request data is required'}, status=status.HTTP_400_BAD_REQUEST)
+                
             job = Job.objects.get(id=pk, employer=request.user)
             application = job.applications.get(id=application_id)
+            
+            # Update application status
+            application.is_rejected = True
+            application.is_shortlisted = False
+            application.status = 'rejected'
+            
+            # Safely get rejection_reason with proper error handling
+            rejection_reason = ''
+            try:
+                rejection_reason = request.data.get('rejection_reason', '')
+            except AttributeError:
+                # In case request.data is not a dictionary-like object
+                rejection_reason = ''
+                
+            application.rejection_reason = rejection_reason
+            application.save()
+            
+            return Response({
+                'message': 'Application rejected successfully', 
+                'application': {
+                    'id': application.id, 
+                    'candidate_name': application.candidate.full_name, 
+                    'status': application.status, 
+                    'is_rejected': application.is_rejected,
+                    'rejection_reason': application.rejection_reason
+                }
+            }, status=status.HTTP_200_OK)
+            
         except Job.DoesNotExist:
-            exception_logger.error("Job.DoesNotExist: Job not found")
+            exception_logger.error(f"Job.DoesNotExist: Job {pk} not found for user {request.user.id}")
             return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
-        except Exception:
-            exception_logger.exception("Application not found")
+            
+        except JobApplication.DoesNotExist:
+            exception_logger.error(f"Application.DoesNotExist: Application {application_id} not found for job {pk}")
             return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
-        application.is_rejected = True
-        application.is_shortlisted = False
-        application.status = 'rejected'
-        application.rejection_reason = request.data.get('rejection_reason', '')
-        application.save()
-        return Response({'message': 'Application rejected successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_rejected': application.is_rejected}}, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            exception_logger.exception(f"Error rejecting application {application_id}: {str(e)}")
+            return Response(
+                {'error': 'An error occurred while processing your request'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

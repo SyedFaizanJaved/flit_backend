@@ -87,13 +87,14 @@ class JobListSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     is_applied = serializers.SerializerMethodField()
+    application_details = serializers.SerializerMethodField()
     
     class Meta:
         model = Job
         fields = (
             'id', 'description', 'title', 'company_name', 'company_id', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'status', 'created_at', 'skills', 'is_applied'
+            'status', 'created_at', 'skills', 'is_applied', 'application_details'
         )
     
     def get_is_applied(self, obj):
@@ -103,26 +104,75 @@ class JobListSerializer(serializers.ModelSerializer):
         """
         request = self.context.get('request')
         
-        print("\n[JOB LIST DEBUG] Checking is_applied for job:", obj.id)
-        print("[JOB LIST DEBUG] Request user:", getattr(request, 'user', 'No request.user'))
-        
         # Only proceed if user is authenticated and is a candidate
         if not request or not request.user.is_authenticated:
-            print("[JOB LIST DEBUG] User not authenticated")
             return False
             
         if not hasattr(request.user, 'candidate_profile'):
-            print("[JOB LIST DEBUG] User is not a candidate")
             return False
             
         # Check if candidate has an active application for this job
-        application_exists = obj.applications.filter(
+        return obj.applications.filter(
             candidate=request.user.candidate_profile,
             is_withdrawn=False
         ).exists()
         
-        print(f"[JOB LIST DEBUG] Application exists for job {obj.id}: {application_exists}")
-        return application_exists
+    def get_application_details(self, obj):
+        """
+        Return application details for the job.
+        For candidates: returns their own application if exists
+        For employers: returns the first application if any exists
+        """
+        request = self.context.get('request')
+        
+        if not request or not request.user.is_authenticated:
+            return None
+        
+        # For candidates - show their own application
+        if hasattr(request.user, 'candidate_profile'):
+            candidate = request.user.candidate_profile
+            try:
+                application = obj.applications.get(
+                    candidate=candidate,
+                    is_withdrawn=False
+                )
+                return {
+                    'application_id': application.id,
+                    'candidate_name': application.candidate.full_name,
+                    'status': application.status,
+                    'user_id': request.user.id,
+                    'candidate_id': application.candidate.id,
+                    'profile_image': request.build_absolute_uri(application.candidate.profile_image.url) if application.candidate.profile_image else None
+                }
+            except obj.applications.model.DoesNotExist:
+                return None
+        
+        # For employers - show the 2 most recent applications if any exist
+        elif hasattr(request.user, 'employer_profile') and obj.applications.exists():
+            # Get the 2 most recent applications, ordered by application date (newest first)
+            recent_applications = obj.applications.filter(
+                is_withdrawn=False
+            ).order_by('-applied_at')[:2]
+            
+            applications_data = []
+            for application in recent_applications:
+                profile_image = None
+                if application.candidate.profile_image:
+                    profile_image = request.build_absolute_uri(application.candidate.profile_image.url)
+                
+                applications_data.append({
+                    'application_id': application.id,
+                    'candidate_name': application.candidate.full_name,
+                    'status': application.status,
+                    'user_id': application.candidate.user.id,
+                    'candidate_id': application.candidate.id,
+                    'profile_image': profile_image,
+                    'applied_at': application.applied_at
+                })
+                
+            return applications_data
+            
+        return None
 
 
 class JobCreateSerializer(serializers.ModelSerializer):
