@@ -2,6 +2,11 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from utils.file_validators import (
+    image_upload_path,
+    resume_upload_path,
+    video_upload_path
+)
 
 
 class Candidate(models.Model):
@@ -65,9 +70,9 @@ class Candidate(models.Model):
     
     # Portfolio & Media
     portfolio_links = models.JSONField(default=list)  # List of dicts: {name, url}
-    profile_image = models.FileField(upload_to='candidates/profile_images/', blank=True, null=True)
-    resume_url = models.FileField(upload_to='candidates/resumes/', blank=True, null=True)
-    video_intro_url = models.FileField(upload_to='candidates/videos/', blank=True, null=True)
+    profile_image = models.FileField(upload_to=image_upload_path, blank=True, null=True)
+    resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)
+    video_intro_url = models.FileField(upload_to=video_upload_path, blank=True, null=True)
     intro_video_description = models.TextField(blank=True, null=True)
     # Full raw transcription text returned by ML services
     video_transcription = models.TextField(blank=True, null=True)

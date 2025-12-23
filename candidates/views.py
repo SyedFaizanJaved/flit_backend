@@ -29,8 +29,8 @@ from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework import permissions
-
-
+from utils.file_validators import resume_upload_path,video_upload_path, image_upload_path
+             
 class IsCandidateUser(permissions.BasePermission):
     """
     Custom permission to only allow candidate users to access the view.
@@ -868,20 +868,31 @@ class CandidateViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def _save_file(self, file_obj, storage_path_prefix, request):
+        """
+        Save uploaded file using the appropriate file validator based on storage_path_prefix.
+        The file validators will handle unique filename generation.
+        """
         try:
-            # Get file extension and name without extension
-            file_name, file_ext = os.path.splitext(get_valid_filename(file_obj.name))
-            # Add timestamp to filename to prevent overwrites
-            timestamp = int(time.time())
-            unique_filename = f"{file_name}_{timestamp}{file_ext}"
+            # Determine which upload path function to use based on the storage_path_prefix
+            if 'resumes' in storage_path_prefix:
+                upload_path = resume_upload_path
+            elif 'videos' in storage_path_prefix:
+                upload_path = video_upload_path
+            elif 'images' in storage_path_prefix or 'profile' in storage_path_prefix:
+    
+                upload_path = image_upload_path
+            else:
+                from utils.file_validators import document_upload_path
+                upload_path = document_upload_path
             
-            # Save the file with the new unique filename
-            storage_path = default_storage.save(
-                f'{storage_path_prefix}/{unique_filename}', 
-                file_obj
-            )
+            # Generate the storage path using the appropriate upload_to function
+            # We pass None as the instance since we don't have the model instance here
+            storage_path = upload_path(None, file_obj.name)
             
-            # Always return the relative storage path (not the full URL)
+            # Save the file using the generated path
+            default_storage.save(storage_path, file_obj)
+            
+            # Return the relative storage path
             # The URL will be constructed when needed using request.build_absolute_uri()
             return storage_path
         except Exception as e:
@@ -1577,213 +1588,27 @@ class CandidateViewSet(viewsets.ModelViewSet):
             if key not in request.FILES:  # Skip file fields
                 final_data[key] = value
         
-        # Handle profile picture upload
+        # Handle file uploads - The model's FileField will use the validators automatically
         if 'profile_image' in request.FILES:
-            try:
-                # Get the file from request
-                profile_image = request.FILES['profile_image']
-                
-                # Generate a unique filename
-                file_ext = os.path.splitext(profile_image.name)[1]
-                filename = f"{request.user.id}_{int(time.time())}{file_ext}"
-                filepath = f"candidates/profile_images/{filename}"
-                
-                # Save the file to S3
-                s3 = boto3.client('s3',
-                                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                                region_name=settings.AWS_S3_REGION_NAME)
-                
-                s3.upload_fileobj(
-                    profile_image,
-                    settings.AWS_STORAGE_BUCKET_NAME,
-                    filepath,
-                    ExtraArgs={
-                        'ContentType': profile_image.content_type
-                    }
-                )
-                
-                # Store just the file path, not the full URL
-                candidate.profile_image = filepath
-                candidate.save(update_fields=['profile_image'])
-                
-            except Exception as e:
-                exception_logger.exception("Error saving profile image")
-                logger.error(f"Error saving profile image: {str(e)}", exc_info=True)
-                return Response(
-                    {"error": f"Failed to process profile image: {str(e)}"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            candidate.profile_image = request.FILES['profile_image']
+            candidate.save(update_fields=['profile_image'])
+            logger.info(f"Successfully saved profile image for candidate {candidate.id}")
+            
+        # Handle resume file upload
+        if 'resume_file' in request.FILES or 'resume' in request.FILES:
+            resume_file = request.FILES.get('resume_file') or request.FILES.get('resume')
+            candidate.resume_url = resume_file
+            candidate.portfolio_completed = True
+            candidate.save(update_fields=['resume_url', 'portfolio_completed'])
+            logger.info(f"Successfully saved resume file for candidate {candidate.id}")
         
-        # Handle resume file upload and parsing
-        if 'resume_file' in request.FILES:
-            try:
-                # First save the resume file
-                resume_file = request.FILES['resume_file']
-                
-                # Parse the resume using the ML API
-                try:
-                    # Save the resume file temporarily
-                    temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_resumes')
-                    os.makedirs(temp_dir, exist_ok=True)
-                    temp_path = os.path.join(temp_dir, resume_file.name)
-                    
-                    with open(temp_path, 'wb+') as destination:
-                        for chunk in resume_file.chunks():
-                            destination.write(chunk)
-                    
-                    # Call the ML API to parse the resume
-                    ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
-                    
-                    try:
-                        with open(temp_path, 'rb') as f:
-                            # Log file info for debugging
-                            file_size = os.path.getsize(temp_path)
-                            file_extension = os.path.splitext(resume_file.name)[1].lower()
-                            logger.info(f"Sending file to ML API - Name: {resume_file.name}, Size: {file_size} bytes, Type: {file_extension}")
-                            
-                            # Set appropriate content type based on file extension
-                            content_type = 'application/pdf'
-                            if file_extension in ['.doc', '.docx']:
-                                content_type = 'application/msword' if file_extension == '.doc' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                            
-                            # Use 'resume_file' as the field name to match the ML API's expected field
-                            files = {'resume_file': (resume_file.name, f, content_type)}
-                            headers = {'accept': 'application/json'}
-                            
-                            # Log the request
-                            logger.info(f"Sending request to ML API: {ml_api_url}")
-                            
-                            # Make the request with timeout
-                            response = requests.post(
-                                ml_api_url, 
-                                files=files, 
-                                headers=headers,
-                                timeout=30  # 30 seconds timeout
-                            )
-                            
-                            # Log response status and headers
-                            logger.info(f"ML API Response - Status: {response.status_code}, Headers: {dict(response.headers)}")
-                            
-                            # For non-200 responses, log the response body for debugging
-                            if response.status_code != 200:
-                                logger.error(f"ML API Error Response: {response.text}")
-                    
-                    except requests.exceptions.RequestException as e:
-                        logger.error(f"Error calling ML API: {str(e)}", exc_info=True)
-                        return Response(
-                            {"error": f"Error connecting to resume parsing service: {str(e)}"}, 
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE
-                        )
-                    finally:
-                        # Always remove the temporary file
-                        try:
-                            os.remove(temp_path)
-                        except Exception as e:
-                            logger.warning(f"Failed to remove temporary file {temp_path}: {str(e)}")
-                    
-                    if response.status_code == 200:
-                        try:
-                            data = response.json()
-                            if data.get('success', False):
-                                # Save the parsed resume data
-                                candidate.resume_data = data.get('data', {})
-                                logger.info(f"Successfully parsed resume for candidate {candidate.id}")
-                                
-                                # Save the resume file to media storage
-                                resume_url = self._save_file(
-                                    resume_file, 
-                                    'candidates/resumes', 
-                                    request
-                                )
-                                
-                                if resume_url:
-                                    # Update the resume URL in the candidate's profile
-                                    final_data['resume_url'] = resume_url
-                                    candidate.resume_url = resume_url
-                                    
-                                    # Mark portfolio as completed since we have a resume
-                                    candidate.portfolio_completed = True
-                                    
-                                    logger.info(f"Successfully saved resume file for candidate {candidate.id}")
-                                else:
-                                    logger.warning("Failed to save resume file to media storage")
-                                    return Response(
-                                        {"error": "Failed to save resume file"}, 
-                                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                                    )
-                            else:
-                                error_msg = data.get('message', 'Unknown error from ML service')
-                                logger.warning(f"Failed to parse resume: {error_msg}")
-                                return Response(
-                                    {"error": f"Failed to parse resume: {error_msg}"}, 
-                                    status=status.HTTP_400_BAD_REQUEST
-                                )
-                        except ValueError as e:
-                            logger.error(f"Invalid JSON response from ML API: {response.text}", exc_info=True)
-                            return Response(
-                                {"error": "Invalid response from resume parsing service"}, 
-                                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                            )
-                    else:
-                        error_msg = f"Failed to parse resume: HTTP {response.status_code}"
-                        if response.status_code == 422:
-                            error_msg = "The resume file could not be processed. Please ensure it's a valid PDF or Word document and try again."
-                        elif response.status_code >= 500:
-                            error_msg = "The resume parsing service is currently unavailable. Please try again later."
-                            
-                        logger.warning(f"{error_msg} - Response: {response.text}")
-                        return Response(
-                            {"error": error_msg}, 
-                            status=status.HTTP_400_BAD_REQUEST if response.status_code < 500 else status.HTTP_503_SERVICE_UNAVAILABLE
-                        )
-                        
-                except Exception as e:
-                    logger.error(f"Error parsing resume: {str(e)}", exc_info=True)
-                    return Response(
-                        {"error": f"Failed to process resume: {str(e)}"}, 
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Error handling resume file: {str(e)}", exc_info=True)
-                return Response(
-                    {"error": f"Failed to process resume file: {str(e)}"}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            except Exception as e:
-                exception_logger.exception("Error saving resume")
-                logger.error(f"Error saving resume: {str(e)}", exc_info=True)
-                return Response(
-                    {"error": f"Failed to process resume file: {str(e)}"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        # Handle video file upload
+        # Handle video intro upload
         if 'video_file' in request.FILES:
-            try:
-                video_url = self._save_file(
-                    request.FILES['video_file'],
-                    'candidates/videos',
-                    request
-                )
-                if video_url:
-                    # Update the video URL in the candidate model
-                    candidate.video_intro_url = video_url
-                    candidate.save(update_fields=['video_intro_url', 'updated_at'])
-                    data['video_intro_url'] = video_url
-            except Exception as e:
-                exception_logger.exception("Error saving video")
-                logger.error(f"Error saving video: {str(e)}")
-                return Response(
-                    {"error": "Failed to process video file"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        # Now handle the data with the serializer
-        partial = request.method == 'PATCH'
-        
-        # Log the data being passed to the serializer for debugging
+            candidate.video_intro_url = request.FILES['video_file']
+            candidate.portfolio_completed = True
+            candidate.save(update_fields=['video_intro_url', 'portfolio_completed'])
+            logger.info(f"Successfully saved video intro for candidate {candidate.id}")
+            
         logger.info(f"Data being passed to serializer: {final_data}")
         
         # Check which sections are being updated and update completion flags

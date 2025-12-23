@@ -1,27 +1,5 @@
 from django.db import models
 from django.conf import settings
-from django.core.validators import URLValidator
-from django.core.exceptions import ValidationError
-
-
-class CustomURLValidator(URLValidator):
-    def __call__(self, value):
-        if not value:
-            return
-            
-        # Add https:// if no protocol is specified
-        if not (value.startswith('http://') or value.startswith('https://')):
-            value = 'https://' + value
-            
-        # Ensure www. is present for non-localhost URLs
-        parsed_url = value.split('://')
-        if len(parsed_url) > 1 and not parsed_url[1].startswith('www.') and not parsed_url[1].startswith('localhost'):
-            value = f"{parsed_url[0]}://www.{parsed_url[1]}"
-            
-        try:
-            super().__call__(value)
-        except ValidationError:
-            raise ValidationError('Enter a valid URL (e.g., https://example.com or www.example.com)')
 
 
 class Company(models.Model):
@@ -42,7 +20,7 @@ class Company(models.Model):
     industry = models.CharField(max_length=100, blank=False)
     size = models.CharField(max_length=30, choices=SIZE_CHOICES, blank=False)
     # founded = models.PositiveIntegerField(blank=True, null=True)
-    website = models.CharField(max_length=200, blank=True, null=True, validators=[CustomURLValidator()])
+    website = models.URLField(blank=True, null=True)
     logo = models.ImageField(upload_to='companies/logos/', blank=True, null=True)
     location = models.CharField(max_length=500, blank=False)
     values = models.JSONField(default=list) 
