@@ -82,7 +82,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return CandidateAction.objects.filter(
             employer__user=self.request.user
-        ).select_related('employer', 'candidate')
+        ).select_related('employer')
 
     def create(self, request, *args, **kwargs):
         employer = request.user.employer_profile
