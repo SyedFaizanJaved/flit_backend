@@ -1,14 +1,13 @@
-
+import io
 import json
 import logging
-from django.http import Http404
-from rest_framework.exceptions import PermissionDenied, NotFound
+import os
 from django.conf import settings
+from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q, Count
-from django.core.files.storage import default_storage
-from django.utils.text import get_valid_filename
 from django.utils import timezone
+from django.utils.text import get_valid_filename
 from rest_framework import status, permissions, viewsets, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -43,6 +42,7 @@ from .serializers import (
     DiscoverTalentSerializer,
 )
 from utils.pagination import CustomPagination
+from utils.file_validators import document_upload_path, video_upload_path, resume_upload_path, image_upload_path
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -871,7 +871,6 @@ class CandidateViewSet(viewsets.ModelViewSet):
     
                 upload_path = image_upload_path
             else:
-                from utils.file_validators import document_upload_path
                 upload_path = document_upload_path
             
             # Generate the storage path using the appropriate upload_to function
@@ -1544,13 +1543,76 @@ class CandidateViewSet(viewsets.ModelViewSet):
             logger.info(f"Successfully saved profile image for candidate {candidate.id}")
             
         # Handle resume file upload
+        # if 'resume_file' in request.FILES or 'resume' in request.FILES:
+        #     resume_file = request.FILES.get('resume_file') or request.FILES.get('resume')
+        #     candidate.resume_url = resume_file
+        #     candidate.portfolio_completed = True
+        #     candidate.save(update_fields=['resume_url', 'portfolio_completed'])
+        #     logger.info(f"Successfully saved resume file for candidate {candidate.id}")
+
+        # Handle resume file upload
+       # Handle resume file upload
         if 'resume_file' in request.FILES or 'resume' in request.FILES:
+
             resume_file = request.FILES.get('resume_file') or request.FILES.get('resume')
-            candidate.resume_url = resume_file
-            candidate.portfolio_completed = True
-            candidate.save(update_fields=['resume_url', 'portfolio_completed'])
-            logger.info(f"Successfully saved resume file for candidate {candidate.id}")
-        
+            
+            # Save file first
+            storage_path = self._save_file(resume_file, 'candidates/resumes', request)
+            if storage_path:
+                old_resume_url = candidate.resume_url
+                candidate.resume_url = storage_path
+                candidate.portfolio_completed = True
+                candidate.save(update_fields=['resume_url', 'portfolio_completed', 'updated_at'])
+                logger.info(f"Successfully saved resume file for candidate {candidate.id}")
+
+                # ========== IMPROVED PARSING WITH BETTER LOGGING & FILE HANDLING ==========
+                try:
+                    ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
+                    logger.info(f"Starting resume parsing for candidate {candidate.id} via {ml_api_url}")
+
+                    # CRITICAL FIX: Re-read file from beginning using InMemoryUploadedFile or TemporaryUploadedFile
+                    resume_file.seek(0)  # Reset pointer
+                    file_content = resume_file.read()  # Read full content
+                    
+                    if not file_content:
+                        logger.error("Resume file is empty after reading – cannot send to ML API")
+                    else:
+                        logger.info(f"Resume file size: {len(file_content)} bytes, name: {resume_file.name}")
+
+                    files = {
+                                'resume_file': (resume_file.name, io.BytesIO(file_content), resume_file.content_type)
+                            }
+
+                    ml_response = requests.post(ml_api_url, files=files, timeout=90)
+
+                    logger.info(f"ML /parse_cv response status: {ml_response.status_code}")
+                    logger.info(f"ML /parse_cv response body: {ml_response.text[:1000]}")  # First 1000 chars
+
+                    if ml_response.status_code == 200:
+                        try:
+                            ml_data = ml_response.json()
+                            logger.info(f"Parsed ML response: {ml_data}")
+
+                            if ml_data.get('success'):
+                                parsed_resume_data = ml_data.get('data', {})
+                                if parsed_resume_data:
+                                    candidate.resume_data = parsed_resume_data
+                                    candidate.save(update_fields=['resume_data', 'updated_at'])
+                                    logger.info(f"SUCCESS: Saved resume_data with {len(parsed_resume_data)} keys: {list(parsed_resume_data.keys())}")
+                                else:
+                                    logger.warning("ML returned success=True but data is empty")
+                            else:
+                                error_msg = ml_data.get('message') or ml_data.get('error') or 'Unknown error'
+                                logger.warning(f"ML parse failed (success=False): {error_msg}")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Invalid JSON from ML /parse_cv: {str(e)} - Response: {ml_response.text[:500]}")
+                    else:
+                        logger.error(f"ML /parse_cv HTTP error {ml_response.status_code}: {ml_response.text[:500]}")
+
+                except Exception as e:
+                    logger.error(f"Exception during resume parsing: {str(e)}", exc_info=True)
+                # ============================================================================
+                    
         # Handle video intro upload
         if 'video_file' in request.FILES:
             candidate.video_intro_url = request.FILES['video_file']
@@ -1863,11 +1925,14 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     destination.write(chunk)
             
             # Call the ML API to parse the resume
-            ml_api_url = "https://dev-flit-ai.neurooceans.com/parse_cv"
+            ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
+            logger.info(f"Sending resume to ML API at {ml_api_url}")
             
             with open(temp_path, 'rb') as f:
                 files = {'file': (resume_file.name, f, resume_file.content_type)}
                 response = requests.post(ml_api_url, files=files)
+                logger.info(f"ML API response status: {response.status_code}")
+                logger.info(f"ML API response content: {response.text[:500]}...")  # Log first 500 chars of response
             
             # Remove the temporary file
             try:
@@ -1888,6 +1953,19 @@ class CandidateViewSet(viewsets.ModelViewSet):
             
             try:
                 data = response.json()
+                logger.info(f"Raw ML API response: {json.dumps(data, indent=2)[:1000]}...")  # Log first 1000 chars
+                
+                # Debug: Log the type and structure of the response
+                logger.info(f"Response type: {type(data).__name__}")
+                if isinstance(data, dict):
+                    logger.info(f"Response keys: {list(data.keys())}")
+                    if 'data' in data:
+                        logger.info(f"Data type: {type(data['data']).__name__}")
+                        if isinstance(data['data'], dict):
+                            logger.info(f"Data keys: {list(data['data'].keys())}")
+                
+                # Log the full response for debugging
+                logger.info(f"Full ML API response: {json.dumps(data, indent=2, default=str)[:2000]}...")
                 
                 # Check if the response has the expected structure
                 if not data.get('success', False):
@@ -1903,10 +1981,45 @@ class CandidateViewSet(viewsets.ModelViewSet):
                     )
                 
                 # Update the resume_data field with parsed data
-                candidate.resume_data = data.get('data', {})
+                resume_data = data.get('data', {})
+                logger.info(f"Extracted resume data: {json.dumps(resume_data, indent=2, default=str)[:1000]}...")
                 
-                # Save the updated resume_data
-                candidate.save(update_fields=['resume_data', 'updated_at'])
+                if not resume_data:
+                    logger.warning("No resume data found in ML API response")
+                    resume_data = {}  # Ensure it's a dictionary even if empty
+                
+                # Update the candidate with the resume data
+                logger.info(f"Current candidate resume_data before update: {candidate.resume_data}")
+                
+                # Ensure resume_data is a dictionary
+                if not isinstance(resume_data, dict):
+                    logger.warning(f"resume_data is not a dictionary: {type(resume_data).__name__}")
+                    resume_data = {'raw_data': resume_data}  # Wrap in a dictionary if it's not already one
+                
+                # Update the candidate's resume_data field
+                candidate.resume_data = resume_data
+                
+                try:
+                    # Save the candidate with the updated resume_data
+                    candidate.save(update_fields=['resume_data', 'updated_at'])
+                    logger.info(f"Successfully saved resume data to candidate {candidate.id}")
+                    
+                    # Verify the data was saved
+                    candidate.refresh_from_db()
+                    logger.info(f"Verified resume_data after save: {candidate.resume_data is not None}")
+                    if candidate.resume_data is None:
+                        logger.error("resume_data is still None after save")
+                    else:
+                        logger.info(f"resume_data content: {json.dumps(candidate.resume_data, indent=2, default=str)[:1000]}...")
+                except Exception as save_error:
+                    logger.error(f"Error saving resume data: {str(save_error)}", exc_info=True)
+                    # Try a full save if the partial save fails
+                    try:
+                        candidate.save()
+                        logger.info("Successfully saved candidate with full save")
+                    except Exception as full_save_error:
+                        logger.error(f"Full save also failed: {str(full_save_error)}", exc_info=True)
+                        raise
                 
                 # Get the URL and ensure it's not double-encoded
                 resume_url = None
