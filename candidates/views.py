@@ -704,7 +704,7 @@ class WorkDNAQuestionView(CandidateAccessMixin, APIView):
         try:
             resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=30)
             if resp.status_code == 200:
-                questions = resp.json().get('questions', [])[:2]
+                questions = resp.json().get('questions', [])
                 work_dna = WorkDNAQuestion.objects.create(
                     candidate=candidate,
                     candidate_name=candidate.full_name,
