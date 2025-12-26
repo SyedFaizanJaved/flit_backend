@@ -154,6 +154,92 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
     # Kyunki ab sab create endpoint se ho raha hai
     def partial_update(self, request, *args, **kwargs):
         return self.create(request, *args, **kwargs)
+        
+    @action(detail=False, methods=['get'])
+    def shortlisted(self, request):
+        """
+        List all candidates that have been shortlisted by the employer
+        """
+        from applications.models import JobApplication, ProjectApplication
+        from django.db.models import Q
+        
+        # Get the employer profile
+        employer = request.user.employer_profile
+        
+        # Get shortlisted job applications
+        job_applications = JobApplication.objects.filter(
+            employer=employer.user,
+            is_shortlisted=True
+        ).select_related('candidate__user')
+        
+        # Get shortlisted project applications
+        project_applications = ProjectApplication.objects.filter(
+            employer=employer.user,
+            is_shortlisted=True
+        ).select_related('candidate__user')
+        
+        # Combine and paginate results
+        combined = []
+        
+        # Add job applications
+        for app in job_applications:
+            combined.append({
+                'id': app.id,
+                'type': 'job',
+                'title': app.job.title,
+                'status': 'shortlisted',
+                'applied_at': app.applied_at,
+                'application': {
+                    'id': app.id,
+                    'candidate_name': app.candidate.full_name,
+                    'candidate_user_id': app.candidate.user.id,
+                    'job_title': app.job.title,
+                    'job_id': app.job.id,
+                    'company_name': app.company.name,
+                    'status': app.status,
+                    'candidate_profile_image': app.candidate.profile_image.url if app.candidate.profile_image else None,
+                    'coverLetter': app.coverLetter,
+                    'overall_match_score': app.overall_match_score,
+                    'applied_at': app.applied_at,
+                    'is_shortlisted': app.is_shortlisted,
+                    'is_rejected': app.is_rejected
+                }
+            })
+        
+        # Add project applications
+        for app in project_applications:
+            combined.append({
+                'id': app.id,
+                'type': 'project',
+                'title': app.project.title,
+                'status': 'shortlisted',
+                'applied_at': app.applied_at,
+                'application': {
+                    'id': app.id,
+                    'candidate_name': app.candidate.full_name,
+                    'candidate_user_id': app.candidate.user.id,
+                    'project_title': app.project.title,
+                    'project_id': app.project.id,
+                    'company_name': app.company.name,
+                    'status': app.status,
+                    'candidate_profile_image': app.candidate.profile_image.url if app.candidate.profile_image else None,
+                    'coverLetter': app.coverLetter,
+                    'overall_match_score': app.overall_match_score,
+                    'applied_at': app.applied_at,
+                    'is_shortlisted': app.is_shortlisted,
+                    'is_rejected': app.is_rejected
+                }
+            })
+        
+        # Sort by applied_at in descending order
+        combined.sort(key=lambda x: x['applied_at'], reverse=True)
+        
+        # Paginate the results
+        page = self.paginate_queryset(combined)
+        if page is not None:
+            return self.get_paginated_response(page)
+            
+        return Response(combined)
 
 class EmployerProfileDashboardView(EmployerDashboardBaseView):
     """Endpoint for employer profile data in dashboard."""
