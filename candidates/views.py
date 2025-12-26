@@ -27,6 +27,8 @@ from employers.models import Employer
 import re
 from django.db.models import Q
 from rest_framework import generics
+from projects.models import Project
+from companies.models import Company
 from .models import Candidate
 from .serializers import DiscoverTalentSerializer
 from rest_framework.permissions import IsAuthenticated
@@ -300,25 +302,46 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
             if response.status_code == 200:
                 data = response.json()
                 projects = data.get('ranked_projects') or data.get('opportunities') or []
+                
                 formatted = []
                 for item in projects:
                     pid = item.get('id') or item.get('project_id')
-                    if pid:
-                        formatted.append({
-                            'id': pid,
-                            'title': item.get('title', 'No Title'),
-                            'description': item.get('description', ''),
-                            'category': item.get('category', 'other'),
-                            'status': 'active',
-                            'created_at': item.get('created_at', timezone.now().isoformat()),
-                            'skills': item.get('skills', []),
-                            'estimatedHours': item.get('estimated_hours', '1-2 weeks'),  # ← YEH ADD KARO
-                            'paymentType': item.get('payment_type', 'fixed'),
-                            'paymentAmount': item.get('payment_amount', 0),
-                            'work_style': item.get('work_style', 'remote'),
-                            'company_name': item.get('company', {}).get('company_name', 'Unknown'),
-                            'company_id': item.get('company', {}).get('id'),
-                        })
+                    if not pid:
+                        continue
+                        
+                    # Try to get project from database to fetch company info
+                    project = None
+                    try:
+                        project = Project.objects.filter(id=pid).select_related('company').first()
+                    except (Project.DoesNotExist, ValueError):
+                        pass
+                    
+                    # Prepare company info
+                    company_name = 'Unknown'
+                    company_id = None
+                    
+                    if project and project.company:
+                        company_name = project.company.company_name
+                        company_id = project.company.id
+                    elif isinstance(item.get('company'), dict):
+                        company_name = item['company'].get('company_name', 'Unknown')
+                        company_id = item['company'].get('id')
+                    
+                    formatted.append({
+                        'id': pid,
+                        'title': item.get('title', 'No Title'),
+                        'description': item.get('description', ''),
+                        'category': item.get('category', 'other'),
+                        'status': 'active',
+                        'created_at': item.get('created_at', timezone.now().isoformat()),
+                        'skills': item.get('skills', []),
+                        'estimatedHours': item.get('estimated_hours', '1-2 weeks'),
+                        'paymentType': item.get('payment_type', 'fixed'),
+                        'paymentAmount': item.get('payment_amount', 0),
+                        'work_style': item.get('work_style', 'remote'),
+                        'company_name': company_name,
+                        'company_id': company_id,
+                    })
                 cache.set(cache_key, formatted, timeout=300)
                 return formatted
         except Exception as e:
