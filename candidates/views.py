@@ -777,37 +777,96 @@ class DiscoverTalentView(generics.ListAPIView):
             profile_visibility="public"
         )
 
-        q = self.request.query_params.get('search', '').strip()
+        q = self.request.query_params.get('search', '').strip().lower()
 
         if q:
             words = [word.strip() for word in q.split() if word.strip()]
             if not words:
                 return qs
 
-            # Overall query (OR between words)
-            main_query = Q()
-
+            from django.db.models import Case, When, Value, IntegerField, F, Q, CharField
+            
+            # First, create a base queryset with all candidates that match any word
+            search_query = Q()
             for word in words:
-                # Name fields par start-with match (pehla name ya last name 'ali' se shuru ho)
-                name_query = (
-                    Q(user__first_name__istartswith=word) |
-                    Q(user__last_name__istartswith=word)
+                search_query |= (
+                    Q(user__first_name__icontains=word) |
+                    Q(user__last_name__icontains=word) |
+                    Q(title__icontains=word)
                 )
+            
+            qs = qs.filter(search_query)
+            
+            # Now add annotations for ranking
+            # For full name exact match (highest priority)
+            full_name = ' '.join(words).strip()
+            qs = qs.annotate(
+                full_name_match=Case(
+                    When(
+                        Q(user__first_name__iexact=full_name) | 
+                        Q(user__last_name__iexact=full_name) |
+                        Q(user__first_name__istartswith=words[0]) & Q(user__last_name__iexact=' '.join(words[1:]).strip() if len(words) > 1 else ''),
+                        then=Value(100)  # Very high score for exact full name match
+                    ),
+                    default=Value(0),
+                    output_field=IntegerField()
+                )
+            )
+            
+            # Add individual word matches with different weights
+            for i, word in enumerate(words):
+                # Higher weight for first word matches
+                weight = 3 if i == 0 else 2
+                
+                qs = qs.annotate(**{
+                    f'first_name_exact_{i}': Case(
+                        When(user__first_name__iexact=word, then=Value(weight * 3)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'first_name_start_{i}': Case(
+                        When(user__first_name__istartswith=word, then=Value(weight * 2)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'first_name_contains_{i}': Case(
+                        When(user__first_name__icontains=word, then=Value(weight)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'last_name_exact_{i}': Case(
+                        When(user__last_name__iexact=word, then=Value(weight * 3)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'last_name_start_{i}': Case(
+                        When(user__last_name__istartswith=word, then=Value(weight * 2)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'last_name_contains_{i}': Case(
+                        When(user__last_name__icontains=word, then=Value(weight)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                })
+            
+            # Calculate total score by summing all individual scores
+            score_expression = F('full_name_match')
+            for i in range(len(words)):
+                score_expression += (
+                    F(f'first_name_exact_{i}') + F(f'first_name_start_{i}') + F(f'first_name_contains_{i}') +
+                    F(f'last_name_exact_{i}') + F(f'last_name_start_{i}') + F(f'last_name_contains_{i}')
+                )
+            
+            # Add a small boost for profile views so more popular profiles appear higher with same score
+            qs = qs.annotate(
+                search_rank=score_expression + (F('profile_views') / 1000)
+            ).order_by('-search_rank')
 
-                # Title par normal partial match → job titles properly search ho sakein
-                title_query = Q(title__icontains=word)
-
-                # Har word ke liye (name match OR title match)
-                word_query = name_query | title_query
-
-                # Sab words OR se combine (koi bhi word match kare to result aaye)
-                main_query |= word_query
-
-            qs = qs.filter(main_query)
-
-        # Skills filter (agar hai)
+        # Skills filter (if any)
         if skills := self.request.query_params.getlist('skills'):
-            qs = qs.filter(skills__overlap=skills)  # ya jo field hai uske hisab se
+            qs = qs.filter(skills__overlap=skills)
 
         return qs.distinct()
 
