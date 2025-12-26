@@ -2,107 +2,83 @@ import io
 import json
 import logging
 import os
+import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
-from django.db import transaction
-from django.db.models import Q, Count
+from django.db.models import Q, F, Count, Case, When
 from django.utils import timezone
-from django.utils.text import get_valid_filename
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, permissions, viewsets, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView
-from rest_framework.filters import OrderingFilter, SearchFilter
-from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# Disable debug logging for chat and other noisy modules
-logging.getLogger('websockets').setLevel(logging.WARNING)
-logging.getLogger('asyncio').setLevel(logging.WARNING)
-logging.getLogger('urllib3').setLevel(logging.WARNING)
-
-# Local imports
+from rest_framework.exceptions import PermissionDenied, NotFound
+from utils.pagination import CustomPagination  # YE SAHI HAI
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
-from jobs.serializers import JobListSerializer
-from applications.models import JobApplication as Application
-from .models import Candidate, ReferenceRequest
-from .serializers import (
-    CandidateSerializer, 
-    CandidateListSerializer,
-    ReferenceRequestSerializer,
-    DiscoverTalentSerializer,
-)
-from utils.pagination import CustomPagination
-from utils.file_validators import document_upload_path, video_upload_path, resume_upload_path, image_upload_path
-
-# Set up logging
-logger = logging.getLogger(__name__)
-exception_logger = logging.getLogger("exceptions")
-             
-class IsCandidateUser(permissions.BasePermission):
-    """
-    Custom permission to only allow candidate users to access the view.
-    """
-    def has_permission(self, request, view):
-        # Check if the user is authenticated and has a candidate profile
-        return bool(request.user and hasattr(request.user, 'candidate_profile'))
-
-    def has_object_permission(self, request, view, obj):
-        # For object-level permission, check if the object belongs to the user's candidate profile
-        return obj.candidate.user == request.user
-from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django_filters.rest_framework import DjangoFilterBackend
-from utils.pagination import CustomPagination
-from accounts.views import BaseRoleRegistrationView
 from jobs.models import Job
-from .models import ReferenceRequest
-from .serializers import CandidateSerializer, CandidateProfileUpdateSerializer
 from jobs.serializers import JobListSerializer
-from projects.serializers import ProjectListSerializer
+from applications.models import JobApplication as Application, ProjectApplication
 from companies.models import Company
+from rest_framework import serializers 
 from employers.models import Employer
+import re
+from django.db.models import Q
+from rest_framework import generics
+from .models import Candidate
+from .serializers import DiscoverTalentSerializer
+from rest_framework.permissions import IsAuthenticated
+
+
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from .serializers import (
-    CandidateListSerializer,
-    CandidateProfileUpdateSerializer,
     CandidateSerializer,
+    CandidateListSerializer,
     ReferenceRequestSerializer,
     WorkDNAQuestionSerializer,
-    CompanyWithOpeningsSerializer,
-    CandidateSerializer,
     DiscoverTalentSerializer,
+    CompanyWithOpeningsSerializer,
 )
-from employers.serializers import EmployerCompanyConversationSummarySerializer
-from chat.models import ChatMessage
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.generics import ListAPIView
-from jobs.models import Job
-from projects.models import Project
-from jobs.serializers import JobListSerializer
-from projects.serializers import ProjectListSerializer
-from django.urls import reverse
-from django.http import JsonResponse
-import requests
-from rest_framework.reverse import reverse as drf_reverse
-from applications.models import ProjectApplication
+from utils.pagination import CustomPagination
+from utils.file_validators import (
+    resume_upload_path, video_upload_path, image_upload_path, document_upload_path
+)
+from accounts.views import BaseRoleRegistrationView
+
+logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
 
 
-class PublicProjectListAPIView(ListAPIView):
-    """
-    Public API endpoint for listing all active projects
-    No authentication required
-    """
+class CandidateAccessMixin:
+    def get_candidate(self):
+        try:
+            return self.request.user.candidate_profile
+        except AttributeError:
+            raise PermissionDenied("Authentication required.")
+        except Candidate.DoesNotExist:
+            raise NotFound("Candidate profile not found.")
+
+
+# Public Views
+class PublicJobListAPIView(generics.ListAPIView):
+    queryset = Job.objects.filter(status='active')
+    serializer_class = JobListSerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = PageNumberPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ['title', 'description', 'company__name']
+    ordering_fields = ['created_at', 'salary_min', 'salary_max']
+    filterset_fields = {
+        'job_type': ['exact'],
+        'work_style': ['exact'],
+        'education_level': ['exact'],
+        'is_remote': ['exact'],
+    }
+
+
+class PublicProjectListAPIView(generics.ListAPIView):
     queryset = Project.objects.filter(status='active')
     serializer_class = ProjectListSerializer
     permission_classes = [permissions.AllowAny]
@@ -118,68 +94,26 @@ class PublicProjectListAPIView(ListAPIView):
     }
 
 
-class PublicJobListAPIView(ListAPIView):
-    """
-    Public API endpoint for listing all active jobs
-    No authentication required
-    """
-    queryset = Job.objects.filter(status='active')
-    serializer_class = JobListSerializer
-    permission_classes = [permissions.AllowAny]
-    pagination_class = PageNumberPagination
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['title', 'description', 'company__name']
-    ordering_fields = ['created_at', 'salary_min', 'salary_max', 'application_deadline']
-    filterset_fields = {
-        'job_type': ['exact'],
-        'work_style': ['exact'],
-        'education_level': ['exact'],
-        'is_remote': ['exact'],
-    }
-
-
 class CandidateRegistrationView(BaseRoleRegistrationView):
-    """Register a new candidate user (role is forced to candidate)."""
     fixed_user_type = "candidate"
 
-class DashboardBaseView(APIView):
-    """Base view for dashboard endpoints with common functionality."""
+
+# Dashboard Views
+class DashboardBaseView(CandidateAccessMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
-    
-    def get_candidate_profile(self, user):
-        try:
-            return user.candidate_profile
-        except Candidate.DoesNotExist:
-            exception_logger.error(f"User {user.id} tried to access candidate endpoint but has no candidate profile")
-            raise PermissionDenied('You must be logged in as a candidate to access this resource.')
 
 
 class CandidateDashboardView(DashboardBaseView):
-    """Optimized dashboard endpoint that combines all dashboard data."""
-    
     def get(self, request):
-        candidate = self.get_candidate_profile(request.user)
-        
-        # Get all data in a single response
-        response_data = {
-            'profile': self._get_profile_data(candidate),
+        candidate = self.get_candidate()
+        return Response({
+            'profile': CandidateSerializer(candidate, context={'request': request}).data,
             'applications': self._get_applications_data(candidate),
             'latest_jobs': self._get_latest_jobs(candidate),
-            'latest_projects': self._get_latest_projects(candidate)
-        }
-        
-        return Response(response_data)
-    
-    def _get_profile_data(self, candidate):
-        """Get candidate profile data with optimized queries."""
-        from .serializers import CandidateSerializer
-        return CandidateSerializer(candidate, context={'request': self.request}).data
-    
+            'latest_projects': self._get_latest_projects(candidate),
+        })
+
     def _get_applications_data(self, candidate):
-        """Get applications data with optimized queries."""
-        from django.db.models import Count, Q
-        
-        # Single query to get all application counts
         counts = Application.objects.filter(
             candidate=candidate,
             status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
@@ -188,2276 +122,714 @@ class CandidateDashboardView(DashboardBaseView):
             job_apps=Count('id', filter=Q(job__isnull=False)),
             project_apps=Count('id', filter=Q(project__isnull=False))
         )
-        
         return {
             'total_applications': counts['total'] or 0,
             'job_applications_count': counts['job_apps'] or 0,
             'project_applications_count': counts['project_apps'] or 0,
-            'references_count': ReferenceRequest.objects.filter(
-                candidate=candidate,
-                is_public=True
-            ).count()
+            'references_count': ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count(),
         }
-    
+
     def _get_latest_jobs(self, candidate, limit=5):
-        """Get latest jobs with optimized query."""
-        from jobs.models import Job
-        
-        jobs = Job.objects.filter(
-            status='active'
-        ).select_related('company').order_by('-created_at')[:limit]
-        
+        jobs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
         return JobListSerializer(jobs, many=True, context={'request': self.request}).data
-    
+
     def _get_latest_projects(self, candidate, limit=5):
-        """Get latest projects with optimized query."""
-        projects = Project.objects.filter(
-            status='active'
-        ).select_related('company').order_by('-created_at')[:limit]
-        
+        projects = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
         return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
 
 
 class CandidateProfileDashboardView(DashboardBaseView):
-    """Endpoint for candidate profile data in dashboard."""
     def get(self, request):
-        candidate = self.get_candidate_profile(request.user)
-        serializer = CandidateSerializer(candidate, context={'request': request})
-        
-        # Get counts for dashboard
+        candidate = self.get_candidate()
         applications_count = Application.objects.filter(
-            candidate=candidate, 
+            candidate=candidate,
             status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
         ).count()
-        
-        job_applications_count = Application.objects.filter(
-            candidate=candidate,
-            job__isnull=False,
-            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
-        ).count()
-        
-        project_applications_count = applications_count - job_applications_count
-        
-        references_count = Reference.objects.filter(
-            candidate=candidate,
-            is_public=True
-        ).count()
-        
-        reference_requests_count = ReferenceRequest.objects.filter(
-            candidate=candidate
-        ).count()
-        
+        job_count = Application.objects.filter(candidate=candidate, job__isnull=False).count()
+        project_count = applications_count - job_count
+        references_count = ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count()
+        reference_requests_count = ReferenceRequest.objects.filter(candidate=candidate).count()
+
         return Response({
-            'profile': serializer.data,
+            'profile': CandidateSerializer(candidate, context={'request': request}).data,
             'profile_completed': candidate.is_profile_complete,
             'applications_count': applications_count,
-            'job_applications_count': job_applications_count,
-            'project_applications_count': project_applications_count,
-            'references_count': references_count,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+            'job_applications_count': job_count,
+            'project_applications_count': project_count,
+            'references_count': references_count,
             'reference_requests_count': reference_requests_count,
         })
 
 
 class CandidateApplicationsView(DashboardBaseView, generics.ListAPIView):
-    """Optimized endpoint for candidate's applications with pagination."""
     pagination_class = CustomPagination
-    
+
     def get_queryset(self):
-        """Get combined queryset of job and project applications."""
-        candidate = self.get_candidate_profile(self.request.user)
-        
-        # Get job applications with select_related to avoid N+1 queries
-        job_apps = Application.objects.filter(
-            candidate=candidate
-        ).select_related('job__company').order_by('-applied_at')
-        
-        # Get project applications with select_related
-        project_apps = ProjectApplication.objects.filter(
-            candidate=candidate
-        ).select_related('project__company').order_by('-applied_at')
-        
-        # Convert both to list of dicts with consistent structure
-        job_apps_list = [
-            self._format_application(app, 'job') 
-            for app in job_apps
-        ]
-        
-        project_apps_list = [
-            self._format_application(app, 'project')
-            for app in project_apps
-        ]
-        
-        # Combine and sort all applications
-        all_apps = job_apps_list + project_apps_list
-        all_apps.sort(key=lambda x: x['applied_at'], reverse=True)
-        
-        return all_apps
-    
-    def _format_application(self, app, app_type):
-        """Format application data consistently."""
+        candidate = self.get_candidate()
+        job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
+        project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
+
+        formatted = []
+        for app in job_apps:
+            formatted.append(self._format_app(app, 'job'))
+        for app in project_apps:
+            formatted.append(self._format_app(app, 'project'))
+        formatted.sort(key=lambda x: x['applied_at'], reverse=True)
+        return formatted
+
+    def _format_app(self, app, app_type):
         if app_type == 'job':
             return {
                 'app_id': app.id,
                 'id': app.job.id if app.job else None,
-                'title': app.job.title if app.job else 'Unknown Job',
-                'company': app.job.company.name if app.job and app.job.company else 'Unknown Company',
+                'title': app.job.title if app.job else 'Unknown',
+                'company': app.job.company.name if app.job and app.job.company else 'Unknown',
                 'status': app.status,
                 'applied_at': app.applied_at,
                 'type': 'job'
             }
-        else:  # project application
-            return {
-                'app_id': app.id,
-                'id': app.project.id if app.project else None,
-                'title': app.project.title if app.project else 'Unknown Project',
-                'company': app.project.company.name if app.project and app.project.company else 'Unknown Company',
-                'status': app.status,
-                'applied_at': app.applied_at,
-                'type': 'project'
-            }
-    
+        return {
+            'app_id': app.id,
+            'id': app.project.id if app.project else None,
+            'title': app.project.title if app.project else 'Unknown',
+            'company': app.project.company.name if app.project and app.project.company else 'Unknown',
+            'status': app.status,
+            'applied_at': app.applied_at,
+            'type': 'project'
+        }
+
     def list(self, request, *args, **kwargs):
-        """List applications with pagination and counts."""
-        try:
-            candidate = self.get_candidate_profile(request.user)
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            # Get counts in a single query
-            counts = {
-                'job': Application.objects.filter(candidate=candidate).count(),
-                'project': ProjectApplication.objects.filter(candidate=candidate).count()
-            }
-            
-            # Apply pagination
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                return self.get_paginated_response({
-                    'applications': page,
-                    'total_applications': counts['job'] + counts['project'],
-                    'job_applications_count': counts['job'],
-                    'project_applications_count': counts['project']
-                })
-            
-            return Response({
-                'applications': queryset,
-                'total_applications': counts['job'] + counts['project'],
-                'job_applications_count': counts['job'],
-                'project_applications_count': counts['project']
-            })
-            
-        except Exception as e:
-            exception_logger.exception("Error fetching applications")
-            return Response(
-                {'error': 'An error occurred while fetching applications'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-class CandidateLatestJobsView(ListAPIView):
-    """Endpoint for latest jobs relevant to candidate."""
+        candidate = self.get_candidate()
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+
+        counts = {
+            'job': Application.objects.filter(candidate=candidate).count(),
+            'project': ProjectApplication.objects.filter(candidate=candidate).count(),
+        }
+
+        data = {
+            'total_applications': counts['job'] + counts['project'],
+            'job_applications_count': counts['job'],
+            'project_applications_count': counts['project'],
+        }
+
+        if page is not None:
+            data['applications'] = page
+            return self.get_paginated_response(data)
+
+        data['applications'] = queryset
+        return Response(data)
+
+
+# Latest Jobs & Projects
+class CandidateLatestJobsView(CandidateAccessMixin, generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = JobListSerializer
-    page_size = 20  # Set default page size
-    
-    def get_candidate_profile(self, user):
-        """Get the candidate profile for the authenticated user."""
-        try:
-            return user.candidate_profile
-        except Candidate.DoesNotExist:
-            raise NotFound("Candidate profile not found for this user.")
-            
+
     def get_queryset(self):
         from django.core.cache import cache
-        
-        candidate = self.get_candidate_profile(self.request.user)
-        logger = logging.getLogger(__name__)
+        candidate = self.get_candidate()
         cache_key = f'candidate_{candidate.id}_latest_jobs'
-        
-        # Try to get from cache first
-        cached_result = cache.get(cache_key)
-        if cached_result is not None and cached_result.get('ml_success', False):
-            self.ml_success = True
-            return cached_result.get('jobs', [])
-        
+        cached = cache.get(cache_key)
+
+        if cached and cached.get('ml_success'):
+            return cached.get('jobs', [])
+
         try:
-            ml_base_url = f"{settings.FLIT_AI_URL}/"
-            ml_url = f"{ml_base_url.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-            
-            # Timeout after 15 seconds
-            ml_response = requests.get(ml_url, timeout=15)
-            
-            if ml_response.status_code == 200:
-                ml_data = ml_response.json()
-                ranked_opportunities = ml_data.get('ranked_opportunities', [])
-                
-                if not isinstance(ranked_opportunities, list) or not ranked_opportunities:
-                    logger.warning("No job opportunities found in ML response")
-                    return []
-                
-                latest_jobs = []
-                for job_data in ranked_opportunities:
-                    try:
-                        job = self._process_job_data(job_data)
-                        if job:
-                            latest_jobs.append(job)
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"Invalid job data: {str(e)}")
-                
-                if latest_jobs:
-                    # Cache successful ML result for 5 minutes
-                    result = {'jobs': latest_jobs, 'ml_success': True}
-                    cache.set(cache_key, result, timeout=300)
-                    self.ml_success = True
-                    return latest_jobs
-        
-        except (requests.RequestException, json.JSONDecodeError, Exception) as e:
-            logger.warning(f"ML service request failed: {str(e)}")
-        
-        # Return empty list if ML API fails or returns no jobs
+            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
+            response = requests.get(ml_url, timeout=15)
+            if response.status_code == 200:
+                ranked = response.json().get('ranked_opportunities', [])
+                jobs = []
+                for item in ranked:
+                    job_id = item.get('job_id') or item.get('id')
+                    if not job_id:
+                        continue
+                    company = item.get('company', {})
+                    jobs.append({
+                        'id': job_id,
+                        'title': item.get('title', 'No Title'),
+                        'description': item.get('description', ''),
+                        'workStyle': item.get('work_style', 'remote'),
+                        'category': item.get('category', 'other'),
+                        'experienceLevel': item.get('experience_level', 'mid'),
+                        'employmentType': item.get('employment_type', 'full-time'),
+                        'salaryRangeMin': item.get('salary_range', {}).get('min'),
+                        'salaryRangeMax': item.get('salary_range', {}).get('max'),
+                        'status': item.get('status', 'active'),
+                        'created_at': item.get('created_at', timezone.now().isoformat()),
+                        'location': item.get('location'),
+                        'skills': item.get('skills', []),
+                        'company_name': company.get('company_name', 'Unknown'),
+                        'company_id': company.get('id'),
+                    })
+                if jobs:
+                    cache.set(cache_key, {'jobs': jobs, 'ml_success': True}, timeout=300)
+                return jobs
+        except Exception as e:
+            logger.warning(f"ML jobs fetch failed: {e}")
         return []
-    
-    def _process_job_data(self, job_data):
-        """Process and validate job data from ML service."""
-        job_id = job_data.get('job_id') or job_data.get('id')
-        if not job_id:
-            return None
-        
-        job = {
-            'id': job_id,
-            'title': job_data.get('title', 'No Title'),
-            'description': job_data.get('description', ''),
-            'workStyle': job_data.get('work_style', 'remote'),
-            'category': job_data.get('category', 'other'),
-            'experienceLevel': job_data.get('experience_level', 'mid'),
-            'employmentType': job_data.get('employment_type', 'full-time'),
-            'salaryRangeMin': job_data.get('salary_range', {}).get('min'),
-            'salaryRangeMax': job_data.get('salary_range', {}).get('max'),
-            'status': job_data.get('status', 'active'),
-            'created_at': job_data.get('created_at', timezone.now().isoformat()),
-            'location': job_data.get('location'),
-            'skills': job_data.get('skills', [])
-        }
-        
-        # Add company information if available
-        company_data = job_data.get('company', {})
-        if company_data:
-            job.update({
-                'company_name': company_data.get('company_name', 'Unknown Company'),
-                'company_id': company_data.get('id')
-            })
-            
-        return job
-    
+
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         page = self.paginate_queryset(queryset)
-        
+        data = {'ml_success': bool(queryset), 'latest_jobs': page if page is not None else queryset}
         if page is not None:
-            return self.get_paginated_response({
-                'latest_jobs': page,
-                'ml_success': getattr(self, 'ml_success', False)
-            })
-            
-        return Response({
-            'count': len(queryset),
-            'next': None,
-            'previous': None,
-            'total_pages': 1,
-            'current_page': 1,
-            'latest_jobs': [],
-            'ml_success': getattr(self, 'ml_success', False)
-        })
+            return self.get_paginated_response(data)
+        return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
 
-class CandidateLatestProjectsView(ListAPIView):
-    """
-    Endpoint for latest projects relevant to candidate.
-    Only shows projects from ML service, returns empty if no projects from ML.
-    """
+
+class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
-    serializer_class = ProjectListSerializer
-    page_size = 20  # Default page size
-    
-    def get_candidate_profile(self, user):
-        """Get the candidate profile for the authenticated user."""
-        try:
-            return user.candidate_profile
-        except Candidate.DoesNotExist:
-            raise NotFound("Candidate profile not found for this user.")
-    
+    # serializer_class = ProjectListSerializer  # ← YEH COMMENT OUT KAR DO
+
     def get_queryset(self):
         from django.core.cache import cache
-        import time
-        
-        candidate = self.get_candidate_profile(self.request.user)
-        logger = logging.getLogger(__name__)
-        
-        # Get page number and size from query params
-        page = int(self.request.query_params.get('page', 1))
-        page_size = int(self.request.query_params.get('page_size', self.page_size))
-        
-        # Generate cache key
-        cache_key = f'candidate_{candidate.id}_ml_projects_page_{page}_size_{page_size}'
-        
-        # Try to get from cache first
-        cached_result = cache.get(cache_key)
-        if cached_result is not None:
-            return cached_result
-        
-        # Fetch projects from ML service
+        candidate = self.get_candidate()
+        cache_key = f'candidate_{candidate.id}_latest_projects'
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
         try:
-            ml_base_url = f"{settings.FLIT_AI_URL}/"
-            ml_url = f"{ml_base_url.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-            
-            # Call ML service without timeout
-            ml_response = requests.get(ml_url)
-            
-            if ml_response.status_code == 200:
-                ml_data = ml_response.json()
-                ranked_projects = ml_data.get('ranked_projects', [])
-                
-                if not isinstance(ranked_projects, list) or not ranked_projects:
-                    logger.info("No projects found in ML service response")
-                    return []
-                
-                # Process and format the ML projects
-                latest_projects = []
-                for project_data in ranked_projects:
-                    try:
-                        project_id = project_data.get('id')
-                        if project_id is not None:
-                            project = {
-                                'id': project_id,
-                                'title': project_data.get('title', 'No Title'),
-                                'description': project_data.get('description', ''),
-                                'category': project_data.get('category', 'other'),
-                                'status': project_data.get('status', 'active'),
-                                'created_at': project_data.get('created_at', timezone.now().isoformat()),
-                                'skills': project_data.get('skills', [])
-                            }
-                            latest_projects.append(project)
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"Invalid project data: {str(e)}")
-                
-                # Cache the result for 5 minutes
-                cache.set(cache_key, latest_projects, timeout=300)
-                self.ml_success = True
-                return latest_projects
-            
-            logger.warning(f"ML service returned status code: {ml_response.status_code}")
-            return []
-            
+            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
+            response = requests.get(ml_url, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                projects = data.get('ranked_projects') or data.get('opportunities') or []
+                formatted = []
+                for item in projects:
+                    pid = item.get('id') or item.get('project_id')
+                    if pid:
+                        formatted.append({
+                            'id': pid,
+                            'title': item.get('title', 'No Title'),
+                            'description': item.get('description', ''),
+                            'category': item.get('category', 'other'),
+                            'status': 'active',
+                            'created_at': item.get('created_at', timezone.now().isoformat()),
+                            'skills': item.get('skills', []),
+                            'estimatedHours': item.get('estimated_hours', '1-2 weeks'),  # ← YEH ADD KARO
+                            'paymentType': item.get('payment_type', 'fixed'),
+                            'paymentAmount': item.get('payment_amount', 0),
+                            'work_style': item.get('work_style', 'remote'),
+                            'company_name': item.get('company', {}).get('company_name', 'Unknown'),
+                            'company_id': item.get('company', {}).get('id'),
+                        })
+                cache.set(cache_key, formatted, timeout=300)
+                return formatted
         except Exception as e:
-            logger.error(f"Error in ML service call: {str(e)}")
-            return []
-    
+            logger.warning(f"ML projects fetch failed: {e}")
+        return []
+
+    # Serializer dynamically set karo kyun ke hum dict return kar rahe hain
+    def get_serializer_class(self):
+        # Ek simple dict serializer return karo jo sirf data pass through kare
+        class DictSerializer(serializers.Serializer):
+            id = serializers.IntegerField()
+            title = serializers.CharField()
+            description = serializers.CharField()
+            category = serializers.CharField()
+            status = serializers.CharField()
+            created_at = serializers.CharField()
+            skills = serializers.ListField(child=serializers.CharField())
+            estimatedHours = serializers.CharField()  # ← Yeh add kiya
+            paymentType = serializers.CharField()
+            paymentAmount = serializers.IntegerField()
+            work_style = serializers.CharField()
+            company_name = serializers.CharField()
+            company_id = serializers.IntegerField(allow_null=True)
+
+        return DictSerializer
+
     def list(self, request, *args, **kwargs):
-        try:
-            queryset = self.get_queryset()
-            
-            # Always return empty list if no projects from ML
-            if not queryset:
-                return self.get_paginated_response({
-                    'latest_projects': [],
-                    'ml_success': getattr(self, 'ml_success', False)
-                })
-            
-            # Apply pagination
-            page = self.paginate_queryset(queryset)
-            
-            if page is not None:
-                return self.get_paginated_response({
-                    'latest_projects': page,
-                    'ml_success': getattr(self, 'ml_success', False)
-                })
-            
-            # Fallback if pagination is not applied
-            return Response({
-                'count': len(queryset),
-                'next': None,
-                'previous': None,
-                'total_pages': 1,
-                'current_page': 1,
-                'latest_projects': queryset,
-                'ml_success': getattr(self, 'ml_success', False)
-            })
-            
-        except Exception as e:
-            logger.error(f"Error in project list view: {str(e)}", exc_info=True)
-            return Response(
-                {'error': 'An error occurred while fetching projects'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-            return super().list(request, *args, **kwargs)
-    
-    def get_candidate_profile(self, user):
-        """Get the candidate profile for the authenticated user."""
-        try:
-            return user.candidate_profile
-        except Candidate.DoesNotExist:
-            raise NotFound("Candidate profile not found for this user.")
-
-    # Keep the original get method for backward compatibility
-    def get(self, request):
-        candidate = self.get_candidate_profile(request.user)
-        logger = logging.getLogger(__name__)
-        
-        # Try to get personalized projects from ML endpoint
-        ml_success = False
-        latest_projects = []
-        ml_data = None
-        
-        try:
-            ml_url = f"{settings.FLIT_AI_URL}/show_projects_for_candidate/{candidate.id}"
-            logger.info(f"Calling ML service for projects at: {ml_url}")
-            
-            # Add headers if needed (e.g., for authentication)
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-            
-            # Make a single request with a reasonable timeout
-            logger.info("Calling ML service")
-            ml_response = requests.get(ml_url, headers=headers, timeout=30)  # 30 second timeout
-            
-            if ml_response.status_code == 200:
-                try:
-                    ml_data = ml_response.json()
-                    logger.info(f"ML service response data type: {type(ml_data)}")
-                    
-                    # Check if we have a direct list of projects or ranked_projects
-                    if isinstance(ml_data, list):
-                        logger.info(f"Received direct list of {len(ml_data)} projects from ML service")
-                        ml_data = {'opportunities': ml_data}
-                    # Check for ranked_projects in the response
-                    elif 'ranked_projects' in ml_data and isinstance(ml_data['ranked_projects'], list):
-                        logger.info(f"Found {len(ml_data['ranked_projects'])} projects in ranked_projects")
-                        ml_data['opportunities'] = ml_data.pop('ranked_projects')
-                    
-                    project_ids = []
-                    project_data_map = {}
-                    
-                    # Try to get project IDs from the opportunities array if it exists
-                    if 'opportunities' in ml_data and isinstance(ml_data['opportunities'], list):
-                        logger.info(f"Found {len(ml_data['opportunities'])} project opportunities in ML response")
-                        
-                        # Extract valid project IDs from opportunities and build project data map
-                        for project_data in ml_data['opportunities']:
-                            try:
-                                project_id = project_data.get('project_id') or project_data.get('id')
-                                if project_id is not None:
-                                    project_id = int(project_id)
-                                    project_ids.append(project_id)
-                                    project_data_map[project_id] = project_data
-                            except (ValueError, TypeError) as e:
-                                exception_logger.exception(f"Invalid project ID in ML response: {project_data.get('project_id') or project_data.get('id')}")
-                                logger.warning(f"Invalid project ID in ML response: {project_data.get('project_id') or project_data.get('id')}")
-                    
-                    # If no project IDs found in opportunities, try the root level ranked_opportunity_ids
-                    if not project_ids and 'ranked_opportunity_ids' in ml_data and isinstance(ml_data['ranked_opportunity_ids'], list):
-                        logger.info(f"Found {len(ml_data['ranked_opportunity_ids'])} project IDs in ranked_opportunity_ids")
-                        for project_id in ml_data['ranked_opportunity_ids']:
-                            try:
-                                project_id = int(project_id)
-                                project_ids.append(project_id)
-                            except (ValueError, TypeError):
-                                exception_logger.exception(f"Invalid project ID in ranked_opportunity_ids: {project_id}")
-                                logger.warning(f"Invalid project ID in ranked_opportunity_ids: {project_id}")
-                    
-                    # If we still don't have project IDs, check if we have direct project data
-                    if not project_ids and isinstance(ml_data, dict):
-                        # Look for any list that might contain project data
-                        for key, value in ml_data.items():
-                            if isinstance(value, list) and value and isinstance(value[0], dict):
-                                if 'project_id' in value[0] or 'id' in value[0]:
-                                    logger.info(f"Found potential project data in key: {key}")
-                                    for item in value:
-                                        try:
-                                            project_id = item.get('project_id') or item.get('id')
-                                            if project_id is not None:
-                                                project_id = int(project_id)
-                                                project_ids.append(project_id)
-                                                project_data_map[project_id] = item
-                                        except (ValueError, TypeError):
-                                            exception_logger.exception(f"Invalid project ID in {key}: {item.get('project_id') or item.get('id')}")
-                                            logger.warning(f"Invalid project ID in {key}: {item.get('project_id') or item.get('id')}")
-                    
-                    if project_ids:
-                        logger.info(f"Processing {len(project_ids)} projects from ML response")
-                        
-                        # Remove duplicates while preserving order
-                        seen = set()
-                        project_ids = [x for x in project_ids if not (x in seen or seen.add(x))]
-                        
-                        # Create a list to hold all projects
-                        latest_projects = []
-                        
-                        # Process each project from the ML response
-                        for project_id in project_ids:
-                            project_data = project_data_map.get(project_id)
-                            if not project_data:
-                                continue
-                                
-                            try:
-                                logger.info(f"Processing project from ML data: {project_id} - {project_data.get('title')}")
-                                
-                                # Try to get the project from the database first
-                                try:
-                                    project = Project.objects.get(id=project_id, status='active')
-                                    logger.info(f"Found existing project in database: {project_id}")
-                                    
-                                    # Update skills from ML response if available
-                                    if 'skills' in project_data:
-                                        project._skills = project_data['skills']
-                                    
-                                    latest_projects.append(project)
-                                    continue
-                                except Project.DoesNotExist:
-                                    # exception_logger.error(f"Project.DoesNotExist: Active project not found for project_id={project_id}")
-                                    pass
-                                
-                                # If not in database, create a new project from ML data
-                                project = Project(
-                                    id=project_id,
-                                    title=project_data.get('title', 'No Title'),
-                                    description=project_data.get('description', ''),
-                                    paymentType=project_data.get('payment_type', 'fixed'),
-                                    paymentAmount=project_data.get('payment_amount') or 0,
-                                    estimatedHours=project_data.get('estimated_hours', '1-2 weeks'),
-                                    work_style=project_data.get('work_style', 'remote'),
-                                    status='active',
-                                    category=project_data.get('category', 'other')
-                                )
-                                
-                                # Set skills from ML response if available
-                                if 'skills' in project_data and project_data['skills']:
-                                    project._skills = project_data['skills']
-                                    
-                                    # Create ProjectSkill objects for each skill
-                                    # Skip creating ProjectSkill objects since we're not saving the project
-                                    # Just keep the skills in the _skills attribute for the response
-                                
-                                latest_projects.append(project)
-                                logger.info(f"Created project from ML data: {project_id} with skills: {project_data.get('skills', [])}")
-                                
-                            except Exception as e:
-                                exception_logger.exception(f"Error processing project with project_id={project_id}")
-                                logger.error(f"Error processing project {project_id}: {str(e)}", exc_info=True)
-                    
-                    if latest_projects:
-                        ml_success = True
-                        logger.info(f"Successfully got {len(latest_projects)} projects from ML service")
-                    else:
-                        logger.warning("No projects found in ML service")
-                        
-                except json.JSONDecodeError as e:
-                    exception_logger.exception("Failed to parse ML service response as JSON")
-                    logger.error(f"Failed to parse ML service response as JSON: {e}")
-                    logger.info(f"Raw response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
-                except Exception as e:
-                    exception_logger.exception("Unexpected error processing ML response")
-                    logger.error(f"Unexpected error processing ML response: {str(e)}", exc_info=True)
-            else:
-                logger.warning(f"ML service returned status code: {ml_response.status_code}")
-                logger.warning(f"Response content: {ml_response.text[:500]}...")  # Log first 500 chars of response
-                
-        except requests.RequestException as e:
-            exception_logger.exception("Request to ML service failed")
-            error_msg = f"Request to ML service failed: {str(e)}"
-            if hasattr(e, 'response') and e.response is not None:
-                error_msg += f"\nResponse status: {e.response.status_code}"
-                try:
-                    error_msg += f"\nResponse content: {e.response.text[:500]}"
-                except:
-                    pass
-            logger.error(error_msg, exc_info=True)
-        except Exception as e:
-            exception_logger.exception("Unexpected error calling ML service")
-            logger.error(f"Unexpected error calling ML service: {str(e)}", exc_info=True)
-        
-        # Prepare the response data - only include projects if we successfully got them from ML service
-        response_data = []
-        
-        if ml_success and latest_projects:
-            for project in latest_projects:
-                # Get project data from the database or ML response
-                project_data = {
-                    'id': project.id,
-                    'title': project.title,
-                    'description': project.description or '',
-                    'category': project.category or 'other',
-                    'estimatedHours': project.estimatedHours or '1-2 weeks',
-                    'paymentType': project.paymentType or 'fixed',
-                    'paymentAmount': project.paymentAmount or 0,
-                    'deadline': project.deadline.strftime('%Y-%m-%d') if hasattr(project, 'deadline') and project.deadline else None,
-                    'status': project.status,
-                    'created_at': project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if project.created_at else None,
-                    'company_name': project.company.company_name if hasattr(project, 'company') and project.company else None,
-                    'company_id': project.company.id if hasattr(project, 'company') and project.company else None,
-                    'skills': []
-                }
-                
-                # Add skills from _skills if available, otherwise use the related skills
-                if hasattr(project, '_skills') and project._skills:
-                    project_data['skills'] = project._skills
-                else:
-                    # Fall back to database skills if _skills is not set
-                    project_data['skills'] = list(project.required_skills.values_list('name', flat=True))
-                
-                response_data.append(project_data)
-        
-        # Apply pagination
-        page = self.paginate_queryset(response_data)
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(queryset if page is None else page, many=True)
+        data = {
+            'ml_success': bool(queryset),
+            'latest_projects': serializer.data
+        }
         if page is not None:
-            return self.get_paginated_response({
-                'latest_projects': page,
-                'ml_success': ml_success
-            })
-            
-        # Fallback if pagination is not applied
-        return Response({
-            'count': len(response_data),
-            'next': None,
-            'previous': None,
-            'total_pages': 1,
-            'current_page': 1,
-            'latest_projects': response_data,
-            'ml_success': ml_success,
-            'message': 'ML projects retrieved successfully' if ml_success and response_data else 'No ML projects found'
-        })
+            return self.get_paginated_response(data)
+        return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
 
-
-class CandidateViewSet(viewsets.ModelViewSet):
-    """ViewSet for candidate endpoints."""
+# Main Candidate ViewSet
+class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     queryset = Candidate.objects.all()
     serializer_class = CandidateSerializer
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     pagination_class = PageNumberPagination
-    page_size = 10
-    page_size_query_param = 'page_size'
-    max_page_size = 100
-    
-    def get_paginated_response(self, data):
-        response = super().get_paginated_response(data)
-        # Add our custom response data to the paginated response
-        response.data.update({
-            'total_companies': self.queryset.count() if hasattr(self, 'queryset') else 0,
-            'total_jobs': Job.objects.count(),
-            'total_projects': Project.objects.count(),
-        })
-        return response
 
-    def _get_candidate_profile(self, user):
+    def _save_file(self, file_obj, upload_path_func):
         try:
-            return user.candidate_profile
-        except Candidate.DoesNotExist:
-            exception_logger.error("Candidate.DoesNotExist: Candidate profile not found for this request")
-            return Response({'error': 'Candidate profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    def _save_file(self, file_obj, storage_path_prefix, request):
-        """
-        Save uploaded file using the appropriate file validator based on storage_path_prefix.
-        The file validators will handle unique filename generation.
-        """
-        try:
-            # Determine which upload path function to use based on the storage_path_prefix
-            if 'resumes' in storage_path_prefix:
-                upload_path = resume_upload_path
-            elif 'videos' in storage_path_prefix:
-                upload_path = video_upload_path
-            elif 'images' in storage_path_prefix or 'profile' in storage_path_prefix:
-    
-                upload_path = image_upload_path
-            else:
-                upload_path = document_upload_path
-            
-            # Generate the storage path using the appropriate upload_to function
-            # We pass None as the instance since we don't have the model instance here
-            storage_path = upload_path(None, file_obj.name)
-            
-            # Save the file using the generated path
-            default_storage.save(storage_path, file_obj)
-            
-            # Return the relative storage path
-            # The URL will be constructed when needed using request.build_absolute_uri()
-            return storage_path
+            path = upload_path_func(None, file_obj.name)
+            default_storage.save(path, file_obj)
+            return path
         except Exception as e:
-            exception_logger.exception(f"File saving failed in _save_file: {str(e)}")
+            exception_logger.exception(f"File save failed: {e}")
             return None
 
     def retrieve(self, request, pk=None):
-        # Support viewing by either candidate PK or user ID on the same endpoint.
-        candidate = None
-        viewed_publicly = False
-        # 1) Try by USER ID with public visibility first (to prefer user.id semantics)
         try:
-            candidate = Candidate.objects.get(user__id=pk, profile_visibility="public")
-            viewed_publicly = True
-        except Candidate.DoesNotExist:
-            exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
-            candidate = None
-        # 2) If not found, try by candidate PK with public visibility
-        if candidate is None:
-            try:
-                candidate = Candidate.objects.get(pk=pk, profile_visibility="public")
-                viewed_publicly = True
-            except Candidate.DoesNotExist:
-                exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
-                candidate = None
-        # 3) If still not found, allow owner to view their own profile regardless of visibility (by either key)
-        if candidate is None and getattr(request.user, 'is_authenticated', False):
-            try:
-                candidate = Candidate.objects.get(Q(pk=pk) | Q(user__id=pk), user=request.user)
-                viewed_publicly = False
-            except Candidate.DoesNotExist:
-                exception_logger.error("Candidate.DoesNotExist: Candidate not found for this request")
-                candidate = None
-        if candidate is None:
-            return Response(
-                {"detail": "Candidate not found or profile is not public"},
-                status=status.HTTP_404_NOT_FOUND
+            # Correct syntax: Q objects ko properly combine karo aur parentheses use karo
+            candidate = Candidate.objects.get(
+                (Q(pk=pk) | Q(user__id=pk)) & Q(profile_visibility="public")
             )
-        if viewed_publicly and hasattr(request.user, 'employer_profile'):
+            is_public = True
+        except Candidate.DoesNotExist:
+            # Apna profile dekhne ke liye (logged in candidate ya uska own ID)
+            if str(pk) in [str(request.user.id), str(self.get_candidate().id if hasattr(request.user, 'candidate_profile') else '0')]:
+                candidate = self.get_candidate()
+                is_public = False
+            else:
+                candidate = None
+                is_public = False
+
+        if not candidate:
+            return Response({"detail": "Not found or not public"}, status=404)
+
+        # Employer ne profile view kiya to count increase karo
+        if is_public and hasattr(request.user, 'employer_profile'):
             employer = request.user.employer_profile
-            viewers_list = list(candidate.viewers or [])
-            if employer.id not in viewers_list:
+            # Ensure viewers is a list of IDs (handle both list and dict formats)
+            viewers = candidate.viewers or []
+            if isinstance(viewers, dict):
+                # If viewers is a dict, get the keys as viewer IDs
+                viewer_ids = [int(k) for k in viewers.keys() if k.isdigit()]
+            else:
+                # If it's already a list, use it as is
+                viewer_ids = [v for v in viewers if isinstance(v, (int, str))]
+            
+            if employer.id not in viewer_ids:
+                viewer_ids.append(employer.id)
+                candidate.viewers = viewer_ids
                 candidate.profile_views = (candidate.profile_views or 0) + 1
-                viewers_list.append(employer.id)
-                candidate.viewers = viewers_list
                 candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
-        serializer = CandidateSerializer(candidate, context={'request': request})
-        return Response(serializer.data)
+
+        return Response(CandidateSerializer(candidate, context={'request': request}).data)
+       
 
     def list(self, request):
-        queryset = Candidate.objects.filter(profile_visibility="public")
-        serializer = CandidateListSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        qs = Candidate.objects.filter(profile_visibility="public")
+        return Response(CandidateListSerializer(qs, many=True).data)
 
-    def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        if response.status_code != status.HTTP_201_CREATED:
-            return response
-
-        ml_success = False
-        candidate_profile_summary = None
-        candidate_tags = []
-        ml_error = None
-
-        candidate_id = response.data.get('id')
-        candidate = None
-
-        if not candidate_id:
-            ml_error = 'Candidate ID missing in response; cannot trigger ML sync'
-            logger.error(ml_error)
-        else:
-            try:
-                candidate = Candidate.objects.get(id=candidate_id)
-            except Candidate.DoesNotExist:
-                exception_logger.error("Candidate.DoesNotExist: Candidate with ID {candidate_id} not found for ML sync")
-                ml_error = f'Candidate with ID {candidate_id} not found for ML sync'
-                logger.error(ml_error)
-
-        if candidate:
-            # Prepare ML API URL and payload
-            ml_api_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
-            
-            # Log the ML API URL being called
-            logger.info(f"Preparing to call ML API at: {ml_api_url}")
-            logger.info(f"ML API Key configured: {'Yes' if hasattr(settings, 'ML_API_KEY') else 'No'}")
-            
-            # Prepare the basic candidate data
-            ml_payload = {
-                "full_name": candidate.full_name or "",
-                "title": candidate.title or "",
-                "bio": candidate.bio or "",
-                "location": candidate.location or "",
-                "work_style": candidate.work_style or "",
-                "availability_type": candidate.availability_type or "",
-                "is_available": bool(candidate.is_available),
-                "skills": list(candidate.skills) if hasattr(candidate, 'skills') and candidate.skills else [],
-                "superpowers": list(candidate.superpowers) if hasattr(candidate, 'superpowers') and candidate.superpowers else [],
-                "preferred_roles": list(candidate.preferred_roles) if hasattr(candidate, 'preferred_roles') and candidate.preferred_roles else [],
-                "seniority_level": candidate.seniority_level or "",
-                "min_salary": float(candidate.min_salary) if candidate.min_salary is not None else None,
-                "max_salary": float(candidate.max_salary) if candidate.max_salary is not None else None,
-                "salary_currency": candidate.salary_currency or "USD",
-                "portfolio_links": list(candidate.portfolio_links) if hasattr(candidate, 'portfolio_links') and candidate.portfolio_links else [],
-                "profile_visibility": candidate.profile_visibility or "public",
-                "passion_projects": getattr(candidate, 'passion_projects', '') or "",
-                "user_id": str(candidate.user.id) if hasattr(candidate, 'user') and candidate.user else None,
-                "email": str(candidate.user.email) if hasattr(candidate, 'user') and candidate.user else None,
-            }
-            
-            # Handle file fields - convert to string URLs if they exist
-            if candidate.resume_url:
-                ml_payload["resume_url"] = str(candidate.resume_url)
-                
-            if candidate.video_intro_url:
-                ml_payload["video_intro_url"] = str(candidate.video_intro_url)
-            
-            # Handle resume_data if it exists and is a dictionary
-            resume_data = getattr(candidate, 'resume_data', None)
-            if isinstance(resume_data, dict):
-                ml_payload["resume_data"] = resume_data
-            
-            # Ensure all values are JSON serializable
-            for key, value in list(ml_payload.items()):
-                if value is None:
-                    ml_payload[key] = ""
-                elif isinstance(value, (list, dict, str, int, float, bool)) or value is None:
-                    continue  # These types are JSON serializable
-                else:
-                    # Convert any other type to string
-                    ml_payload[key] = str(value)
-
-            max_retries = 3  # Increased retries for better reliability
-            # Configure headers with content type and API key if available
-            headers = {
-                "Content-Type": "application/json"
-            }
-            
-            # Add API key if available in settings
-            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-                logger.info("ML API key added to request headers")
-            else:
-                logger.warning("No ML API key found in settings or environment variables")
-            
-            try:
-                logger.info("Calling ML API...")
-                ml_response = requests.post(
-                    ml_api_url,
-                    json=ml_payload,
-                    headers=headers,
-                    timeout=30  # 30 second timeout
-                )
-                logger.info(f"ML API Response Status: {ml_response.status_code}")
-                
-            except requests.exceptions.Timeout:
-                exception_logger.error("Candidate create ML API timed out")
-                ml_error = "Candidate create ML API timed out"
-                logger.error(ml_error)
-                raise
-            except requests.exceptions.RequestException as exc:
-                exception_logger.exception("Candidate create ML API request failed")
-                ml_error = f"Candidate create ML API request failed: {str(exc)}"
-                logger.error(ml_error, exc_info=True)
-                raise
-
-            # Process the ML API response
-            if ml_response is not None and ml_response.status_code in (200, 201):
-                try:
-                    ml_data = ml_response.json()
-                    logger.info(f"Successfully received data from ML API for candidate {candidate.id}")
-                    
-                    # Extract and process data from ML API response
-                    updates = {}
-                    
-                    # Always update these fields if present in the response
-                    for field in [
-                        'candidate_profile_summary',
-                        'candidate_tags',
-                        'search_query',
-                        'passion_projects'
-                    ]:
-                        if field in ml_data and ml_data[field] is not None:
-                            updates[field] = ml_data[field]
-                    
-                    # Only update these fields if they're not already set on the candidate
-                    for field in [
-                        'skills',
-                        'superpowers',
-                        'preferred_roles',
-                        'title',
-                        'bio'
-                    ]:
-                        if field in ml_data and ml_data[field] and not getattr(candidate, field, None):
-                            updates[field] = ml_data[field]
-                    
-                    # Log the updates that will be applied
-                    if updates:
-                        logger.info(f"Preparing to update candidate {candidate.id} with ML data: {json.dumps(updates, default=str)}")
-                    else:
-                        logger.info("No updates to apply from ML API response")
-                    
-                    # Update candidate with ML data if any updates are available
-                    if updates:
-                        try:
-                            for field, value in updates.items():
-                                setattr(candidate, field, value)
-                            candidate.save(update_fields=list(updates.keys()))
-                            logger.info(f"Successfully updated candidate {candidate.id} with ML data")
-                            ml_success = True
-                        except Exception as save_exc:
-                            exception_logger.exception(f"Error saving ML data to candidate {candidate.id}")
-                            ml_error = f"Error saving ML data: {str(save_exc)}"
-                            logger.error(ml_error)
-                    else:
-                        logger.info("No updates to save from ML API response")
-                        ml_success = True  # Still mark as success if no updates needed
-                        
-                except json.JSONDecodeError:
-                    ml_error = "Invalid JSON response from Candidate create ML API"
-                    exception_logger.exception(ml_error)
-                    logger.error(f"Response content: {ml_response.text}")
-                except Exception as exc:
-                    ml_error = f"Error processing ML API response: {str(exc)}"
-                    exception_logger.exception(ml_error)
-            elif ml_response is not None:
-                # Handle non-200/201 responses
-                ml_error = f"Candidate create ML API returned status code {ml_response.status_code}"
-                logger.error(f"{ml_error}. Response content: {ml_response.text}")
-                
-                # Try to extract more detailed error message if available
-                try:
-                    error_data = ml_response.json()
-                    if 'detail' in error_data:
-                        ml_error = f"ML API Error: {error_data['detail']}"
-                except:
-                    pass  # If we can't parse the error, use the default message
-
-        # Log the final status before preparing response
-        logger.info(f"Final ML API status - Success: {ml_success}, Error: {ml_error or 'None'}")
-        
-        # Prepare the response data
-        response_data = {
-            'message': 'Candidate created successfully',
-            'ml_success': ml_success,
-            'candidate_profile_summary': candidate_profile_summary,
-            'candidate_tags': candidate_tags,
-            'data': response.data,
-            'ml_api': {
-                'called': True,
-                'status': 'success' if ml_success else 'failed',
-                'message': 'ML API processed successfully' if ml_success else (ml_error or 'ML API processing failed')
-            }
-        }
-        
-        # If there was an ML API error but the candidate was created successfully,
-        # we still want to return a 201 status but include the ML API error details
-        if not ml_success and response.status_code == 201:
-            response_data['warning'] = 'Candidate created but ML processing failed'
-            
-        response.data = response_data
-
-        if ml_error:
-            response.data['ml_error'] = ml_error
-
-        return response
-
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='views')
-    def record_view(self, request, pk=None):
-        try:
-            employer = request.user.employer_profile
-        except Exception:
-            exception_logger.exception("Not Employer or Unexpected error while accessing employer_profile in record_view")
-            raise PermissionDenied("Only employers can record candidate profile views.")
-        try:
-            candidate = Candidate.objects.get(pk=pk)
-        except Candidate.DoesNotExist:
-            exception_logger.error(f"Candidate.DoesNotExist: Candidate with ID {pk} not found")
-            return Response({"error": "Candidate not found"}, status=status.HTTP_404_NOT_FOUND)
-        candidate.refresh_from_db(fields=['profile_views', 'viewers'])
-        viewers_list = list(candidate.viewers or [])
-        already_viewed = employer.id in viewers_list
-        if not already_viewed:
-            Candidate.objects.filter(pk=candidate.pk).update(profile_views=F('profile_views') + 1)
-            candidate.refresh_from_db(fields=['profile_views'])
-            viewers_list.append(employer.id)
-            candidate.viewers = viewers_list
-            candidate.save(update_fields=['viewers', 'updated_at'])
-        return Response({
-            'candidate_id': candidate.id,
-            'profile_views': candidate.profile_views,
-            'viewers_count': len(candidate.viewers or []),
-            'already_viewed': already_viewed
-        }, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def dashboard(self, request):
-        candidate = self._get_candidate_profile(request.user)
-        if isinstance(candidate, Response):
-            return candidate
-        data = {
-            'profile': CandidateSerializer(candidate).data,
-            'profile_completed': candidate.is_profile_complete,
-            'applications_count': candidate.job_applications.count() + candidate.project_applications.count(),
-            'job_applications_count': candidate.job_applications.count(),
-            'project_applications_count': candidate.project_applications.count(),
-            'references_count': candidate.references.count(),
-            'reference_requests_count': candidate.reference_requests.count(),
-        }
-        recent_job_apps = list(candidate.job_applications.all())
-        recent_project_apps = list(candidate.project_applications.all())
-        recent_applications = sorted(
-            recent_job_apps + recent_project_apps,
-            key=lambda a: a.applied_at,
-            reverse=True
-        )[:5]
-        data['recent_applications'] = [
-            {
-                'id': app.id,
-                'title': app.job.title if getattr(app, 'job', None) else app.project.title,
-                'company': app.company.company_name,
-                'status': app.status,
-                'applied_at': app.applied_at
-            }
-            for app in recent_applications
-        ]
-        try:
-            limit_param = request.query_params.get('limit')
-            limit = int(limit_param) if limit_param is not None else 12
-        except ValueError:
-            exception_logger.error(f"Invalid 'limit' query param: Defaulting to 12.")
-            limit = 12
-        jobs_qs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
-        projects_qs = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
-        data['latest_jobs'] = JobListSerializer(jobs_qs, many=True).data
-        data['latest_projects'] = ProjectListSerializer(projects_qs, many=True).data
-        return Response(data, status=status.HTTP_200_OK)
-
-    def _update_ml_candidate_data(self, candidate_id, data):
-        """
-        Update candidate data in the ML service
-        
-        Args:
-            candidate_id: ID of the candidate to update
-            data: Dictionary containing candidate data
-            
-        Returns:
-            tuple: (success: bool, message: str, data: dict)
-        """
-        try:
-            # Get the candidate instance
-            try:
-                candidate = Candidate.objects.get(id=candidate_id)
-            except Candidate.DoesNotExist:
-                return False, f"Candidate with ID {candidate_id} not found", None
-                
-            # Prepare the ML API URL
-            base_url = settings.FLIT_AI_URL.rstrip('/')
-            update_url = f"{base_url}/update_candidate_data/{candidate_id}"
-            create_url = f"{base_url}/create_candidates/{candidate_id}"
-            
-            # Prepare the payload with candidate data
-            ml_payload = {
-                "full_name": candidate.full_name or "",
-                "title": candidate.title or "",
-                "bio": candidate.bio or "",
-                "location": candidate.location or "",
-                "work_style": candidate.work_style or "",
-                "availability_type": candidate.availability_type or "",
-                "is_available": bool(getattr(candidate, 'is_available', False)),
-                "skills": list(getattr(candidate, 'skills', []) or []),
-                "superpowers": list(getattr(candidate, 'superpowers', []) or []),
-                "preferred_roles": list(getattr(candidate, 'preferred_roles', []) or []),
-                "seniority_level": getattr(candidate, 'seniority_level', '') or "",
-                "min_salary": float(getattr(candidate, 'min_salary', 0)) if getattr(candidate, 'min_salary', None) is not None else None,
-                "max_salary": float(getattr(candidate, 'max_salary', 0)) if getattr(candidate, 'max_salary', None) is not None else None,
-                "salary_currency": getattr(candidate, 'salary_currency', 'USD'),
-                "portfolio_links": list(getattr(candidate, 'portfolio_links', []) or []),
-                "profile_visibility": getattr(candidate, 'profile_visibility', 'public'),
-                "profile_completed": bool(getattr(candidate, 'profile_completed', False)),
-                "passion_projects": str(getattr(candidate, 'passion_projects', '') or '')
-            }
-            
-            # Handle file fields - convert to string URLs if they exist
-            if hasattr(candidate, 'resume_url') and candidate.resume_url:
-                ml_payload["resume_url"] = str(candidate.resume_url)
-            else:
-                ml_payload["resume_url"] = ""
-                
-            if hasattr(candidate, 'video_intro_url') and candidate.video_intro_url:
-                ml_payload["video_intro_url"] = str(candidate.video_intro_url)
-            else:
-                ml_payload["video_intro_url"] = ""
-                
-            if hasattr(candidate, 'video_transcription') and candidate.video_transcription:
-                ml_payload["video_transcription"] = str(candidate.video_transcription)
-            else:
-                ml_payload["video_transcription"] = ""
-            
-            # Handle resume_data if it exists and is a dictionary
-            resume_data = getattr(candidate, 'resume_data', None)
-            if isinstance(resume_data, dict):
-                ml_payload["resume_data"] = resume_data
-            else:
-                ml_payload["resume_data"] = {}
-            
-            # Add user info if available
-            if hasattr(candidate, 'user') and candidate.user:
-                ml_payload["user_id"] = str(candidate.user.id)
-                ml_payload["email"] = str(candidate.user.email)
-            else:
-                ml_payload["user_id"] = None
-                ml_payload["email"] = None
-            
-            # Ensure all values are JSON serializable
-            for key, value in list(ml_payload.items()):
-                if value is None:
-                    ml_payload[key] = ""
-                elif isinstance(value, (list, dict, str, int, float, bool)):
-                    continue  # These types are JSON serializable
-                else:
-                    # Convert any other type to string
-                    ml_payload[key] = str(value)
-            
-            # Set up headers
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-            
-            # Add API key if available
-            api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            
-            # First try to update the candidate
-            response = None
-            try:
-                logger.info(f"Attempting to update candidate at: {update_url}")
-                logger.debug(f"Update payload: {json.dumps(ml_payload, indent=2, default=str)}")
-                
-                response = requests.patch(
-                    update_url,
-                    json=ml_payload,
-                    headers=headers,
-                    timeout=30
-                )
-                logger.debug(f"Update response: {response.status_code} - {response.text}")
-                
-                # If update fails with 404, try to create
-                if response.status_code == 404:
-                    logger.info(f"Update endpoint not found, trying create at: {create_url}")
-                    response = requests.post(
-                        create_url,
-                        json=ml_payload,
-                        headers=headers,
-                        timeout=30
-                    )
-                    logger.debug(f"Create response: {response.status_code} - {response.text}")
-                
-                # Check if we got a valid response
-                if response is None:
-                    error_msg = "No response received from ML service"
-                    logger.error(error_msg)
-                    return False, error_msg, None
-                
-                # Log the raw response for debugging
-                logger.debug(f"ML service response status: {response.status_code}")
-                logger.debug(f"ML service response content: {response.text}")
-                
-                # Process successful response
-                if response.status_code in (200, 201):
-                    try:
-                        response_data = response.json()
-                        logger.info(f"Successfully updated ML service for candidate {candidate_id}")
-                        return True, "Successfully updated ML service", response_data
-                    except ValueError:
-                        # If response is not JSON, return the text
-                        logger.info(f"Non-JSON response from ML service: {response.text}")
-                        return True, "Successfully updated ML service", {"response": response.text}
-                else:
-                    error_msg = f"ML service returned {response.status_code}: {response.text}"
-                    logger.error(error_msg)
-                    return False, error_msg, None
-                    
-            except requests.exceptions.RequestException as e:
-                error_msg = f"Error calling ML service: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                return False, error_msg, None
-                
-        except Exception as e:
-            error_msg = f"Error updating ML candidate data: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            return False, error_msg, None
-
-    def _parse_form_data(self, data):
-        """Helper method to parse form data"""
-        if not data:
-            return {}
-            
-        # Create a mutable copy if it's a QueryDict
-        if hasattr(data, 'copy') and not isinstance(data, dict):
-            data = data.copy()
-            
-        # Convert QueryDict to regular dict if needed
-        if hasattr(data, 'dict'):
-            data = data.dict()
-            
-        # Make sure we're working with a dictionary
-        if not isinstance(data, dict):
-            return {}
-            
-        # Create a new dictionary to store the parsed data
-        parsed_data = {}
-            
-        # Handle list fields
-        for key in ['skills', 'languages', 'preferred_locations', 'superpowers', 'preferred_roles', 'portfolio_links']:
-            if key in data:
-                value = data.get(key)
-                if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
-                    try:
-                        parsed_value = json.loads(value)
-                        parsed_data[key] = parsed_value if isinstance(parsed_value, list) else [parsed_value]
-                    except json.JSONDecodeError:
-                        exception_logger.error(f"Invalid JSON format for key '{key}' with value: {value}")
-                        parsed_data[key] = [value] if value.strip() else []
-                else:
-                    parsed_data[key] = self._parse_json_list(value)
-        
-        # Handle boolean fields
-        for key in ['is_remote', 'is_available']:
-            if key in data:
-                parsed_data[key] = self._parse_bool(data.get(key))
-        
-        # Handle numeric fields
-        for key in ['min_salary', 'max_salary']:
-            if key in data and data.get(key) not in [None, '']:
-                parsed = self._parse_int(data.get(key))
-                if parsed is not None:
-                    parsed_data[key] = parsed
-        
-        # Copy remaining fields
-        for key, value in data.items():
-            if key not in parsed_data:
-                parsed_data[key] = value
-        
-        return parsed_data
-        
-    def _parse_json_list(self, value):
-        """Parse a JSON list from string if needed"""
-        if value is None:
-            return []
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                exception_logger.error(f"Invalid JSON string encountered: {value}")
-                return [value] if value.strip() else []
-        if isinstance(value, (list, tuple)):
-            return list(value)
-        return [value]
-        
-    def _parse_bool(self, value):
-        """Parse boolean value from various formats"""
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.lower() in ('true', '1', 'yes')
-        return bool(value)
-        
-    def _parse_int(self, value):
-        """Parse integer value from string"""
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            exception_logger.error(f"Invalid integer value: {value}")
-            return None
-            
-    def _prepare_ml_data(self, candidate):
-        """Prepare candidate data for ML API update"""
-        if not candidate or not hasattr(candidate, 'user'):
-            return None
-            
-        # Handle file fields properly
-        profile_picture_url = ''
-        if hasattr(candidate, 'profile_picture') and candidate.profile_picture:
-            try:
-                profile_picture_url = candidate.profile_picture.url
-            except (ValueError, AttributeError):
-                profile_picture_url = ''
-        
-        resume_url = getattr(candidate, 'resume_url', '')
-        if hasattr(resume_url, 'url'):  # If it's a FileField/ImageField
-            try:
-                resume_url = resume_url.url
-            except (ValueError, AttributeError):
-                resume_url = ''
-            
-        return {
-            'first_name': candidate.user.first_name or '',
-            'last_name': candidate.user.last_name or '',
-            'email': getattr(candidate.user, 'email', ''),
-            'profile_data': {
-                'headline': getattr(candidate, 'headline', '') or '',
-                'summary': getattr(candidate, 'summary', '') or '',
-                'skills': [skill.name for skill in getattr(candidate, 'skills', []) if hasattr(skill, 'name')],
-                'resume_url': resume_url or '',
-                'profile_picture': profile_picture_url,
-                'work_experience': [
-                    {
-                        'title': getattr(exp, 'title', ''),
-                        'company': getattr(exp, 'company', ''),
-                        'description': getattr(exp, 'description', ''),
-                        'start_date': exp.start_date.isoformat() if hasattr(exp, 'start_date') and exp.start_date else None,
-                        'end_date': exp.end_date.isoformat() if hasattr(exp, 'end_date') and exp.end_date else None,
-                        'is_current': getattr(exp, 'is_current', False)
-                    } for exp in getattr(candidate, 'work_experiences', []).all() if hasattr(candidate, 'work_experiences')
-                ] if hasattr(candidate, 'work_experiences') else [],
-                'education': [
-                    {
-                        'degree': getattr(edu, 'degree', ''),
-                        'field_of_study': getattr(edu, 'field_of_study', ''),
-                        'institution': getattr(edu, 'institution', ''),
-                        'start_date': edu.start_date.isoformat() if hasattr(edu, 'start_date') and edu.start_date else None,
-                        'end_date': edu.end_date.isoformat() if hasattr(edu, 'end_date') and edu.end_date else None
-                    } for edu in getattr(candidate, 'educations', []).all() if hasattr(candidate, 'educations')
-                ] if hasattr(candidate, 'educations') else []
-            }
-        }
-        
-    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=False, methods=['get', 'put', 'patch'], url_path='profile')
     def profile(self, request):
-        """
-        Retrieve or update the current candidate's profile.
-        """
-        # Get or create candidate profile
-        candidate = self._get_candidate_profile(request.user)
-        if isinstance(candidate, Response):
-            return candidate
-            
+        candidate = self.get_candidate()
         if request.method == 'GET':
-            serializer = self.get_serializer(candidate)
-            return Response(serializer.data)
-            
-        # Parse the request data to handle JSON fields and other special types
-        data = self._parse_form_data(request.data)
-        
-        # Create a new dictionary for the final data
-        final_data = {}
-        
-        # Copy all non-file data from parsed data
-        for key, value in data.items():
-            if key not in request.FILES:  # Skip file fields
-                final_data[key] = value
-        
-        # Handle file uploads - The model's FileField will use the validators automatically
-        if 'profile_image' in request.FILES:
-            candidate.profile_image = request.FILES['profile_image']
-            candidate.save(update_fields=['profile_image'])
-            logger.info(f"Successfully saved profile image for candidate {candidate.id}")
-            
-        # Handle resume file upload
-        # if 'resume_file' in request.FILES or 'resume' in request.FILES:
-        #     resume_file = request.FILES.get('resume_file') or request.FILES.get('resume')
-        #     candidate.resume_url = resume_file
-        #     candidate.portfolio_completed = True
-        #     candidate.save(update_fields=['resume_url', 'portfolio_completed'])
-        #     logger.info(f"Successfully saved resume file for candidate {candidate.id}")
+            logger.info(f"Profile GET request for candidate {candidate.id}")
+            return Response(CandidateSerializer(candidate, context={'request': request}).data)
 
-        # Handle resume file upload
-       # Handle resume file upload
-        if 'resume_file' in request.FILES or 'resume' in request.FILES:
+        logger.info(f"Profile UPDATE started for candidate {candidate.id} by user {request.user.id}")
 
-            resume_file = request.FILES.get('resume_file') or request.FILES.get('resume')
-            
-            # Save file first
-            storage_path = self._save_file(resume_file, 'candidates/resumes', request)
-            if storage_path:
-                old_resume_url = candidate.resume_url
-                candidate.resume_url = storage_path
-                candidate.portfolio_completed = True
-                candidate.save(update_fields=['resume_url', 'portfolio_completed', 'updated_at'])
-                logger.info(f"Successfully saved resume file for candidate {candidate.id}")
+        data = request.data.dict()
+        files = request.FILES
+        updated_fields = ['updated_at']
 
-                # ========== IMPROVED PARSING WITH BETTER LOGGING & FILE HANDLING ==========
-                try:
-                    ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
-                    logger.info(f"Starting resume parsing for candidate {candidate.id} via {ml_api_url}")
-
-                    # CRITICAL FIX: Re-read file from beginning using InMemoryUploadedFile or TemporaryUploadedFile
-                    resume_file.seek(0)  # Reset pointer
-                    file_content = resume_file.read()  # Read full content
-                    
-                    if not file_content:
-                        logger.error("Resume file is empty after reading – cannot send to ML API")
-                    else:
-                        logger.info(f"Resume file size: {len(file_content)} bytes, name: {resume_file.name}")
-
-                    files = {
-                                'resume_file': (resume_file.name, io.BytesIO(file_content), resume_file.content_type)
-                            }
-
-                    ml_response = requests.post(ml_api_url, files=files, timeout=90)
-
-                    logger.info(f"ML /parse_cv response status: {ml_response.status_code}")
-                    logger.info(f"ML /parse_cv response body: {ml_response.text[:1000]}")  # First 1000 chars
-
-                    if ml_response.status_code == 200:
-                        try:
-                            ml_data = ml_response.json()
-                            logger.info(f"Parsed ML response: {ml_data}")
-
-                            if ml_data.get('success'):
-                                parsed_resume_data = ml_data.get('data', {})
-                                if parsed_resume_data:
-                                    candidate.resume_data = parsed_resume_data
-                                    candidate.save(update_fields=['resume_data', 'updated_at'])
-                                    logger.info(f"SUCCESS: Saved resume_data with {len(parsed_resume_data)} keys: {list(parsed_resume_data.keys())}")
-                                else:
-                                    logger.warning("ML returned success=True but data is empty")
-                            else:
-                                error_msg = ml_data.get('message') or ml_data.get('error') or 'Unknown error'
-                                logger.warning(f"ML parse failed (success=False): {error_msg}")
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Invalid JSON from ML /parse_cv: {str(e)} - Response: {ml_response.text[:500]}")
-                    else:
-                        logger.error(f"ML /parse_cv HTTP error {ml_response.status_code}: {ml_response.text[:500]}")
-
-                except Exception as e:
-                    logger.error(f"Exception during resume parsing: {str(e)}", exc_info=True)
-                # ============================================================================
-                    
-        # Handle video intro upload
-        if 'video_file' in request.FILES:
-            candidate.video_intro_url = request.FILES['video_file']
-            candidate.portfolio_completed = True
-            candidate.save(update_fields=['video_intro_url', 'portfolio_completed'])
-            logger.info(f"Successfully saved video intro for candidate {candidate.id}")
-            
-        logger.info(f"Data being passed to serializer: {final_data}")
-        
-        # Check which sections are being updated and update completion flags
-        if 'full_name' in final_data or 'title' in final_data or 'bio' in final_data or 'location' in final_data:
-            candidate.basic_info_completed = True
-        
-        if 'work_style' in final_data or 'availability_type' in final_data or 'is_available' in final_data:
-            candidate.work_preferences_completed = True
-            
-        if 'skills' in final_data or 'superpowers' in final_data or 'preferred_roles' in final_data:
-            candidate.skills_completed = True
-            
-        if 'portfolio_links' in final_data or 'resume_url' in final_data or 'video_intro_url' in final_data:
-            candidate.portfolio_completed = True
-            
-        if 'profile_visibility' in final_data or 'video_visibility' in final_data or 'contact_visibility' in final_data or 'salary_visibility' in final_data:
-            candidate.privacy_completed = True
-        
-        # Update the candidate instance with the new data
-        for key, value in final_data.items():
-            if hasattr(candidate, key):
-                setattr(candidate, key, value)
-        
-        # Save the candidate instance
-        candidate.save()
-        
-        # Get the updated data using the serializer
-        serializer = self.get_serializer(candidate)
-        
-        # Initialize response data with updated candidate data
-        response_data = serializer.data
-        
-        # Update ML service
-        ml_success = False
-        ml_message = 'ML service not called'
-        
-        try:
-            ml_data = self._prepare_ml_data(candidate)
-            if ml_data:
-                ml_success, ml_message, _ = self._update_ml_candidate_data(candidate.id, ml_data)
-        except Exception as e:
-            exception_logger.exception("Error updating ML service")
-            logger.error(f"Error updating ML service: {str(e)}")
-            ml_success = False
-            ml_message = f"Error updating ML service: {str(e)}"
-        
-        # Add ML API status to the response
-        if isinstance(response_data, dict):
-            response_data['ml_api_status'] = {
-                'success': ml_success,
-                'message': ml_message
-            }
-        
-        # Clear prefetch cache if it exists
-        if getattr(candidate, '_prefetched_objects_cache', None):
-            candidate._prefetched_objects_cache = {}
-            
-        # Handle video file upload and analysis
-        video_file = request.FILES.get('video_file')
-        if video_file:
-            try:
-                analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
-                headers = {}
-                api_key = getattr(settings, 'ML_API_KEY', None) or os.environ.get('ML_API_KEY')
-                if api_key:
-                    headers['Authorization'] = f'Bearer {api_key}'
-                    
-                # Save video file
-                video_url = self._save_file(video_file, 'candidates/videos', request)
-                if video_url:
-                    # Update candidate's video URL
-                    candidate.video_intro_url = video_url
-                    candidate.save(update_fields=['video_intro_url'])
-                    
-                    # Prepare video data for analysis
-                    video_file.seek(0)
-                    video_content = video_file.read()
-                    files = {
-                        'video_file': (video_file.name, video_content, video_file.content_type)
-                    }
-                    
-                    data_payload = {
-                        'user_id': str(getattr(request.user, 'id', '')),
-                        'video_url': request.build_absolute_uri(candidate.video_intro_url)
-                    }
-                    
-                    # Send video for analysis
-                    try:
-                        resp = requests.post(analyze_url, files=files, data=data_payload, headers=headers, timeout=60)
-                        if resp and resp.ok:
-                            resp_json = resp.json()
-                            analysis = resp_json.get('analysis', {})
-                            transcription = analysis.get('video_transcript')
-                            if transcription:
-                                update_fields = ['updated_at', 'video_transcription']
-                                candidate.video_transcription = transcription
-                                candidate.intro_video_description = analysis.get('description')
-                                update_fields.append('intro_video_description')
-                                candidate.save(update_fields=update_fields)
-                                
-                                # Update response with video analysis status
-                                if isinstance(response_data, dict):
-                                    if 'video_analysis' not in response_data:
-                                        response_data['video_analysis'] = {}
-                                    response_data['video_analysis'].update({
-                                        'status': 'success',
-                                        'has_transcription': bool(transcription)
-                                    })
-                    except Exception as e:
-                        exception_logger.exception("Error during video analysis")
-                        logger.error(f"Error during video analysis: {str(e)}")
-                        if isinstance(response_data, dict):
-                            if 'video_analysis' not in response_data:
-                                response_data['video_analysis'] = {}
-                            response_data['video_analysis'].update({
-                                'status': 'error',
-                                'message': str(e)
-                            })
-            except Exception as e:
-                exception_logger.exception("Error processing video file")
-                logger.error(f"Error processing video file: {str(e)}")
-                if isinstance(response_data, dict):
-                    if 'video_analysis' not in response_data:
-                        response_data['video_analysis'] = {}
-                    response_data['video_analysis'].update({
-                        'status': 'error',
-                        'message': f"Failed to process video: {str(e)}"
-                    })
-        
-        return Response(response_data, status=status.HTTP_200_OK)
-
-    def _match_candidates(self, search_text, seniority_list, job_types_list):
-        sent_payload = {
-            'search_text': search_text,
-            'seniority_list': seniority_list or [],
-            'job_types_list': job_types_list or []
-        }
-        payload = {
-            'search_text': search_text,
-            'filters': {}
-        }
-        if seniority_list:
-            payload['filters']['seniority'] = seniority_list
-        if job_types_list:
-            payload['filters']['job_types'] = job_types_list
-        success = False
-        ml_resp = {}
-        matched_qs = Candidate.objects.none()
-        try:
-            ml_service_url = f"{settings.FLIT_AI_URL}/get_candidates_for_job"
-            headers = {'Content-Type': 'application/json'}
-            response = requests.post(ml_service_url, data=json.dumps(payload), headers=headers)
-            ml_resp = response.json()
-            success = response.status_code == 200
-            matched_candidate_ids = []
-            if success and 'matches' in ml_resp:
-                matched_candidate_ids = [match.get('candidate_id') for match in ml_resp['matches'] if match.get('candidate_id')]
-            base_qs = Candidate.objects.filter(profile_visibility="public")
-            if matched_candidate_ids:
-                preserved = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(matched_candidate_ids)])
-                matched_qs = base_qs.filter(id__in=matched_candidate_ids).order_by(preserved)
-            else:
-                matched_qs = base_qs.filter(
-                    Q(title__icontains=search_text) |
-                    Q(skills__icontains=search_text) |
-                    Q(bio__icontains=search_text) |
-                    Q(experience__description__icontains=search_text)
-                ).distinct()
-        except Exception as e:
-            exception_logger.exception("Error calling ML service")
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error calling ML service: {str(e)}")
-            matched_qs = Candidate.objects.filter(profile_visibility="public").filter(
-                Q(title__icontains=search_text) |
-                Q(skills__icontains=search_text) |
-                Q(bio__icontains=search_text) |
-                Q(experience__description__icontains=search_text)
-            ).distinct()
-            ml_resp = {'error': str(e)}
-        return matched_qs, success, ml_resp, sent_payload
-
-    @action(detail=False, methods=['get', 'post'], url_path='match', permission_classes=[permissions.AllowAny])
-    def match(self, request):
-        if request.method.lower() == 'get':
-            search_text = request.query_params.get('search_text') or request.query_params.get('title') or request.query_params.get('q')
-            seniority_list = request.query_params.getlist('seniority_list') or None
-            job_types_list = request.query_params.getlist('job_types_list') or None
-        else:
-            data = request.data or {}
-            search_text = data.get('search_text') or data.get('title')
-            seniority_list = data.get('seniority_list')
-            job_types_list = data.get('job_types_list')
-            if not search_text:
-                search_text = request.query_params.get('search_text') or request.query_params.get('title') or request.query_params.get('q')
-            if not seniority_list:
-                seniority_list = request.query_params.getlist('seniority_list') or None
-            if not job_types_list:
-                job_types_list = request.query_params.getlist('job_types_list') or None
-        if not search_text:
-            return Response({'error': 'search_text or title is required'}, status=status.HTTP_400_BAD_REQUEST)
-        matched_qs, success, ml_resp, sent_payload = self._match_candidates(search_text, seniority_list, job_types_list)
-        if matched_qs.count() == 0:
-            matched_qs = Candidate.objects.filter(profile_visibility="public", title__icontains=search_text)
-        serializer = CandidateListSerializer(matched_qs, many=True)
-        response_data = {
-            'results': serializer.data,
-            'ml_success': success,
-        }
-        debug_flag = request.query_params.get('ml_debug') or (request.data.get('ml_debug') if hasattr(request, 'data') else None)
-        ml_debug = str(debug_flag).lower() in ['1', 'true', 'yes'] if debug_flag is not None else False
-        if ml_debug:
-            response_data['ml_response'] = ml_resp
-            response_data['ml_payload'] = sent_payload
-        return Response(response_data, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='companies/openings')
-    def companies_with_openings(self, request):
-        q = request.query_params.get('q', '').strip()
-        industry = request.query_params.get('industry')
-        company_id = request.query_params.get('company_id')
-        companies_qs = Company.objects.filter(is_active=True)
-        if industry:
-            companies_qs = companies_qs.filter(industry__iexact=industry)
-        if q:
-            companies_qs = companies_qs.filter(
-                Q(company_name__icontains=q) | Q(industry__icontains=q) | Q(location__icontains=q)
-            )
-        user = request.user if hasattr(request, 'user') else None
-        if getattr(user, 'is_authenticated', False):
-            role = getattr(getattr(user, 'role', None), 'name', None)
-            if role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
-                try:
-                    employer = user.employer_profile
-                    if employer.company_id:
-                        companies_qs = companies_qs.filter(id=employer.company_id)
-                    else:
-                        companies_qs = Company.objects.none()
-                except Employer.DoesNotExist:
-                    exception_logger.error("Employer.DoesNotExist: Employer not found while fetching companies")
-                    companies_qs = Company.objects.none()
-        companies_qs = companies_qs.distinct().order_by('-created_at')
-        serializer = CompanyWithOpeningsSerializer(companies_qs, many=True, context={'request': request})
-        return Response({
-            'count': companies_qs.count(),
-            'results': serializer.data
-        }, status=status.HTTP_200_OK)
-
-    def _get_clean_url(self, file_field):
-        """Helper method to get clean URL from a FileField"""
-        if not file_field:
+        # ====================== HELPERS ======================
+        def to_boolean(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                cleaned = value.strip().lower().replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+                if cleaned in ('true', '1', 'yes', 'on', 't', '"true"', "'true'"):
+                    return True
+                if cleaned in ('false', '0', 'no', 'off', 'f', '"false"', "'false'"):
+                    return False
+            logger.warning(f"Invalid boolean value received: {value}")
             return None
-        
-        # Get the storage-relative path
-        path = file_field.name
-        
-        # If using S3Boto3Storage, we need to handle the URL generation differently
-        if hasattr(file_field.storage, 'bucket_name'):
-            # For S3, use the storage's url method to generate the correct URL
-            # This handles all the URL encoding properly
-            return file_field.storage.url(path)
-        
-        # For default storage, use the storage's url method
-        return file_field.storage.url(path)
 
-    @action(detail=False, methods=['post'], url_path='upload-resume', permission_classes=[permissions.IsAuthenticated])
-    def upload_resume(self, request):
-        """
-        Handle resume file upload, save to resume_url field, and parse using ML API
-        """
-        candidate = self._get_candidate_profile(request.user)
-        if isinstance(candidate, Response):
-            return candidate
-            
-        # Check if file is present in the request
-        if 'resume' not in request.FILES:
-            return Response(
-                {"error": "No resume file provided"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        resume_file = request.FILES['resume']
-        
-        try:
-            # Save the resume file using our _save_file method
-            storage_path = self._save_file(resume_file, 'candidates/resumes', request)
-            if not storage_path:
-                return Response(
-                    {"error": "Failed to save resume file"}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Update the resume_url in the candidate model
-            candidate.resume_url = storage_path
-            candidate.save(update_fields=['resume_url', 'updated_at'])
-            
-            # Save the resume file temporarily for ML API processing
-            temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_resumes')
-            os.makedirs(temp_dir, exist_ok=True)
-            temp_path = os.path.join(temp_dir, resume_file.name)
-            
-            with open(temp_path, 'wb+') as destination:
-                for chunk in resume_file.chunks():
-                    destination.write(chunk)
-            
-            # Call the ML API to parse the resume
-            ml_api_url = f"{settings.FLIT_AI_URL}/parse_cv"
-            logger.info(f"Sending resume to ML API at {ml_api_url}")
-            
-            with open(temp_path, 'rb') as f:
-                files = {'file': (resume_file.name, f, resume_file.content_type)}
-                response = requests.post(ml_api_url, files=files)
-                logger.info(f"ML API response status: {response.status_code}")
-                logger.info(f"ML API response content: {response.text[:500]}...")  # Log first 500 chars of response
-            
-            # Remove the temporary file
-            try:
-                os.remove(temp_path)
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary file {temp_path}: {str(e)}")
-            
-            if response.status_code != 200:
-                logger.error(f"Failed to parse resume. Status: {response.status_code}, Response: {response.text}")
-                return Response(
-                    {
-                        "error": "Failed to parse resume using ML service", 
-                        "status_code": response.status_code,
-                        "resume_url": self._get_clean_url(candidate.resume_url)
-                    }, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            try:
-                data = response.json()
-                logger.info(f"Raw ML API response: {json.dumps(data, indent=2)[:1000]}...")  # Log first 1000 chars
-                
-                # Debug: Log the type and structure of the response
-                logger.info(f"Response type: {type(data).__name__}")
-                if isinstance(data, dict):
-                    logger.info(f"Response keys: {list(data.keys())}")
-                    if 'data' in data:
-                        logger.info(f"Data type: {type(data['data']).__name__}")
-                        if isinstance(data['data'], dict):
-                            logger.info(f"Data keys: {list(data['data'].keys())}")
-                
-                # Log the full response for debugging
-                logger.info(f"Full ML API response: {json.dumps(data, indent=2, default=str)[:2000]}...")
-                
-                # Check if the response has the expected structure
-                if not data.get('success', False):
-                    error_msg = data.get('message', 'Unknown error from ML service')
-                    logger.error(f"ML service returned error: {error_msg}")
-                    return Response(
-                        {
-                            "error": "Failed to parse resume", 
-                            "details": error_msg,
-                            "resume_url": self._get_clean_url(candidate.resume_url)
-                        }, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Update the resume_data field with parsed data
-                resume_data = data.get('data', {})
-                logger.info(f"Extracted resume data: {json.dumps(resume_data, indent=2, default=str)[:1000]}...")
-                
-                if not resume_data:
-                    logger.warning("No resume data found in ML API response")
-                    resume_data = {}  # Ensure it's a dictionary even if empty
-                
-                # Update the candidate with the resume data
-                logger.info(f"Current candidate resume_data before update: {candidate.resume_data}")
-                
-                # Ensure resume_data is a dictionary
-                if not isinstance(resume_data, dict):
-                    logger.warning(f"resume_data is not a dictionary: {type(resume_data).__name__}")
-                    resume_data = {'raw_data': resume_data}  # Wrap in a dictionary if it's not already one
-                
-                # Update the candidate's resume_data field
-                candidate.resume_data = resume_data
-                
+        def parse_json_list(value):
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str):
                 try:
-                    # Save the candidate with the updated resume_data
-                    candidate.save(update_fields=['resume_data', 'updated_at'])
-                    logger.info(f"Successfully saved resume data to candidate {candidate.id}")
-                    
-                    # Verify the data was saved
-                    candidate.refresh_from_db()
-                    logger.info(f"Verified resume_data after save: {candidate.resume_data is not None}")
-                    if candidate.resume_data is None:
-                        logger.error("resume_data is still None after save")
-                    else:
-                        logger.info(f"resume_data content: {json.dumps(candidate.resume_data, indent=2, default=str)[:1000]}...")
-                except Exception as save_error:
-                    logger.error(f"Error saving resume data: {str(save_error)}", exc_info=True)
-                    # Try a full save if the partial save fails
-                    try:
-                        candidate.save()
-                        logger.info("Successfully saved candidate with full save")
-                    except Exception as full_save_error:
-                        logger.error(f"Full save also failed: {str(full_save_error)}", exc_info=True)
-                        raise
-                
-                # Get the URL and ensure it's not double-encoded
-                resume_url = None
-                if candidate.resume_url:
-                    # If the URL is already absolute, use it as is
-                    if candidate.resume_url.url.startswith(('http://', 'https://')):
-                        resume_url = candidate.resume_url.url
-                    else:
-                        # Otherwise, build the URL manually to prevent double encoding
-                        from django.core.files.storage import default_storage
-                        resume_url = default_storage.url(candidate.resume_url.name)
-                
-                return Response({
-                    "success": True,
-                    "message": "Resume uploaded and parsed successfully",
-                    "resume_url": resume_url,
-                    "resume_data": candidate.resume_data
-                }, status=status.HTTP_200_OK)
-                
-            except ValueError as e:
-                logger.error(f"Failed to parse JSON response from ML service: {str(e)}")
-                return Response(
-                    {
-                        "error": "Invalid response from resume parsing service",
-                        "resume_url": self._get_clean_url(candidate.resume_url)
-                    }, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return [parsed]
+                except json.JSONDecodeError:
+                    logger.warning(f"JSON parse failed for list field, fallback parsing: {value}")
+                    cleaned = value.strip()
+                    if cleaned.startswith('[') and cleaned.endswith(']'):
+                        cleaned = cleaned[1:-1]
+                    items = [item.strip().strip('"').strip("'") for item in cleaned.split(',') if item.strip()]
+                    return items if items else []
+            return []
+
+        def get_file_url(field):
+            if field and hasattr(field, 'url'):
+                try:
+                    return request.build_absolute_uri(field.url)
+                except:
+                    return field.url if field.url else ""
+            return ""
+
+        def delete_old_file(old_field):
+            if old_field and hasattr(old_field, 'name') and old_field.name:
+                try:
+                    if default_storage.exists(old_field.name):
+                        default_storage.delete(old_field.name)
+                        logger.info(f"Deleted old file from S3: {old_field.name}")
+                except Exception as e:
+                    logger.error(f"Failed to delete old file {old_field.name}: {e}")
+
+        list_fields = ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']
+        boolean_fields = ['is_available']
+
+        # ====================== FILE UPLOADS WITH DELETE OLD ======================
+        if 'profile_image' in files:
+            if candidate.profile_image:
+                delete_old_file(candidate.profile_image)
+            candidate.profile_image = files['profile_image']
+            updated_fields.append('profile_image')
+            logger.info("New profile image uploaded (old deleted)")
+
+        if 'resume_file' in files or 'resume' in files:
+            resume_file = files.get('resume_file') or files.get('resume')
+            if candidate.resume_url:
+                delete_old_file(candidate.resume_url)
             
-        except Exception as e:
-            logger.error(f"Error processing resume: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    "error": f"Failed to process resume: {str(e)}",
-                    "resume_url": self._get_clean_url(candidate.resume_url) if hasattr(candidate, 'resume_url') and candidate.resume_url else None
-                }, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            path = self._save_file(resume_file, resume_upload_path)
+            if path:
+                candidate.resume_url = path
+                candidate.portfolio_completed = True
+                updated_fields.extend(['resume_url', 'portfolio_completed'])
+                logger.info(f"New resume uploaded: {path} (old deleted)")
 
-    @action(detail=False, methods=['post'], url_path='profile/complete/(?P<section>[^/.]+)', permission_classes=[permissions.IsAuthenticated])
-    def complete_profile_section(self, request, section=None):
-        candidate = self._get_candidate_profile(request.user)
-        if isinstance(candidate, Response):
-            return candidate
-        section_fields = {
-            'basic_info': 'basic_info_completed',
-            'work_preferences': 'work_preferences_completed',
-            'skills': 'skills_completed',
-            'portfolio': 'portfolio_completed',
-            'privacy': 'privacy_completed',
-        }
-        if section not in section_fields:
-            return Response({'error': 'Invalid section'}, status=status.HTTP_400_BAD_REQUEST)
-        setattr(candidate, section_fields[section], True)
-        candidate.save()
+                try:
+                    resume_file.seek(0)
+                    files_ml = {'resume_file': (resume_file.name, io.BytesIO(resume_file.read()), resume_file.content_type)}
+                    parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
+                    logger.info(f"Calling ML parse_cv: {parse_url}")
+                    resp = requests.post(parse_url, files=files_ml)  # No timeout
+                    logger.info(f"ML parse_cv response: {resp.status_code}")
+
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        if result.get('success'):
+                            candidate.resume_data = result.get('data', {})
+                            updated_fields.append('resume_data')
+                            logger.info("Resume parsed successfully")
+                        else:
+                            logger.warning(f"ML parse_cv failed: {result.get('message')}")
+                    else:
+                        logger.error(f"ML parse_cv failed: {resp.status_code}")
+                except Exception as e:
+                    logger.error(f"Resume parsing exception: {e}", exc_info=True)
+
+        if 'video_file' in files:
+            video_file = files['video_file']
+            if candidate.video_intro_url:
+                delete_old_file(candidate.video_intro_url)
+            
+            path = self._save_file(video_file, video_upload_path)
+            if path:
+                candidate.video_intro_url = path
+                candidate.portfolio_completed = True
+                updated_fields.extend(['video_intro_url', 'portfolio_completed'])
+                logger.info(f"New video uploaded: {path} (old deleted)")
+
+                try:
+                    video_file.seek(0)
+                    analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
+                    logger.info(f"Calling ML video analysis: {analyze_url}")
+
+                    files_video = {'video_file': (video_file.name, io.BytesIO(video_file.read()), video_file.content_type)}
+                    video_payload = {
+                        'user_id': str(request.user.id),
+                        'candidate_id': str(candidate.id),
+                        'video_url': request.build_absolute_uri(path)
+                    }
+                    headers = {}
+                    if hasattr(settings, 'ML_API_KEY'):
+                        headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+
+                    resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers)  # No timeout
+                    logger.info(f"ML video analysis response: {resp.status_code}")
+
+                    if resp.status_code == 200:
+                        analysis = resp.json().get('analysis', {})
+                        if transcription := analysis.get('video_transcript'):
+                            candidate.video_transcription = transcription
+                            updated_fields.append('video_transcription')
+                        if description := analysis.get('description'):
+                            candidate.intro_video_description = description
+                            updated_fields.append('intro_video_description')
+                        logger.info("Video analysis completed")
+                    else:
+                        logger.error(f"ML video analysis failed: {resp.status_code}")
+                except Exception as e:
+                    logger.error(f"Video analysis exception: {e}", exc_info=True)
+
+        # ====================== TEXT & LIST FIELDS ======================
+        text_fields = [
+            'full_name', 'title', 'bio', 'location', 'work_style', 'availability_type', 'is_available',
+            'skills', 'superpowers', 'preferred_roles', 'portfolio_links', 'profile_visibility',
+            'min_salary', 'max_salary', 'seniority_level', 'passion_projects'
+        ]
+
+        for field in text_fields:
+            if field in data:
+                value = data[field]
+
+                if field in list_fields:
+                    cleaned = parse_json_list(value)
+                    setattr(candidate, field, cleaned)
+                    updated_fields.append(field)
+                    logger.info(f"{field} updated: {cleaned}")
+
+                elif field in boolean_fields:
+                    converted = to_boolean(value)
+                    if converted is not None:
+                        setattr(candidate, field, converted)
+                        updated_fields.append(field)
+                    else:
+                        logger.warning(f"Skipped invalid boolean for {field}")
+
+                else:
+                    if field in ['min_salary', 'max_salary']:
+                        try:
+                            value = float(value) if value is not None and '.' in str(value) else int(value) if value else None
+                        except:
+                            value = None
+                    setattr(candidate, field, value)
+                    updated_fields.append(field)
+
+        # Completion flags
+        if any(k in data for k in ['full_name', 'title', 'bio', 'location']):
+            candidate.basic_info_completed = True
+        if any(k in data for k in ['work_style', 'availability_type', 'is_available']):
+            candidate.work_preferences_completed = True
+        if any(k in data for k in ['skills', 'superpowers', 'preferred_roles']):
+            candidate.skills_completed = True
+        if files or 'portfolio_links' in data:
+            candidate.portfolio_completed = True
+        if any(k in data for k in ['profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility']):
+            candidate.privacy_completed = True
+
+        candidate.save(update_fields=list(set(updated_fields)))
+        logger.info(f"Database save completed for candidate {candidate.id}")
+
+        # ====================== ML Sync (No timeout + Safe ml_success) ======================
+        ml_success = True
+        ml_message = "All ML APIs (parse_cv, video analysis, candidate sync) successfully executed"
+
         try:
-            user = candidate.user
-            if candidate.is_profile_complete != getattr(user, 'profile_completed', False):
-                user.profile_completed = candidate.is_profile_complete
-                user.save(update_fields=['profile_completed'])
-        except Exception:
-            exception_logger.exception("Error syncing profile_completed flag for candidate")
-            pass
-        return Response({
-            'message': f'{section} section marked as complete',
-            'profile_completed': candidate.is_profile_complete
-        }, status=status.HTTP_200_OK)
+            ml_payload = {
+                "full_name": candidate.full_name or "",
+                "title": candidate.title or "",
+                "bio": candidate.bio or "",
+                "location": candidate.location or "",
+                "work_style": candidate.work_style or "",
+                "skills": candidate.skills or [],
+                "superpowers": candidate.superpowers or [],
+                "preferred_roles": candidate.preferred_roles or [],
+                "is_available": candidate.is_available or False,
+                "min_salary": candidate.min_salary if candidate.min_salary is not None else None,
+                "max_salary": candidate.max_salary if candidate.max_salary is not None else None,
+                "seniority_level": candidate.seniority_level or "",
+                "passion_projects": candidate.passion_projects or "",
+                "resume_url": get_file_url(candidate.resume_url),
+                "video_intro_url": get_file_url(candidate.video_intro_url),
+                "resume_data": candidate.resume_data or {},
+                "user_id": str(candidate.user.id),
+                "email": candidate.user.email or "",
+            }
 
-class WorkDNAQuestionView(APIView):
-    """
-    View to handle work DNA questions and answers
-    """
+            headers = {"Content-Type": "application/json"}
+            if hasattr(settings, 'ML_API_KEY'):
+                headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+
+            update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate.id}"
+            create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
+
+            logger.info(f"Attempting ML sync for candidate {candidate.id}")
+            resp = requests.patch(update_url, json=ml_payload, headers=headers)  # No timeout
+
+            if resp.status_code == 404:
+                logger.info("Creating new candidate in ML")
+                resp = requests.post(create_url, json=ml_payload, headers=headers)  # No timeout
+
+            if resp.status_code not in (200, 201):
+                ml_success = False
+                ml_message = f"ML sync failed: HTTP {resp.status_code}"
+                logger.error(f"ML sync failed: {resp.status_code} - {resp.text[:500]}")
+            else:
+                logger.info(f"ML sync successful ({resp.status_code})")
+                ml_data = resp.json()
+                extra_saved = False
+                if ml_data.get('candidate_profile_summary'):
+                    candidate.candidate_profile_summary = ml_data['candidate_profile_summary']
+                    extra_saved = True
+                if ml_data.get('candidate_tags'):
+                    candidate.candidate_tags = ml_data['candidate_tags']
+                    extra_saved = True
+                if extra_saved:
+                    candidate.save(update_fields=['candidate_profile_summary', 'candidate_tags', 'updated_at'])
+
+        except Exception as e:
+            ml_success = False
+            ml_message = "ML sync failed due to exception"
+            logger.error(f"ML sync exception: {e}", exc_info=True)
+
+        logger.info(f"Profile update fully completed for candidate {candidate.id}")
+
+        # Final Response
+        response_data = CandidateSerializer(candidate, context={'request': request}).data
+        response_data['ml_success'] = ml_success
+        response_data['ml_message'] = ml_message
+
+        return Response(response_data)
+
+# Work DNA
+class WorkDNAQuestionView(CandidateAccessMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
-    
-    def get_permissions(self):
-        """
-        Instantiates and returns the list of permissions that this view requires.
-        For evaluate_answers, only allow candidate access.
-        """
-        if self.request.method == 'GET' and 'candidate_id' in self.kwargs:
-            # For evaluation endpoint, only allow the candidate to access their own evaluation
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated()]
-    
-    def get(self, request, candidate_id=None):
-        """
-        Get work DNA questions for the authenticated candidate
-        If no questions exist, fetch them from the ML API
-        Response includes questions and any existing answers
-        
-        If candidate_id is provided in the URL, it's an evaluation request
-        """
-        try:
-            # If candidate_id is provided in URL, handle evaluation
-            if candidate_id is not None:
-                return self.evaluate_answers(request, candidate_id)
-                
-            # Otherwise, handle normal questions retrieval
-            candidate = request.user.candidate_profile
-            
-            # Check if questions exist for this candidate
-            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
-            
-            if work_dna_question:
-                serializer = WorkDNAQuestionSerializer(work_dna_question)
-                return Response(serializer.data)
-            
-            # If no questions exist, fetch from ML API
-            return self.fetch_work_dna_questions(candidate)
-            
-        except Exception as e:
-            exception_logger.exception("Unhandled error in get() while fetching work DNA questions")
-            return Response(
-                {'error': f'An error occurred: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    def post(self, request):
-        """
-        Submit answers to work DNA questions
-        Expected request data format:
-        {
-            "answers": {
-                "1": "answer text for question 1",
-                "2": "answer text for question 2"
-            }
-        }
-        """
-        try:
-            candidate = request.user.candidate_profile
-            answers = request.data.get('answers', {})
-            
-            if not isinstance(answers, dict):
-                return Response(
-                    {'error': 'Answers must be a dictionary with question IDs as keys'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Get work DNA question record
-            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
-            
-            if not work_dna_question:
-                return Response(
-                    {'error': 'No work DNA questions found. Please fetch questions first.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get the current questions and answers
-            current_questions = work_dna_question.questions
-            current_answers = work_dna_question.answers or {}
-            
-            # Update answers with the new ones
-            for question_id, answer in answers.items():
-                if question_id.isdigit() and int(question_id) <= len(current_questions):
-                    # Use the question text as the key in the answers dictionary
-                    question_text = current_questions[int(question_id) - 1].get('question', f'Question {question_id}')
-                    current_answers[question_text] = answer
-                    # Also keep the numeric key for backward compatibility
-                    current_answers[question_id] = answer
-            
-            # Remove any old numeric keys to prevent duplicates
-            for key in list(current_answers.keys()):
-                if str(key).isdigit():
-                    del current_answers[key]
-            
-            # Save the updated answers
-            work_dna_question.answers = current_answers
-            work_dna_question.save()
-            
-            # Return the updated record with questions and answers
-            response_data = {
-                'id': work_dna_question.id,
-                'candidate': work_dna_question.candidate.id,
-                'questions': current_questions,
-                'answers': current_answers,
-                'created_at': work_dna_question.created_at,
-                'updated_at': work_dna_question.updated_at
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            exception_logger.exception("Error while saving Work DNA answers")
-            return Response(
-                {'error': f'An error occurred while saving answers: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def evaluate_answers(self, request, candidate_id):
-        """
-        Evaluate work DNA answers by calling the ML API
-        """
-        try:
-            # Get the candidate
-            try:
-                candidate = Candidate.objects.get(id=candidate_id)
-            except Candidate.DoesNotExist:
-                logger.error(f"Candidate with ID {candidate_id} not found")
-                return Response(
-                    {'error': 'Candidate not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get the work DNA question record
-            work_dna_question = WorkDNAQuestion.objects.filter(candidate=candidate).first()
-            
-            if not work_dna_question:
-                logger.error(f"No work DNA questions found for candidate {candidate_id}")
-                return Response(
-                    {'error': 'No work DNA questions found'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            if not work_dna_question.answers:
-                logger.error(f"No answers found for candidate {candidate_id}")
-                return Response(
-                    {'error': 'No answers found for evaluation'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            try:
-                # Call the ML API to evaluate the answers
-                ml_api_url = f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}"
-                logger.info(f"Calling ML API: {ml_api_url}")
-                
-                # Add a timeout to the request
-                response = requests.get(ml_api_url, timeout=30)
-                response.raise_for_status()  # This will raise an exception for 4XX/5XX responses
-                
-                evaluation_result = response.json()
-                
-                # Save the evaluation result
-                work_dna_question.evaluation_result = evaluation_result
-                work_dna_question.save()
-                
-                logger.info(f"Successfully evaluated work DNA for candidate {candidate_id}")
-                return Response(evaluation_result)
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error calling ML API: {str(e)}")
-                return Response(
-                    {'error': f'Failed to connect to evaluation service: {str(e)}'},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE
-                )
-                
-        except requests.RequestException as e:
-            exception_logger.exception("Error connecting to ML service for evaluation")
-            return Response(
-                {'error': f'Error connecting to ML service: {str(e)}'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        except Exception as e:
-            exception_logger.exception("Error in work DNA evaluation")
-            return Response(
-                {'error': f'An error occurred during evaluation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
-    def fetch_work_dna_questions(self, candidate):
-        """Fetch work DNA questions from ML API and filter to include only questions 1 and 2"""
+    def get(self, request, candidate_id=None):
+        if candidate_id:
+            return self.evaluate_answers(candidate_id)
+
+        candidate = self.get_candidate()
+        work_dna = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+
+        if work_dna:
+            return Response(WorkDNAQuestionSerializer(work_dna).data)
+
         try:
-            # Call the ML API to get work DNA questions
-            ml_api_url = f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}"
-            response = requests.get(ml_api_url)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Filter questions to include only questions 1 and 2
-                if 'questions' in data and isinstance(data['questions'], list):
-                    # Keep only the first two questions
-                    filtered_questions = data['questions']
-                    # Update the total questions count
-                    data['questions'] = filtered_questions
-                    data['total_questions'] = len(filtered_questions)
-                
-                # Create and save work dna questions
-                work_dna_question = WorkDNAQuestion.objects.create(
+            resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=30)
+            if resp.status_code == 200:
+                questions = resp.json().get('questions', [])[:2]
+                work_dna = WorkDNAQuestion.objects.create(
                     candidate=candidate,
                     candidate_name=candidate.full_name,
-                    questions=data.get('questions', []),
-                    total_questions=data.get('total_questions', 0)
+                    questions=questions,
+                    total_questions=len(questions)
                 )
-                
-                serializer = WorkDNAQuestionSerializer(work_dna_question)
-                return Response(serializer.data)
-            else:
-                return Response(
-                    {'error': 'Failed to fetch work DNA questions from ML service'},
-                    status=response.status_code
-                )
-                
-        except requests.RequestException as e:
-            exception_logger.exception("Error connecting to ML service")
-            return Response(
-                {'error': f'Error connecting to ML service: {str(e)}'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+                return Response(WorkDNAQuestionSerializer(work_dna).data)
         except Exception as e:
-            exception_logger.exception("Unhandled error in ML service handler")
-            return Response(
-                {'error': f'An error occurred: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"Work DNA fetch failed: {e}")
+
+        return Response({'error': 'Failed to fetch questions'}, status=503)
+
+    def post(self, request):
+        candidate = self.get_candidate()
+        answers = request.data.get('answers', {})
+        work_dna = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+        if not work_dna:
+            return Response({'error': 'No questions found'}, status=404)
+
+        current = work_dna.answers or {}
+        for q_id, answer in answers.items():
+            if str(q_id).isdigit() and int(q_id) <= len(work_dna.questions):
+                q_text = work_dna.questions[int(q_id)-1].get('question', f'Question {q_id}')
+                current[q_text] = answer
+
+        work_dna.answers = current
+        work_dna.save()
+        return Response(WorkDNAQuestionSerializer(work_dna).data)
+
+    def evaluate_answers(self, candidate_id):
+        try:
+            candidate = Candidate.objects.get(id=candidate_id)
+            work_dna = WorkDNAQuestion.objects.get(candidate=candidate)
+            if not work_dna.answers:
+                return Response({'error': 'No answers'}, status=400)
+
+            resp = requests.get(f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}", timeout=30)
+            if resp.status_code == 200:
+                result = resp.json()
+                work_dna.evaluation_result = result
+                work_dna.save()
+                return Response(result)
+        except Exception as e:
+            logger.error(f"Evaluation failed: {e}")
+        return Response({'error': 'Evaluation failed'}, status=503)
 
 
+# Other Views
 class CandidateAIMatchingView(APIView):
-    """
-    Proxy endpoint for triggering the external AI matching service.
-    Expects `candidate_id` in the URL and optional `total` as a query parameter.
-    """
     permission_classes = [permissions.AllowAny]
-
     def get(self, request, candidate_id):
         total = request.query_params.get('total')
-        ml_api_url = f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}"
-
-        params = {}
-        if total is not None:
-            params['total'] = total
-
+        params = {'total': total} if total else {}
         try:
-            # Removed timeout to allow the request to wait indefinitely
-            response = requests.get(ml_api_url, params=params, timeout=None)
-
-        except requests.RequestException as exc:
-            exception_logger.exception("AI matching service request failed")
-            logger.exception("AI matching service request failed")
-            return Response(
-                {'error': 'Unable to reach AI matching service', 'details': str(exc)},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-
-        try:
-            payload = response.json()
-        except ValueError:
-            exception_logger.error("Invalid JSON response while parsing AI matching service payload")
-            payload = {'raw_response': response.text or ''}
-
-        if response.status_code >= 400:
-            return Response(
-                {
-                    'error': 'AI matching service returned an error',
-                    'details': payload
-                },
-                status=response.status_code
-            )
-
-        return Response(payload, status=status.HTTP_200_OK)
+            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params)
+            resp.raise_for_status()
+            return Response(resp.json())
+        except requests.RequestException as e:
+            return Response({'error': 'AI service unavailable'}, status=503)
 
 
 class DiscoverTalentView(generics.ListAPIView):
-    """
-    API endpoint to discover talent with minimal required fields
-    """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = DiscoverTalentSerializer
-    
+
     def get_queryset(self):
-        # Get all active candidates
-        queryset = Candidate.objects.select_related('user').filter(
-            user__is_active=True
+        qs = Candidate.objects.select_related('user').filter(
+            user__is_active=True,
+            profile_visibility="public"
         )
-        
-        # Apply search if provided
-        search_query = self.request.query_params.get('search', '').strip()
-        if search_query:
-            queryset = queryset.filter(
-                Q(user__first_name__icontains=search_query) |
-                Q(user__last_name__icontains=search_query) |
-                Q(user__first_name__icontains=search_query.split()[0]) |
-                Q(title__icontains=search_query) |
-                Q(bio__icontains=search_query)
-            )
-        
-        # Apply filters if provided in query params
-        skills = self.request.query_params.getlist('skills', [])
-        if skills:
-            queryset = queryset.filter(skills__name__in=skills).distinct()
-            
-        location = self.request.query_params.get('location')
-        if location:
-            queryset = queryset.filter(
-                Q(current_location__icontains=location) | 
-                Q(user__city__icontains=location) |
-                Q(user__country__icontains=location)
-            )
-            
-        availability = self.request.query_params.get('availability')
-        if availability:
-            queryset = queryset.filter(availability=availability)
-            
-        return queryset
+
+        q = self.request.query_params.get('search', '').strip()
+
+        if q:
+            words = [word.strip() for word in q.split() if word.strip()]
+            if not words:
+                return qs
+
+            # Overall query (OR between words)
+            main_query = Q()
+
+            for word in words:
+                # Name fields par start-with match (pehla name ya last name 'ali' se shuru ho)
+                name_query = (
+                    Q(user__first_name__istartswith=word) |
+                    Q(user__last_name__istartswith=word)
+                )
+
+                # Title par normal partial match → job titles properly search ho sakein
+                title_query = Q(title__icontains=word)
+
+                # Har word ke liye (name match OR title match)
+                word_query = name_query | title_query
+
+                # Sab words OR se combine (koi bhi word match kare to result aaye)
+                main_query |= word_query
+
+            qs = qs.filter(main_query)
+
+        # Skills filter (agar hai)
+        if skills := self.request.query_params.getlist('skills'):
+            qs = qs.filter(skills__overlap=skills)  # ya jo field hai uske hisab se
+
+        return qs.distinct()
+
+class ReferenceRequestListView(CandidateAccessMixin, generics.ListCreateAPIView):
+    serializer_class = ReferenceRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        return ReferenceRequest.objects.filter(candidate=self.get_candidate()).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(candidate=self.get_candidate())
 
 
 class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Reference request detail view.
-    - GET: Public access to view reference request details
-    - Other methods (PUT, PATCH, DELETE): Require authentication
-    """
     serializer_class = ReferenceRequestSerializer
-    def get_permissions(self):
-        """
-        Instantiates and returns the list of permissions that this view requires.
-        """
-        if self.request.method == 'GET':
-            return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated()]
+
     def get_queryset(self):
         if self.request.method == 'GET':
             return ReferenceRequest.objects.all()
         return ReferenceRequest.objects.filter(candidate__user=self.request.user)
-    
-class ReferenceRequestListView(generics.ListCreateAPIView):
-    """Reference request list and create view."""
-    serializer_class = ReferenceRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = CustomPagination  # Enable custom pagination
 
-    def get_queryset(self):
-        # Order by created_at in descending order (newest first)
-        return ReferenceRequest.objects.filter(
-            candidate__user=self.request.user
-        ).select_related('candidate__user').order_by('-created_at')
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        
-        # Apply pagination
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-            
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-    def perform_create(self, serializer):
-        candidate = self.request.user.candidate_profile
-        serializer.save(candidate=candidate)
+    def get_permissions(self):
+        return [permissions.AllowAny()] if self.request.method == 'GET' else [permissions.IsAuthenticated()]
