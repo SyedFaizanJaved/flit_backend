@@ -23,6 +23,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         print(f"User {self.sender_id} connecting to room: {self.room_name}")
 
+        # Verify at least one user is an employer and the other is a candidate
+        is_sender_employer = await self.is_employer(self.sender_id)
+        is_recipient_employer = await self.is_employer(self.recipient_id)
+        
+        # Ensure one is employer and one is candidate
+        if is_sender_employer == is_recipient_employer:
+            await self.close(code=4000)  # Close with custom error code
+            return
+
         # Join room group
         await self.channel_layer.group_add(
             self.room_name,
@@ -30,7 +39,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         
         await self.accept()
-        print(f"User {self.sender_id} connected successfully")
+        print(f"User {self.sender_id} connected successfully to chat with {self.recipient_id}")
 
     async def disconnect(self, close_code):
         # Leave room group
@@ -209,8 +218,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def is_employer(self, user_id):
-     
-        return Employer.objects.filter(user_id=user_id).exists()
+        try:
+            # First check if user exists
+            user = User.objects.filter(id=user_id).first()
+            if not user:
+                return False
+                
+            # Check if user is an employer
+            return hasattr(user, 'employer_profile')
+        except Exception as e:
+            print(f"[ERROR] Error checking if user {user_id} is employer: {str(e)}")
+            return False
         
     async def chat_message(self, event):
         # Send message to WebSocket
