@@ -399,13 +399,34 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
     def retrieve(self, request, pk=None):
         try:
-            # Correct syntax: Q objects ko properly combine karo aur parentheses use karo
-            candidate = Candidate.objects.get(
-                (Q(pk=pk) | Q(user__id=pk)) & Q(profile_visibility="public")
-            )
-            is_public = True
+            # First try to get by primary key only
+            try:
+                candidate = Candidate.objects.filter(
+                    Q(pk=pk) & Q(profile_visibility="public")
+                ).first()
+                
+                # If not found by primary key, try by user__id
+                if not candidate:
+                    candidate = Candidate.objects.filter(
+                        Q(user__id=pk) & Q(profile_visibility="public")
+                    ).first()
+                
+                if candidate:
+                    is_public = True
+                else:
+                    raise Candidate.DoesNotExist
+                    
+            except Candidate.MultipleObjectsReturned:
+                # If multiple candidates found, log the issue and return the first one
+                candidates = Candidate.objects.filter(
+                    (Q(pk=pk) | Q(user__id=pk)) & Q(profile_visibility="public")
+                )
+                logger.warning(f"Multiple candidates found for ID {pk}. Count: {candidates.count()}")
+                candidate = candidates.first()
+                is_public = True
+                
         except Candidate.DoesNotExist:
-            # Apna profile dekhne ke liye (logged in candidate ya uska own ID)
+            # For viewing own profile (logged in candidate or their own ID)
             if str(pk) in [str(request.user.id), str(self.get_candidate().id if hasattr(request.user, 'candidate_profile') else '0')]:
                 candidate = self.get_candidate()
                 is_public = False
