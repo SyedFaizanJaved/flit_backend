@@ -86,24 +86,28 @@ class CombinedApplicationsView(generics.ListAPIView):
         
         # Add job applications
         for app in job_apps:
+            app_data = JobApplicationListSerializer(app, context={'request': self.request}).data
             combined.append({
                 'id': app.id,
                 'type': 'job',
                 'title': getattr(app.job, 'title', 'No Job'),
                 'status': app.status,
                 'applied_at': app.applied_at,
-                'application': JobApplicationListSerializer(app, context={'request': self.request}).data
+                'candidate_id': app.candidate.id,  # Add candidate_id
+                'application': app_data
             })
             
         # Add project applications
         for app in project_apps:
+            app_data = ProjectApplicationListSerializer(app, context={'request': self.request}).data
             combined.append({
                 'id': app.id,
                 'type': 'project',
                 'title': getattr(app.project, 'title', 'No Project'),
                 'status': app.status,
                 'applied_at': app.applied_at,
-                'application': ProjectApplicationListSerializer(app, context={'request': self.request}).data
+                'candidate_id': app.candidate.id,  # Add candidate_id
+                'application': app_data
             })
         
         # Sort by applied_at in descending order (newest first)

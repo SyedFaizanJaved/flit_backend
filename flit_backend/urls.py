@@ -18,10 +18,29 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
-from django.http import JsonResponse
+from django.http import JsonResponse, Http404
+from django.conf.urls import handler404
 
 # Import WebSocket URL patterns
 from chat.routing import websocket_urlpatterns
+
+def custom_404_handler(request, exception=None):
+    """
+    Custom 404 handler that returns JSON instead of HTML
+    """
+    return JsonResponse(
+        {
+            "status": "error",
+            "code": 404,
+            "message": "The requested resource was not found on this server.",
+            "endpoint": request.path,
+            "method": request.method
+        },
+        status=404
+    )
+
+# Set the custom 404 handler
+handler404 = custom_404_handler
 
 
 def welcome_root(request):
