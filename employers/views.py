@@ -81,8 +81,9 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CandidateAction.objects.filter(
-            employer__user=self.request.user
-        ).select_related('employer')
+            employer__user=self.request.user,
+            action='pass'  # Only include 'pass' actions
+        ).select_related('employer').order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         employer = request.user.employer_profile
