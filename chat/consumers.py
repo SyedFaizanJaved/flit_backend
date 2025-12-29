@@ -1,5 +1,6 @@
 
 import json
+import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer, AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
@@ -22,7 +23,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.room_name = f"chat_{'_'.join(user_ids)}"
         
         print(f"User {self.sender_id} connecting to room: {self.room_name}")
-
+        
+        # Accept the connection first
+        await self.accept()
+        
         # Verify at least one user is an employer and the other is a candidate
         is_sender_employer = await self.is_employer(self.sender_id)
         is_recipient_employer = await self.is_employer(self.recipient_id)
@@ -38,10 +42,35 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         
-        await self.accept()
+        # Start ping task to keep connection alive
+        self.ping_task = asyncio.create_task(self.send_ping())
         print(f"User {self.sender_id} connected successfully to chat with {self.recipient_id}")
+    
+    async def send_ping(self):
+        """Send periodic pings to keep the connection alive"""
+        while True:
+            try:
+                await self.send(text_data=json.dumps({
+                    'type': 'ping',
+                    'message': 'ping'
+                }))
+                await asyncio.sleep(20)  # Send ping every 20 seconds
+            except asyncio.CancelledError:
+                # Task was cancelled, exit cleanly
+                break
+            except Exception as e:
+                print(f"Error sending ping: {e}")
+                break
 
     async def disconnect(self, close_code):
+        # Cancel the ping task if it exists
+        if hasattr(self, 'ping_task') and not self.ping_task.done():
+            self.ping_task.cancel()
+            try:
+                await self.ping_task
+            except asyncio.CancelledError:
+                pass
+
         # Leave room group
         if hasattr(self, 'room_name'):
             await self.channel_layer.group_discard(
@@ -49,62 +78,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
 
-    @database_sync_to_async
-    def update_unread_count(self, sender_id, recipient_id, increment=True):
-        """Update unread message counts and return counts for the sender"""
-        from django.db.models import F, Count
-        from .models import ChatMessage
-        
-        if increment:
-            # Increment unread count for all unread messages from this sender to recipient
-            ChatMessage.objects.filter(
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                is_read=False
-            ).update(unread_count=F('unread_count') + 1)
-        else:
-            # Reset unread count when messages are read
-            ChatMessage.objects.filter(
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                is_read=False
-            ).update(
-                is_read=True,
-                unread_count=0
-            )
-        
-        # Get count of unique senders with unread messages
-        unique_senders_count = ChatMessage.objects.filter(
-            recipient_id=recipient_id,
-            is_read=False
-        ).values('sender').distinct().count()
-        
-        # Get unread count for this specific sender
-        sender_unread = ChatMessage.objects.filter(
-            sender_id=sender_id,
-            recipient_id=recipient_id,
-            is_read=False
-        ).count()
-        
-        return {
-            'unread_count': sender_unread,    # Unread from this specific sender
-            'total_count': unique_senders_count # Total number of people with unread messages
-        }
+    async def send_periodic_ping(self):
+        """Send a lightweight ping every 10 seconds to prevent ECONNRESET"""
+        while True:
+            try:
+                await self.send(text_data=json.dumps({
+                    'type': 'ping'
+                }))
+                await asyncio.sleep(10)  # Ping every 10 seconds
+            except asyncio.CancelledError:
+                # Normal when connection closes
+                break
+            except Exception as e:
+                print(f"[PING ERROR] {e}")
+                break
 
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
             print(f"[DEBUG] Received raw data: {data}")
             
-            # Check if this is a read receipt
+            # Handle read receipt
             if data.get('type') == 'read_messages':
                 sender_id = data.get('sender_id')
                 recipient_id = data.get('recipient_id')
                 if sender_id and recipient_id:
-                    # Mark messages as read
                     updated_count = await self.update_unread_count(sender_id, recipient_id, increment=False)
                     
-                    # Notify sender that their messages were read
                     user_ids = sorted([str(sender_id), str(recipient_id)])
                     room_name = f"chat_{'_'.join(user_ids)}"
                     
@@ -131,7 +131,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
             print(f"[DEBUG] Processing message from {self.sender_id} to {self.recipient_id}")
 
-                        # Save message to database
+            # Save message to database
             saved_message, error = await self.save_message(
                 sender_id=self.sender_id,
                 recipient_id=self.recipient_id,
@@ -155,13 +155,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             # Update unread counts
             unread_counts = await self.update_unread_count(self.sender_id, self.recipient_id)
         
-            # Create a consistent room name
+            # Consistent room name
             user_ids = sorted([self.sender_id, self.recipient_id])
             room_name = f"chat_{'_'.join(user_ids)}"
             
             print(f"Sending to room: {room_name}")
 
-            # Broadcast message to all in the room
+            # Broadcast message
             await self.channel_layer.group_send(
                 room_name,
                 {
@@ -177,13 +177,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-            # Notify both sender and recipient's chat lists to update
+            # Notify chat list updates
             for user_id in [self.sender_id, self.recipient_id]:
-                # Determine user type for the group name
                 user_type = 'employer' if await self.is_employer(user_id) else 'candidate'
                 group_name = f'chat_list_{user_type}_{user_id}'
                 
-                # Send update to chat list group
                 await self.channel_layer.group_send(
                     group_name,
                     {
@@ -194,15 +192,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
                 
         except json.JSONDecodeError:
-            error_msg = 'Invalid JSON format'
-            print(f"[ERROR] {error_msg}")
             await self.send(text_data=json.dumps({
-                'error': error_msg,
+                'error': 'Invalid JSON format',
                 'status': 'error'
             }))
             
         except ValueError as ve:
-            print(f"[ERROR] {str(ve)}")
             await self.send(text_data=json.dumps({
                 'error': str(ve),
                 'status': 'error'
@@ -216,22 +211,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'status': 'error'
             }))
 
-    @database_sync_to_async
-    def is_employer(self, user_id):
-        try:
-            # First check if user exists
-            user = User.objects.filter(id=user_id).first()
-            if not user:
-                return False
-                
-            # Check if user is an employer
-            return hasattr(user, 'employer_profile')
-        except Exception as e:
-            print(f"[ERROR] Error checking if user {user_id} is employer: {str(e)}")
-            return False
-        
     async def chat_message(self, event):
-        # Send message to WebSocket
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
             'message': event['message'],
@@ -241,11 +221,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'messageType': event['messageType'],
             'timestamp': event['timestamp'],
             'unread_count': event.get('unread_count', 0),
-            'total_count': event.get('total_count', 0)  # Add total_count to the response
+            'total_count': event.get('total_count', 0)
         }))
 
     async def messages_read(self, event):
-        # Notify that messages were read
         await self.send(text_data=json.dumps({
             'type': 'messages_read',
             'sender_id': event['sender_id'],
@@ -254,34 +233,74 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
 
     @database_sync_to_async
+    def is_employer(self, user_id):
+        try:
+            user = User.objects.filter(id=user_id).first()
+            if not user:
+                return False
+            return hasattr(user, 'employer_profile')
+        except Exception as e:
+            print(f"[ERROR] Error checking if user {user_id} is employer: {str(e)}")
+            return False
+
+    @database_sync_to_async
+    def update_unread_count(self, sender_id, recipient_id, increment=True):
+        if increment:
+            ChatMessage.objects.filter(
+                sender_id=sender_id,
+                recipient_id=recipient_id,
+                is_read=False
+            ).update(unread_count=F('unread_count') + 1)
+        else:
+            ChatMessage.objects.filter(
+                sender_id=sender_id,
+                recipient_id=recipient_id,
+                is_read=False
+            ).update(is_read=True, unread_count=0)
+        
+        unique_senders_count = ChatMessage.objects.filter(
+            recipient_id=recipient_id,
+            is_read=False
+        ).values('sender').distinct().count()
+        
+        sender_unread = ChatMessage.objects.filter(
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            is_read=False
+        ).count()
+        
+        return {
+            'unread_count': sender_unread,
+            'total_count': unique_senders_count
+        }
+
+    @database_sync_to_async
     def save_message(self, sender_id, recipient_id, message, message_type='text'):
-        # Validate users exist first
         try:
             sender = User.objects.get(id=sender_id)
             recipient = User.objects.get(id=recipient_id)
         except User.DoesNotExist as e:
             error_msg = f"User not found. Sender: {sender_id}, Recipient: {recipient_id}"
             print(f"[ERROR] {error_msg}")
-            print(f"[ERROR] {str(e)}")
             raise ValueError(error_msg) from e
         
         try:
-            # Create message with unread_count set to 1 by default
-            message = ChatMessage.objects.create(
+            message_obj = ChatMessage.objects.create(
                 sender=sender,
                 recipient=recipient,
                 message=message,
                 messageType=message_type,
-                unread_count=1  # Set initial unread count to 1 for new messages
+                unread_count=1
             )
-            print(f"[DEBUG] Message saved successfully. ID: {message.id}")
-            return message, None
+            print(f"[DEBUG] Message saved successfully. ID: {message_obj.id}")
+            return message_obj, None
         except Exception as e:
             error_msg = f"Error creating message: {str(e)}"
             print(f"[ERROR] {error_msg}")
             import traceback
             traceback.print_exc()
             return None, str(e)
+
 
 
 class ChatListConsumer(AsyncJsonWebsocketConsumer):
@@ -309,11 +328,32 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4001)  # Other errors
     
     async def disconnect(self, close_code):
+        # Cancel the ping task
+        if hasattr(self, 'ping_task'):
+            self.ping_task.cancel()
+            try:
+                await self.ping_task
+            except asyncio.CancelledError:
+                pass
+                
         # Leave group
         await self.channel_layer.group_discard(
             self.group_name,
             self.channel_name
         )
+    
+    async def send_ping(self):
+        """Send periodic pings to keep the connection alive"""
+        while True:
+            try:
+                await self.send(text_data=json.dumps({
+                    'type': 'ping',
+                    'message': 'ping'
+                }))
+                await asyncio.sleep(20)  # Send ping every 20 seconds
+            except Exception as e:
+                print(f"Error sending ping: {e}")
+                break
     
     async def receive_json(self, content):
         # Handle incoming WebSocket messages if needed
@@ -387,8 +427,14 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                 if hasattr(user, 'candidate_profile') and user.candidate_profile:
                     title = getattr(user.candidate_profile, 'title', '') or ''
                 
+                # Get candidate profile ID if exists
+                candidate_id = None
+                if hasattr(user, 'candidate_profile') and user.candidate_profile:
+                    candidate_id = user.candidate_profile.id
+                
                 result.append({
-                    'user_id': user.id,
+                    'candidate_id': candidate_id or user.id,  # Fallback to user.id if no candidate profile
+                    'user_id': user.id,  # Keep user_id for backward compatibility
                     'full_name': full_name,
                     'title': title,  
                     'profile_image': profile_image_url,
@@ -524,8 +570,14 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                      Q(recipient=user, sender_id=user_id))
                 ).order_by('-created_at').first()
                 
+# Get candidate profile ID if exists for the chat participant
+                candidate_id = None
+                if hasattr(user, 'candidate_profile') and user.candidate_profile:
+                    candidate_id = user.candidate_profile.id
+                
                 result.append({
                     'id': user.id,
+                    'candidate_id': candidate_id,  # Will be None for non-candidate users
                     'company_name': company_name,
                     'industry': industry,
                     'logo': logo_url,
