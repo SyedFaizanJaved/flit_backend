@@ -20,14 +20,14 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     minSalary = serializers.SerializerMethodField()
     maxSalary = serializers.SerializerMethodField()
     profileImage = serializers.SerializerMethodField()
-    userId = serializers.IntegerField(source='user.id', read_only=True)
+    user = serializers.SerializerMethodField()  # Changed from userId to user
 
     class Meta:
         model = Candidate
         fields = [
             'id', 'fullName', 'title', 'bio', 'skills', 'location',
             'availability', 'lastSeen', 'profile_views_display',
-            'minSalary', 'maxSalary', 'profileImage', 'userId'
+            'minSalary', 'maxSalary', 'profileImage', 'user'  # Changed from userId to user
         ]
 
     def get_skills(self, obj):
@@ -82,6 +82,10 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
                 logger.warning(f"Error getting profile image URL for user {obj.id}: {str(e)}")
                 return None
         return None
+        
+    def get_user(self, obj):
+        # Return user ID in the same format as the detailed view
+        return obj.user.id if hasattr(obj, 'user') and obj.user else None
 
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
     """
