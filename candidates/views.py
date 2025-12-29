@@ -31,7 +31,9 @@ from projects.models import Project
 from companies.models import Company
 from .models import Candidate
 from .serializers import DiscoverTalentSerializer
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
@@ -399,83 +401,64 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
     def retrieve(self, request, pk=None):
         try:
-            # First try to get by primary key only
+            if not pk:
+                return Response({"error": "Candidate ID is required"}, status=400)
+                
             try:
+                # First try to get by primary key with public visibility
                 candidate = Candidate.objects.filter(
-                    Q(pk=pk) & Q(profile_visibility="public")
-                ).first()
+                    Q(pk=pk) & 
+                    (Q(profile_visibility="public") | Q(user=request.user))
+                ).select_related('user').first()
                 
                 # If not found by primary key, try by user__id
                 if not candidate:
                     candidate = Candidate.objects.filter(
-                        Q(user__id=pk) & Q(profile_visibility="public")
-                    ).first()
+                        Q(user__id=pk) & 
+                        (Q(profile_visibility="public") | Q(user=request.user))
+                    ).select_related('user').first()
                 
-                if candidate:
-                    is_public = True
-                else:
-                    raise Candidate.DoesNotExist
-                    
-            except Candidate.MultipleObjectsReturned:
-                # If multiple candidates found, log the issue and return the first one
-                candidates = Candidate.objects.filter(
-                    (Q(pk=pk) | Q(user__id=pk)) & Q(profile_visibility="public")
+                if not candidate:
+                    return Response({
+                        "error": "Candidate not found or you don't have permission to view this profile"
+                    }, status=404)
+
+                # Track view if the user is an employer viewing another candidate's profile
+                try:
+                    if (hasattr(request.user, 'employer_profile') and 
+                        (not hasattr(request.user, 'candidate_profile') or 
+                         candidate.user_id != request.user.id)):
+                        from django.db import transaction
+                        with transaction.atomic():
+                            candidate.refresh_from_db()
+                            viewer_ids = list(candidate.viewers or [])
+                            if request.user.employer_profile.id not in viewer_ids:
+                                viewer_ids.append(request.user.employer_profile.id)
+                                candidate.viewers = viewer_ids
+                                candidate.profile_views = (candidate.profile_views or 0) + 1
+                                candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
+                except Exception as view_error:
+                    # Log the error but don't fail the request
+                    exception_logger.error(f"Error updating profile views: {str(view_error)}", exc_info=True)
+
+                serializer = CandidateSerializer(candidate, context={'request': request})
+                return Response(serializer.data)
+                
+            except Candidate.DoesNotExist:
+                return Response({"error": "Candidate not found"}, status=404)
+            except Exception as db_error:
+                exception_logger.error(f"Database error in candidate retrieve: {str(db_error)}", exc_info=True)
+                return Response(
+                    {"error": "Error retrieving candidate data"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-                logger.warning(f"Multiple candidates found for ID {pk}. Count: {candidates.count()}")
-                candidate = candidates.first()
-                is_public = True
                 
-        except Candidate.DoesNotExist:
-            # For viewing own profile (logged in candidate or their own ID)
-            if str(pk) in [str(request.user.id), str(self.get_candidate().id if hasattr(request.user, 'candidate_profile') else '0')]:
-                candidate = self.get_candidate()
-                is_public = False
-            else:
-                candidate = None
-                is_public = False
-
-        if not candidate:
-            return Response({"detail": "Not found or not public"}, status=404)
-
-        # Employer ne profile view kiya to count increase karo
-        if is_public and hasattr(request.user, 'employer_profile'):
-            employer = request.user.employer_profile
-            # Ensure viewers is a list of IDs (handle both list and dict formats)
-            viewers = candidate.viewers or []
-            if isinstance(viewers, dict):
-                # If viewers is a dict, get the keys as viewer IDs
-                viewer_ids = [int(k) for k in viewers.keys() if k.isdigit()]
-            else:
-                # If it's already a list, use it as is
-                viewer_ids = [v for v in viewers if isinstance(v, (int, str))]
-            
-            if employer.id not in viewer_ids:
-                viewer_ids.append(employer.id)
-                candidate.viewers = viewer_ids
-                candidate.profile_views = (candidate.profile_views or 0) + 1
-                candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
-
-        return Response(CandidateSerializer(candidate, context={'request': request}).data)
-       
-
-    def list(self, request):
-        qs = Candidate.objects.filter(profile_visibility="public")
-        return Response(CandidateListSerializer(qs, many=True).data)
-
-    @action(detail=False, methods=['get', 'put', 'patch'], url_path='profile')
-    def profile(self, request):
-        candidate = self.get_candidate()
-        if request.method == 'GET':
-            logger.info(f"Profile GET request for candidate {candidate.id}")
-            return Response(CandidateSerializer(candidate, context={'request': request}).data)
-
-        logger.info(f"Profile UPDATE started for candidate {candidate.id} by user {request.user.id}")
-
-        data = request.data.dict()
-        files = request.FILES
-        updated_fields = ['updated_at']
-
-        # ====================== HELPERS ======================
+        except Exception as e:
+            exception_logger.error(f"Unexpected error in candidate retrieve: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "An unexpected error occurred"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         def to_boolean(value):
             if isinstance(value, bool):
                 return value
@@ -822,36 +805,108 @@ class DiscoverTalentView(generics.ListAPIView):
         )
 
         q = self.request.query_params.get('search', '').strip().lower()
+        search_type = self.request.query_params.get('search_type', 'both').lower()  # 'name', 'title', or 'both'
 
         if q:
             words = [word.strip() for word in q.split() if word.strip()]
             if not words:
                 return qs
 
-            from django.db.models import Case, When, Value, IntegerField, F, Q, CharField
+            from django.db.models import Q, Case, When, Value, IntegerField, F
             
-            # First, create a base queryset with all candidates that match any word
-            search_query = Q()
-            for word in words:
-                search_query |= (
-                    Q(user__first_name__icontains=word) |
-                    Q(user__last_name__icontains=word) |
-                    Q(title__icontains=word)
+            # Initialize queries
+            name_query = Q()
+            title_query = Q()
+            
+            # Build name query if searching by name or both
+            if search_type in ['name', 'both']:
+                if len(words) >= 2:
+                    # For two or more words, try different combinations of first and last name
+                    name_query = (
+                        Q(user__first_name__iexact=words[0], user__last_name__iexact=' '.join(words[1:])) |
+                        Q(user__first_name__iexact=' '.join(words[1:]), user__last_name__iexact=words[0]) |
+                        Q(user__first_name__iexact=words[-1], user__last_name__iexact=' '.join(words[:-1])) |
+                        Q(user__first_name__iexact=' '.join(words[:-1]), user__last_name__iexact=words[-1])
+                    )
+                else:
+                    # For single word, search in first or last name
+                    name_query = (
+                        Q(user__first_name__iexact=words[0]) |
+                        Q(user__last_name__iexact=words[0])
+                    )
+            
+            # Build title query if searching by title or both
+            if search_type in ['title', 'both']:
+                if len(words) >= 2:
+                    # For multi-word queries, try exact match first
+                    title_query = Q(title__iexact=q)
+                    
+                    # If no exact matches, try partial matches on each word
+                    if not qs.filter(title_query).exists() and search_type == 'title':
+                        title_query = Q()
+                        for word in words:
+                            title_query &= Q(title__icontains=word)
+                else:
+                    # For single word, try exact match first, then partial
+                    if not qs.filter(title__iexact=words[0]).exists() and search_type == 'title':
+                        title_query = Q(title__icontains=words[0])
+                    else:
+                        title_query = Q(title__iexact=words[0])
+            
+            # Combine queries based on search type
+            if search_type == 'name':
+                qs = qs.filter(name_query)
+            elif search_type == 'title':
+                qs = qs.filter(title_query)
+            else:  # both
+                qs = qs.filter(name_query | title_query)
+            
+            # If no results and searching both, try partial matches
+            if not qs.exists() and search_type in ['both', 'name']:
+                partial_name_query = Q()
+                for word in words:
+                    partial_name_query |= (
+                        Q(user__first_name__icontains=word) |
+                        Q(user__last_name__icontains=word)
+                    )
+                qs = qs.filter(partial_name_query)
+            
+            # Create a base score of 0
+            qs = qs.annotate(relevance=Value(0, output_field=IntegerField()))
+            
+            # Exact title match (highest priority)
+            exact_title_query = Q(title__iexact=q)
+            qs = qs.annotate(
+                title_exact_match=Case(
+                    When(exact_title_query, then=Value(1000)),  # Very high score for exact title match
+                    default=Value(0),
+                    output_field=IntegerField()
                 )
+            )
             
-            qs = qs.filter(search_query)
-            
-            # Now add annotations for ranking
-            # For full name exact match (highest priority)
+            # Full name exact match (high priority)
             full_name = ' '.join(words).strip()
             qs = qs.annotate(
                 full_name_match=Case(
                     When(
                         Q(user__first_name__iexact=full_name) | 
                         Q(user__last_name__iexact=full_name) |
-                        Q(user__first_name__istartswith=words[0]) & Q(user__last_name__iexact=' '.join(words[1:]).strip() if len(words) > 1 else ''),
-                        then=Value(100)  # Very high score for exact full name match
+                        Q(user__first_name__iexact=words[0]) & Q(user__last_name__iexact=' '.join(words[1:]).strip() if len(words) > 1 else ''),
+                        then=Value(800)  # High score for exact full name match
                     ),
+                    default=Value(0),
+                    output_field=IntegerField()
+                )
+            )
+            
+            # Title contains all search words (medium-high priority)
+            title_contains_all = Q()
+            for word in words:
+                title_contains_all &= Q(title__icontains=word)
+            
+            qs = qs.annotate(
+                title_contains_all=Case(
+                    When(title_contains_all, then=Value(500)),
                     default=Value(0),
                     output_field=IntegerField()
                 )
@@ -862,7 +917,24 @@ class DiscoverTalentView(generics.ListAPIView):
                 # Higher weight for first word matches
                 weight = 3 if i == 0 else 2
                 
+                # Title matches
                 qs = qs.annotate(**{
+                    f'title_exact_{i}': Case(
+                        When(title__iexact=word, then=Value(weight * 4)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'title_start_{i}': Case(
+                        When(title__istartswith=word, then=Value(weight * 3)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'title_contains_{i}': Case(
+                        When(title__icontains=word, then=Value(weight * 2)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    # Name matches
                     f'first_name_exact_{i}': Case(
                         When(user__first_name__iexact=word, then=Value(weight * 3)),
                         default=Value(0),
@@ -895,18 +967,35 @@ class DiscoverTalentView(generics.ListAPIView):
                     )
                 })
             
-            # Calculate total score by summing all individual scores
-            score_expression = F('full_name_match')
-            for i in range(len(words)):
-                score_expression += (
-                    F(f'first_name_exact_{i}') + F(f'first_name_start_{i}') + F(f'first_name_contains_{i}') +
-                    F(f'last_name_exact_{i}') + F(f'last_name_start_{i}') + F(f'last_name_contains_{i}')
-                )
+            relevance_fields = [
+                'title_exact_match',
+                'full_name_match',
+                'title_contains_all',
+                *[f'title_exact_{i}' for i in range(len(words))],
+                *[f'title_start_{i}' for i in range(len(words))],
+                *[f'title_contains_{i}' for i in range(len(words))],
+                *[f'first_name_exact_{i}' for i in range(len(words))],
+                *[f'first_name_start_{i}' for i in range(len(words))],
+                *[f'first_name_contains_{i}' for i in range(len(words))],
+                *[f'last_name_exact_{i}' for i in range(len(words))],
+                *[f'last_name_start_{i}' for i in range(len(words))],
+                *[f'last_name_contains_{i}' for i in range(len(words))],
+            ]
             
-            # Add a small boost for profile views so more popular profiles appear higher with same score
+            # Calculate total relevance score by summing all relevance fields
+            from django.db.models import Sum, F, Case, When, Value, IntegerField
+            
+            # Start with a base score of 0
+            score_expression = Value(0, output_field=IntegerField())
+            
+            # Add up all relevance fields
+            for field in relevance_fields:
+                score_expression = score_expression + F(field)
+            
+            # Add a small boost for profile views (1 point per 1000 views)
             qs = qs.annotate(
-                search_rank=score_expression + (F('profile_views') / 1000)
-            ).order_by('-search_rank')
+                total_score=score_expression + (F('profile_views') / 1000)
+            ).order_by('-total_score')
 
         # Skills filter (if any)
         if skills := self.request.query_params.getlist('skills'):
