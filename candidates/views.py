@@ -383,12 +383,34 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
         return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
 
 # Main Candidate ViewSet
+from django.db import transaction
+from django.db.models import Q
+from django.core.files.storage import default_storage
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+import requests
+import json
+import io
+import logging
+
+logger = logging.getLogger(__name__)
+exception_logger = logging.getLogger('exception')
+
 class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     queryset = Candidate.objects.all()
     serializer_class = CandidateSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     pagination_class = PageNumberPagination
+
+    def get_object(self):
+        if self.request.parser_context.get('kwargs', {}).get('pk') == 'profile':
+            return self.get_candidate()
+        return super().get_object()
 
     def _save_file(self, file_obj, upload_path_func):
         try:
@@ -399,66 +421,67 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             exception_logger.exception(f"File save failed: {e}")
             return None
 
+    # ====================== RETRIEVE (Only for viewing others' profiles) ======================
     def retrieve(self, request, pk=None):
         try:
             if not pk:
                 return Response({"error": "Candidate ID is required"}, status=400)
-                
-            try:
-                # First try to get by primary key with public visibility
+
+            # Try by primary key first
+            candidate = Candidate.objects.filter(
+                Q(pk=pk) &
+                (Q(profile_visibility="public") | Q(user=request.user))
+            ).select_related('user').first()
+
+            # If not found, try by user__id
+            if not candidate:
                 candidate = Candidate.objects.filter(
-                    Q(pk=pk) & 
+                    Q(user__id=pk) &
                     (Q(profile_visibility="public") | Q(user=request.user))
                 ).select_related('user').first()
-                
-                # If not found by primary key, try by user__id
-                if not candidate:
-                    candidate = Candidate.objects.filter(
-                        Q(user__id=pk) & 
-                        (Q(profile_visibility="public") | Q(user=request.user))
-                    ).select_related('user').first()
-                
-                if not candidate:
-                    return Response({
-                        "error": "Candidate not found or you don't have permission to view this profile"
-                    }, status=404)
 
-                # Track view if the user is an employer viewing another candidate's profile
-                try:
-                    if (hasattr(request.user, 'employer_profile') and 
-                        (not hasattr(request.user, 'candidate_profile') or 
-                         candidate.user_id != request.user.id)):
-                        from django.db import transaction
-                        with transaction.atomic():
-                            candidate.refresh_from_db()
-                            viewer_ids = list(candidate.viewers or [])
-                            if request.user.employer_profile.id not in viewer_ids:
-                                viewer_ids.append(request.user.employer_profile.id)
-                                candidate.viewers = viewer_ids
-                                candidate.profile_views = (candidate.profile_views or 0) + 1
-                                candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
-                except Exception as view_error:
-                    # Log the error but don't fail the request
-                    exception_logger.error(f"Error updating profile views: {str(view_error)}", exc_info=True)
+            if not candidate:
+                return Response({
+                    "error": "Candidate not found or you don't have permission to view this profile"
+                }, status=404)
 
-                serializer = CandidateSerializer(candidate, context={'request': request})
-                return Response(serializer.data)
-                
-            except Candidate.DoesNotExist:
-                return Response({"error": "Candidate not found"}, status=404)
-            except Exception as db_error:
-                exception_logger.error(f"Database error in candidate retrieve: {str(db_error)}", exc_info=True)
-                return Response(
-                    {"error": "Error retrieving candidate data"}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                
+            # Track profile view by employer
+            try:
+                if (hasattr(request.user, 'employer_profile') and
+                    (not hasattr(request.user, 'candidate_profile') or candidate.user_id != request.user.id)):
+                    with transaction.atomic():
+                        candidate.refresh_from_db()
+                        viewer_ids = list(candidate.viewers or [])
+                        if request.user.employer_profile.id not in viewer_ids:
+                            viewer_ids.append(request.user.employer_profile.id)
+                            candidate.viewers = viewer_ids
+                            candidate.profile_views = (candidate.profile_views or 0) + 1
+                            candidate.save(update_fields=['profile_views', 'viewers', 'updated_at'])
+            except Exception as view_error:
+                exception_logger.error(f"Error updating profile views: {str(view_error)}", exc_info=True)
+
+            serializer = CandidateSerializer(candidate, context={'request': request})
+            return Response(serializer.data)
+
         except Exception as e:
             exception_logger.error(f"Unexpected error in candidate retrieve: {str(e)}", exc_info=True)
-            return Response(
-                {"error": "An unexpected error occurred"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": "An unexpected error occurred"}, status=500)
+
+    # ====================== PROFILE ENDPOINT (Own profile: GET + PATCH + PUT) ======================
+    @action(detail=False, methods=['get', 'patch', 'put'])
+    def profile(self, request):
+        candidate = self.get_candidate()  # Assumes you have this method in CandidateAccessMixin
+
+        if request.method == 'GET':
+            serializer = self.get_serializer(candidate)
+            return Response(serializer.data)
+
+        # ====================== PATCH / PUT ======================
+        data = request.data
+        files = request.FILES
+        updated_fields = []
+
+        # --------------------- Helper Functions ---------------------
         def to_boolean(value):
             if isinstance(value, bool):
                 return value
@@ -481,7 +504,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         return parsed
                     return [parsed]
                 except json.JSONDecodeError:
-                    logger.warning(f"JSON parse failed for list field, fallback parsing: {value}")
+                    logger.warning(f"JSON parse failed for list field: {value}")
                     cleaned = value.strip()
                     if cleaned.startswith('[') and cleaned.endswith(']'):
                         cleaned = cleaned[1:-1]
@@ -509,7 +532,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         list_fields = ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']
         boolean_fields = ['is_available']
 
-        # ====================== FILE UPLOADS WITH DELETE OLD ======================
+        # ====================== FILE UPLOADS ======================
         if 'profile_image' in files:
             if candidate.profile_image:
                 delete_old_file(candidate.profile_image)
@@ -521,20 +544,19 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             resume_file = files.get('resume_file') or files.get('resume')
             if candidate.resume_url:
                 delete_old_file(candidate.resume_url)
-            
+
             path = self._save_file(resume_file, resume_upload_path)
             if path:
                 candidate.resume_url = path
                 candidate.portfolio_completed = True
                 updated_fields.extend(['resume_url', 'portfolio_completed'])
-                logger.info(f"New resume uploaded: {path} (old deleted)")
+                logger.info(f"New resume uploaded: {path}")
 
                 try:
                     resume_file.seek(0)
                     files_ml = {'resume_file': (resume_file.name, io.BytesIO(resume_file.read()), resume_file.content_type)}
                     parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
-                    logger.info(f"Calling ML parse_cv: {parse_url}")
-                    resp = requests.post(parse_url, files=files_ml)  # No timeout
+                    resp = requests.post(parse_url, files=files_ml)
                     logger.info(f"ML parse_cv response: {resp.status_code}")
 
                     if resp.status_code == 200:
@@ -554,19 +576,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             video_file = files['video_file']
             if candidate.video_intro_url:
                 delete_old_file(candidate.video_intro_url)
-            
+
             path = self._save_file(video_file, video_upload_path)
             if path:
                 candidate.video_intro_url = path
                 candidate.portfolio_completed = True
                 updated_fields.extend(['video_intro_url', 'portfolio_completed'])
-                logger.info(f"New video uploaded: {path} (old deleted)")
+                logger.info(f"New video uploaded: {path}")
 
                 try:
                     video_file.seek(0)
                     analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
-                    logger.info(f"Calling ML video analysis: {analyze_url}")
-
                     files_video = {'video_file': (video_file.name, io.BytesIO(video_file.read()), video_file.content_type)}
                     video_payload = {
                         'user_id': str(request.user.id),
@@ -577,7 +597,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     if hasattr(settings, 'ML_API_KEY'):
                         headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
 
-                    resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers)  # No timeout
+                    resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers)
                     logger.info(f"ML video analysis response: {resp.status_code}")
 
                     if resp.status_code == 200:
@@ -604,48 +624,47 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         for field in text_fields:
             if field in data:
                 value = data[field]
-
                 if field in list_fields:
                     cleaned = parse_json_list(value)
                     setattr(candidate, field, cleaned)
                     updated_fields.append(field)
-                    logger.info(f"{field} updated: {cleaned}")
-
                 elif field in boolean_fields:
                     converted = to_boolean(value)
                     if converted is not None:
                         setattr(candidate, field, converted)
                         updated_fields.append(field)
-                    else:
-                        logger.warning(f"Skipped invalid boolean for {field}")
-
                 else:
                     if field in ['min_salary', 'max_salary']:
                         try:
-                            value = float(value) if value is not None and '.' in str(value) else int(value) if value else None
+                            value = float(value) if value and '.' in str(value) else int(value) if value else None
                         except:
                             value = None
                     setattr(candidate, field, value)
                     updated_fields.append(field)
 
-        # Completion flags
+        # ====================== COMPLETION FLAGS ======================
         if any(k in data for k in ['full_name', 'title', 'bio', 'location']):
             candidate.basic_info_completed = True
+            updated_fields.append('basic_info_completed')
         if any(k in data for k in ['work_style', 'availability_type', 'is_available']):
             candidate.work_preferences_completed = True
+            updated_fields.append('work_preferences_completed')
         if any(k in data for k in ['skills', 'superpowers', 'preferred_roles']):
             candidate.skills_completed = True
+            updated_fields.append('skills_completed')
         if files or 'portfolio_links' in data:
             candidate.portfolio_completed = True
+            updated_fields.append('portfolio_completed')
         if any(k in data for k in ['profile_visibility', 'video_visibility', 'contact_visibility', 'salary_visibility']):
             candidate.privacy_completed = True
+            updated_fields.append('privacy_completed')
 
-        candidate.save(update_fields=list(set(updated_fields)))
+        candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
         logger.info(f"Database save completed for candidate {candidate.id}")
 
-        # ====================== ML Sync (No timeout + Safe ml_success) ======================
+        # ====================== ML SYNC ======================
         ml_success = True
-        ml_message = "All ML APIs (parse_cv, video analysis, candidate sync) successfully executed"
+        ml_message = "All ML APIs successfully executed"
 
         try:
             ml_payload = {
@@ -676,12 +695,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate.id}"
             create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
 
-            logger.info(f"Attempting ML sync for candidate {candidate.id}")
-            resp = requests.patch(update_url, json=ml_payload, headers=headers)  # No timeout
+            resp = requests.patch(update_url, json=ml_payload, headers=headers)
 
             if resp.status_code == 404:
-                logger.info("Creating new candidate in ML")
-                resp = requests.post(create_url, json=ml_payload, headers=headers)  # No timeout
+                logger.info("Candidate not in ML, creating new")
+                resp = requests.post(create_url, json=ml_payload, headers=headers)
 
             if resp.status_code not in (200, 201):
                 ml_success = False
@@ -705,15 +723,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             ml_message = "ML sync failed due to exception"
             logger.error(f"ML sync exception: {e}", exc_info=True)
 
-        logger.info(f"Profile update fully completed for candidate {candidate.id}")
-
-        # Final Response
+        # ====================== FINAL RESPONSE ======================
         response_data = CandidateSerializer(candidate, context={'request': request}).data
         response_data['ml_success'] = ml_success
         response_data['ml_message'] = ml_message
 
         return Response(response_data)
 
+
+        
 # Work DNA
 class WorkDNAQuestionView(CandidateAccessMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]

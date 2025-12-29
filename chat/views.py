@@ -192,15 +192,16 @@ class CandidateEmployerConversationListView(generics.ListAPIView):
             print("No participants found in messages")
             return User.objects.none()
         
+        # Get the latest message timestamp for each conversation
         latest_msg_subq = ChatMessage.objects.filter(
             Q(sender=self.request.user, recipient_id=OuterRef('id')) |
             Q(sender_id=OuterRef('id'), recipient=self.request.user)
         ).order_by('-created_at').values('created_at')[:1]
 
+        # Get unread count for each conversation
         unread_count_subq = ChatMessage.objects.filter(
-            sender_id=OuterRef('id'),
-            recipient=self.request.user,
-            is_read=False
+            Q(sender_id=OuterRef('id'), recipient=self.request.user, is_read=False) |
+            Q(sender=self.request.user, recipient_id=OuterRef('id'), is_read=False)
         ).values('sender').annotate(count=Count('id')).values('count')
 
         # Get base queryset with all participants
@@ -228,7 +229,7 @@ class CandidateEmployerConversationListView(generics.ListAPIView):
         participants = participants.annotate(
             last_message_time=Subquery(latest_msg_subq, output_field=models.DateTimeField()),
             unread_count=Coalesce(Subquery(unread_count_subq, output_field=models.IntegerField()), 0)
-        )
+        ).order_by('-last_message_time')  # Order by most recent conversation first
         
         # Debug: Print detailed participant data
         if settings.DEBUG:  # Only print in debug mode
