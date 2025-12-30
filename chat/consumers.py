@@ -42,35 +42,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         
-        # Start ping task to keep connection alive
-        self.ping_task = asyncio.create_task(self.send_ping())
         print(f"User {self.sender_id} connected successfully to chat with {self.recipient_id}")
     
-    async def send_ping(self):
-        """Send periodic pings to keep the connection alive"""
-        while True:
-            try:
-                await self.send(text_data=json.dumps({
-                    'type': 'ping',
-                    'message': 'ping'
-                }))
-                await asyncio.sleep(20)  # Send ping every 20 seconds
-            except asyncio.CancelledError:
-                # Task was cancelled, exit cleanly
-                break
-            except Exception as e:
-                print(f"Error sending ping: {e}")
-                break
 
     async def disconnect(self, close_code):
-        # Cancel the ping task if it exists
-        if hasattr(self, 'ping_task') and not self.ping_task.done():
-            self.ping_task.cancel()
-            try:
-                await self.ping_task
-            except asyncio.CancelledError:
-                pass
-
         # Leave room group
         if hasattr(self, 'room_name'):
             await self.channel_layer.group_discard(
@@ -78,26 +53,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
 
-    async def send_periodic_ping(self):
-        """Send a lightweight ping every 10 seconds to prevent ECONNRESET"""
-        while True:
-            try:
-                await self.send(text_data=json.dumps({
-                    'type': 'ping'
-                }))
-                await asyncio.sleep(10)  # Ping every 10 seconds
-            except asyncio.CancelledError:
-                # Normal when connection closes
-                break
-            except Exception as e:
-                print(f"[PING ERROR] {e}")
-                break
-
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
             print(f"[DEBUG] Received raw data: {data}")
             
+            # Ignore ping messages
+            if data.get('type') == 'ping':
+                return
+                
             # Handle read receipt
             if data.get('type') == 'read_messages':
                 sender_id = data.get('sender_id')
