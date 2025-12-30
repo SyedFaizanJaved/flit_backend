@@ -219,6 +219,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                 'application': {
                     'id': app.id,
                     'candidate_name': app.candidate.full_name,
+                    'candidate_email': app.candidate.user.email,
                     'candidate_user_id': app.candidate.user.id,
                     'project_title': app.project.title,
                     'project_id': app.project.id,
