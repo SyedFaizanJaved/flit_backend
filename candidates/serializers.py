@@ -20,7 +20,41 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     minSalary = serializers.SerializerMethodField()
     maxSalary = serializers.SerializerMethodField()
     profileImage = serializers.SerializerMethodField()
-    userId = serializers.SerializerMethodField()  # Changed from userId to user
+    userId = serializers.SerializerMethodField()
+    
+    def get_userId(self, obj):
+        return obj.user.id if obj.user else None
+        
+    def get_profileImage(self, obj):
+        if obj.profile_image and hasattr(obj.profile_image, 'url'):
+            return self.context['request'].build_absolute_uri(obj.profile_image.url)
+        return None
+        
+    def get_minSalary(self, obj):
+        return getattr(obj, 'min_salary', None) or getattr(obj, 'minSalary', None)
+        
+    def get_maxSalary(self, obj):
+        return getattr(obj, 'max_salary', None) or getattr(obj, 'maxSalary', None)
+        
+    def get_profile_views_display(self, obj):
+        views = getattr(obj, 'profile_views', 0)
+        if views >= 1000:
+            return f"{views/1000:.1f}k"
+        return str(views)
+        
+    def get_lastSeen(self, obj):
+        last_seen = getattr(obj, 'last_seen', None)
+        if last_seen:
+            from django.utils import timezone
+            from django.utils.timesince import timesince
+            now = timezone.now()
+            if last_seen > now - timezone.timedelta(days=1):
+                return f"{timesince(last_seen, now).split(', ')[0]} ago"
+            return last_seen.strftime('%b %d, %Y')
+        return 'Never'
+        
+    def get_availability(self, obj):
+        return getattr(obj, 'availability', 'Not specified') or 'Not specified'
 
     class Meta:
         model = Candidate
