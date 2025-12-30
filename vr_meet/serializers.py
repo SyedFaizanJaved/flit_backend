@@ -26,17 +26,21 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
     meeting_date = serializers.ReadOnlyField()
     meeting_title = serializers.CharField(required=False, allow_blank=True)
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
         request = self.context.get('request')
-        if request and hasattr(request.user, 'role') and request.user.role.name == 'employer':
-            self.fields['host_email'] = serializers.SerializerMethodField()
-        else:
-            # Remove host_email from fields if it exists
-            self.fields.pop('host_email', None)
-    
-    def get_host_email(self, obj):
-        return obj.host_email
+        
+        # Only include host_email if user is an employer
+        if not (request and hasattr(request.user, 'role') and request.user.role.name == 'employer'):
+            data.pop('host_email', None)
+        # Ensure host_email is properly formatted as a list
+        elif 'host_email' in data:
+            if isinstance(data['host_email'], str):
+                data['host_email'] = [data['host_email']] if data['host_email'] else []
+            elif not isinstance(data['host_email'], list):
+                data['host_email'] = []  # Convert any other type to empty list
+            
+        return data
 
     class Meta:
         model = MeetingRoom
