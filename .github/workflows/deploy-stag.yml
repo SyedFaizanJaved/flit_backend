@@ -46,7 +46,7 @@ jobs:
             echo ">>> Restarting Nginx service..."
             sudo systemctl restart nginx.service
             
-            sudo systemctl restart daphne.service
+            sudo systemctl restart flit-daphne.service
             
             echo ">>> Deployment completed successfully!"
           EOF
