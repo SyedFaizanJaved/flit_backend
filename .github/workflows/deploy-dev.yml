@@ -41,4 +41,5 @@ jobs:
             pip install -r requirements.txt &&
             sudo systemctl restart gunicorn &&
             sudo systemctl restart nginx
+            sudo systemctl restart daphne.service
           '
