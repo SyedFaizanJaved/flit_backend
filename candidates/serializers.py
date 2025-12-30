@@ -20,14 +20,14 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     minSalary = serializers.SerializerMethodField()
     maxSalary = serializers.SerializerMethodField()
     profileImage = serializers.SerializerMethodField()
-    user = serializers.SerializerMethodField()  # Changed from userId to user
+    userId = serializers.SerializerMethodField()  # Changed from userId to user
 
     class Meta:
         model = Candidate
         fields = [
             'id', 'fullName', 'title', 'bio', 'skills', 'location',
             'availability', 'lastSeen', 'profile_views_display',
-            'minSalary', 'maxSalary', 'profileImage', 'user'  # Changed from userId to user
+            'minSalary', 'maxSalary', 'profileImage', 'userId'
         ]
 
     def get_skills(self, obj):
