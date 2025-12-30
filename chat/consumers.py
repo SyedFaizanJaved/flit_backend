@@ -13,110 +13,33 @@ from employers.models import Employer
 from candidates.models import Candidate
 
 class ChatConsumer(AsyncWebsocketConsumer):
-    @database_sync_to_async
-    def get_user(self, user_id):
-        """Get user by ID"""
-        try:
-            return User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return None
-            
-    @database_sync_to_async
-    def get_candidate_id(self, user_id):
-        """Get candidate ID from user ID if the user is a candidate"""
-        try:
-            candidate = Candidate.objects.get(user_id=user_id)
-            return candidate.id
-        except Candidate.DoesNotExist:
-            return None
-
     async def connect(self):
-        try:
-            # Get and validate user IDs from URL
-            self.sender_id = int(self.scope['url_route']['kwargs']['sender_id'])
-            self.recipient_user_id = int(self.scope['url_route']['kwargs']['recipient_id'])
-            
-            print(f"[WS] Connection attempt - Sender: {self.sender_id}, Recipient: {self.recipient_user_id}")
-            
-            # Create a unique room name using sorted user IDs to ensure consistency
-            user_ids = sorted([str(self.sender_id), str(self.recipient_user_id)])
-            self.room_name = f"chat_{'_'.join(user_ids)}"
-            
-            print(f"[WS] User {self.sender_id} connecting to chat with user {self.recipient_user_id} in room: {self.room_name}")
+        self.sender_id = self.scope['url_route']['kwargs']['sender_id']
+        self.recipient_id = self.scope['url_route']['kwargs']['recipient_id']
+        
+        # Create a unique room name using sorted user IDs to ensure consistency
+        user_ids = sorted([str(self.sender_id), str(self.recipient_id)])
+        self.room_name = f"chat_{'_'.join(user_ids)}"
+        
+        print(f"User {self.sender_id} connecting to room: {self.room_name}")
 
-            # Verify both users exist and get their types
-            print(f"[WS] Fetching users from database...")
-            sender = await self.get_user(self.sender_id)
-            recipient = await self.get_user(self.recipient_user_id)
-            
-            if not sender:
-                error_msg = f"Sender not found: {self.sender_id}"
-                print(f"[ERROR] {error_msg}")
-                await self.close(code=4001)  # User not found
-                return
-                
-            if not recipient:
-                error_msg = f"Recipient not found: {self.recipient_user_id}"
-                print(f"[ERROR] {error_msg}")
-                await self.close(code=4001)  # User not found
-                return
-                
-            print(f"[WS] Users found - Sender: {sender.id}, Recipient: {recipient.id}")
-            
-            # Check user types
-            is_sender_employer = hasattr(sender, 'employer_profile')
-            is_recipient_employer = hasattr(recipient, 'employer_profile')
-            
-            print(f"[WS] User types - Sender is {'employer' if is_sender_employer else 'candidate'}, "
-                  f"Recipient is {'employer' if is_recipient_employer else 'candidate'}")
-            
-            if is_sender_employer == is_recipient_employer:
-                error_msg = f"Both users are of same type (employer: {is_sender_employer})"
-                print(f"[ERROR] {error_msg}")
-                await self.close(code=4000)  # Both users are of same type
-                return
-                
-            # Store the actual user objects
-            self.sender = sender
-            self.recipient = recipient
-            
-            # If sender is employer, get candidate ID from recipient
-            if is_sender_employer:
-                print(f"[WS] Getting candidate ID for user {recipient.id}")
-                self.recipient_id = await self.get_candidate_id(recipient.id)
-                if not self.recipient_id:
-                    error_msg = f"Recipient {recipient.id} is not a candidate"
-                    print(f"[ERROR] {error_msg}")
-                    await self.close(code=4002)  # Recipient is not a candidate
-                    return
-                print(f"[WS] Found candidate ID: {self.recipient_id}")
-            else:
-                # Sender is candidate, recipient is employer
-                self.recipient_id = recipient.id
-                print(f"[WS] Using recipient user ID: {self.recipient_id}")
-                
-            # Join room group
-            print(f"[WS] Adding to room: {self.room_name}")
-            await self.channel_layer.group_add(
-                self.room_name,
-                self.channel_name
-            )
-            
-            await self.accept()
-            print(f"[WS] User {self.sender_id} connected successfully to chat with {self.recipient_id}")
-            
-        except ValueError as ve:
-            error_msg = f"Invalid user ID format: {str(ve)}"
-            print(f"[ERROR] {error_msg}")
-            if hasattr(self, 'close'):
-                await self.close(code=4003)  # Invalid user ID format
-        except Exception as e:
-            error_msg = f"Error in connect: {str(e)}"
-            print(f"[ERROR] {error_msg}")
-            import traceback
-            traceback.print_exc()
-            if hasattr(self, 'close'):
-                await self.close(code=4004)  # Server error
+        # Verify at least one user is an employer and the other is a candidate
+        is_sender_employer = await self.is_employer(self.sender_id)
+        is_recipient_employer = await self.is_employer(self.recipient_id)
+        
+        # Ensure one is employer and one is candidate
+        if is_sender_employer == is_recipient_employer:
+            await self.close(code=4000)  # Close with custom error code
+            return
+
+        # Join room group
+        await self.channel_layer.group_add(
+            self.room_name,
+            self.channel_name
+        )
+        
+        await self.accept()
+        print(f"User {self.sender_id} connected successfully to chat with {self.recipient_id}")
 
     async def disconnect(self, close_code):
         # Leave room group
@@ -308,30 +231,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return False
         
     async def chat_message(self, event):
-        # Ensure we're using user IDs in the message
-        sender_id = event['sender_id']
-        recipient_id = event['recipient_id']
-        
-        # If either ID is a candidate ID, convert it to user ID
-        if not isinstance(sender_id, int) or not isinstance(recipient_id, int):
-            try:
-                # Try to convert to int if they're strings
-                sender_id = int(sender_id) if sender_id else None
-                recipient_id = int(recipient_id) if recipient_id else None
-            except (ValueError, TypeError):
-                pass
-        
-        # Send message to WebSocket with user IDs
+        # Send message to WebSocket
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
             'message': event['message'],
-            'sender_id': sender_id,
-            'recipient_id': recipient_id,
+            'sender_id': event['sender_id'],
+            'recipient_id': event['recipient_id'],
             'message_id': event['message_id'],
             'messageType': event['messageType'],
             'timestamp': event['timestamp'],
             'unread_count': event.get('unread_count', 0),
-            'total_count': event.get('total_count', 0)
+            'total_count': event.get('total_count', 0)  # Add total_count to the response
         }))
 
     async def messages_read(self, event):
@@ -347,17 +257,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def save_message(self, sender_id, recipient_id, message, message_type='text'):
         # Validate users exist first
         try:
-            # Ensure we have user IDs, not candidate/employer IDs
             sender = User.objects.get(id=sender_id)
             recipient = User.objects.get(id=recipient_id)
-            
-            # If recipient_id is actually a candidate ID, get the associated user
-            if not recipient:
-                try:
-                    candidate = Candidate.objects.get(id=recipient_id)
-                    recipient = candidate.user
-                except Candidate.DoesNotExist:
-                    pass
         except User.DoesNotExist as e:
             error_msg = f"User not found. Sender: {sender_id}, Recipient: {recipient_id}"
             print(f"[ERROR] {error_msg}")
