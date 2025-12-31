@@ -49,34 +49,51 @@ class PublicProjectViewSet(mixins.ListModelMixin,
     ordering = ['-created_at']
     pagination_class = CustomPagination
     
-    def get_queryset(self):
-        """
-        Return only active projects and apply any additional filtering
-        """
-        queryset = super().get_queryset()
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
         
         # Apply any additional filtering from query parameters
-        category = self.request.query_params.get('category')
+        category = request.query_params.get('category')
         if category:
             queryset = queryset.filter(category=category)
             
-        payment_type = self.request.query_params.get('paymentType')
+        payment_type = request.query_params.get('paymentType')
         if payment_type:
             queryset = queryset.filter(paymentType=payment_type)
             
-        company_id = self.request.query_params.get('company')
+        company_id = request.query_params.get('company')
         if company_id:
             queryset = queryset.filter(company_id=company_id)
             
-        search_query = self.request.query_params.get('search')
+        search_query = request.query_params.get('search')
         if search_query:
             queryset = queryset.filter(
                 models.Q(title__icontains=search_query) |
                 models.Q(description__icontains=search_query) |
                 models.Q(company__company_name__icontains=search_query)
             )
+        
+        page = self.paginate_queryset(queryset)
+        
+        # If search parameter exists and no results found, return 404
+        if search_query and not page:
+            return Response(
+                {"detail": "No projects found matching the search criteria."},
+                status=status.HTTP_404_NOT_FOUND
+            )
             
-        return queryset.distinct()
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+        
+    def get_queryset(self):
+        """
+        Return only active projects
+        """
+        return super().get_queryset().distinct()
 
 
 
