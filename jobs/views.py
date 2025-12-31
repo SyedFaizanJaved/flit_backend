@@ -50,6 +50,25 @@ class PublicJobViewSet(mixins.ListModelMixin,
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
     search_fields = ['title', 'description', 'company__company_name']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        
+        # If search parameter exists and no results found, return 404
+        search_query = request.query_params.get('search', None)
+        if search_query and not page:
+            return Response(
+                {"detail": "No jobs found matching the search criteria."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
     ordering = ['-created_at']
     
     def get_queryset(self):
