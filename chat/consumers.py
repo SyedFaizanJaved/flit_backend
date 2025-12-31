@@ -495,7 +495,7 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                 user_data = {
                     'user_id': user.id,
                     'full_name': full_name,
-                    'title': getattr(user, 'title', ''),
+                    'title': title,  # Use the title we got from candidate_profile
                     'profile_image': profile_image_url,
                     'last_message_time': user.last_message_time.isoformat() if hasattr(user, 'last_message_time') and user.last_message_time else None,
                     'unread_count': user.unread_count if hasattr(user, 'unread_count') else 0
