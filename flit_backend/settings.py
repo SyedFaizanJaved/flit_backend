@@ -280,6 +280,7 @@ TOKEN_URI = config('TOKEN_URI')
 GOOGLE_SCOPES = config('GOOGLE_SCOPES')
 
 # Logging Configuration
+# Logging Configuration
 import os
 
 # Ensure logs directory exists
@@ -291,46 +292,52 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '[{asctime}] {levelname} {module} {message}',
+            'format': '[{asctime}] {levelname} {name} {module} {message}',
             'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
         },
         'simple': {
             'format': '[{asctime}] {levelname} {message}',
             'style': '{',
+            'datefmt': '%H:%M:%S',
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+            'formatter': 'verbose',  # Ab verbose kar diya taaki module/name dikhe
         },
         'api_file': {
-            'level': 'DEBUG',
+            'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': os.path.join(LOG_DIR, 'API_access.log'),
             'formatter': 'verbose',
-            'mode': 'a+',
         },
         'security_file': {
             'level': 'WARNING',
             'class': 'logging.FileHandler',
             'filename': os.path.join(LOG_DIR, 'security_warnings.log'),
             'formatter': 'verbose',
-            'mode': 'a+',
         },
         'exceptions_file': {
             'level': 'ERROR',
             'class': 'logging.FileHandler',
             'filename': os.path.join(LOG_DIR, 'exceptions.log'),
             'formatter': 'verbose',
-            'mode': 'a+',
+        },
+        'debug_file': {  # Optional: Sab debug logs file mein bhi
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(LOG_DIR, 'debug.log'),
+            'formatter': 'verbose',
         },
     },
     'loggers': {
+        # Django ke default
         'django': {
             'handlers': ['console'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
         'django.server': {
             'handlers': ['console', 'api_file'],
@@ -339,7 +346,7 @@ LOGGING = {
         },
         'django.request': {
             'handlers': ['console', 'api_file'],
-            'level': 'DEBUG',
+            'level': 'INFO',
             'propagate': False,
         },
         'django.security': {
@@ -347,18 +354,41 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
-        'exceptions': {
-            'handlers': ['console', 'exceptions_file'],
+
+        # Yeh sabse important – tere consumers ke logs capture karne ke liye
+        'chat.consumers': {
+            'handlers': ['console', 'debug_file'],
+            'level': 'DEBUG',  # Development mein DEBUG rakh, production mein INFO
+            'propagate': False,
+        },
+        'chat': {  # Agar consumers ke alawa chat app mein aur logs hain
+            'handlers': ['console', 'debug_file'],
             'level': 'DEBUG',
-            'propagate': True,
+            'propagate': False,
+        },
+
+        # Channels/Daphne ke logs bhi
+        'daphne': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'channels': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'asyncio': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
         },
     },
     'root': {
-        'handlers': ['console'],
+        'handlers': ['console', 'debug_file'],
         'level': 'INFO',
-    }
+    },
 }
-
 # AI Related Variables
 
 FLIT_AI_URL=config('FLIT_AI_URL')
