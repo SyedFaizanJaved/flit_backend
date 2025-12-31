@@ -102,6 +102,7 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
     """
     id = serializers.IntegerField(read_only=True)
     company_name = serializers.SerializerMethodField()
+    company_id = serializers.SerializerMethodField()
     industry = serializers.SerializerMethodField()
     logo = serializers.SerializerMethodField()
     last_message_time = serializers.DateTimeField(allow_null=True)
@@ -181,6 +182,16 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
             print(f"Error in get_company_name: {str(e)}")
             
         return 'User'
+        
+    def get_company_id(self, obj):
+        try:
+            employer = self._get_employer_profile(obj)
+            if employer and hasattr(employer, 'company') and employer.company:
+                return employer.company.id
+            return None
+        except Exception as e:
+            print(f"Error in get_company_id: {str(e)}")
+            return None
     
     def get_industry(self, obj):
         try:

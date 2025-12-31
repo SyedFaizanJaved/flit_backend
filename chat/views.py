@@ -307,28 +307,51 @@ class ConversationWithUserListView(generics.ListAPIView):
     serializer_class = ChatMessageListSerializer
 
     def get_queryset(self):
-        other_user_id = self.request.query_params.get('candidate_id') or self.kwargs.get('user_id')
+        # Get the other user's ID from URL parameters
+        other_user_id = self.kwargs.get('user_id')
         if not other_user_id:
-            raise ValueError("candidate_id or user_id is required")
+            raise ValueError("user_id is required in the URL")
             
-        # Convert to int to ensure proper type comparison
-        other_user_id = int(other_user_id)
-        
-        # Get the conversation between the two users
-        queryset = ChatMessage.objects.filter(
-            models.Q(sender=self.request.user, recipient_id=other_user_id) |
-            models.Q(sender_id=other_user_id, recipient=self.request.user)
-        ).select_related('sender', 'recipient')
-        
-        # Mark unread messages as read
-        unread_messages = queryset.filter(
-            recipient=self.request.user,
-            is_read=False
-        )
-        
-        # Update all unread messages in a single query
-        if unread_messages.exists():
-            unread_messages.update(is_read=True)
+        try:
+            # Convert to int to ensure proper type comparison
+            other_user_id = int(other_user_id)
+            current_user_id = self.request.user.id
+            
+            # Debug logging
+            print(f"Debug - Current user ID: {current_user_id}, Other user ID: {other_user_id}")
+            
+            # Get the conversation between the two users
+            queryset = ChatMessage.objects.filter(
+                (models.Q(sender_id=current_user_id) & models.Q(recipient_id=other_user_id)) |
+                (models.Q(sender_id=other_user_id) & models.Q(recipient_id=current_user_id))
+            ).select_related('sender', 'recipient').order_by('-created_at')
+            
+            # Debug logging
+            print(f"Debug - Query SQL: {str(queryset.query)}")
+            print(f"Debug - Found {queryset.count()} messages")
+            
+            # Mark unread messages as read
+            unread_messages = queryset.filter(
+                recipient=self.request.user,
+                is_read=False
+            )
+            
+            # Update all unread messages in a single query
+            if unread_messages.exists():
+                unread_messages.update(is_read=True)
+                
+                # Update the unread count for the conversation
+                from django.db.models import F
+                ChatMessage.objects.filter(
+                    sender_id=other_user_id,
+                    recipient=self.request.user,
+                    is_read=False
+                ).update(unread_count=0)
+                
+            return queryset
+            
+        except (ValueError, TypeError) as e:
+            raise ValueError("Invalid user_id format") from e
         
         return queryset
 
