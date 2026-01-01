@@ -44,7 +44,7 @@ class PublicProjectViewSet(mixins.ListModelMixin,
     authentication_classes = [PublicAuthentication]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'paymentType', 'company']
-    search_fields = ['title', 'description', 'company__company_name']
+    search_fields = ['title']
     ordering_fields = ['created_at', 'budget_min', 'budget_max']
     ordering = ['-created_at']
     pagination_class = CustomPagination
@@ -68,9 +68,7 @@ class PublicProjectViewSet(mixins.ListModelMixin,
         search_query = request.query_params.get('search')
         if search_query:
             queryset = queryset.filter(
-                models.Q(title__icontains=search_query) |
-                models.Q(description__icontains=search_query) |
-                models.Q(company__company_name__icontains=search_query)
+                models.Q(title__icontains=search_query)
             )
         
         page = self.paginate_queryset(queryset)
