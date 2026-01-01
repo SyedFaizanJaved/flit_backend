@@ -45,7 +45,7 @@ class Story(models.Model):
         null=True, 
         blank=True,
         help_text="Image content for image stories",
-        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif'])]
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
     )
     video_content = models.FileField(
         upload_to=story_media_upload_path,
