@@ -48,7 +48,7 @@ class PublicJobViewSet(mixins.ListModelMixin,
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
-    search_fields = ['title', 'description', 'company__company_name']
+    search_fields = ['title']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     
     def list(self, request, *args, **kwargs):
@@ -101,9 +101,7 @@ class PublicJobViewSet(mixins.ListModelMixin,
         search_query = self.request.query_params.get('search')
         if search_query:
             queryset = queryset.filter(
-                models.Q(title__icontains=search_query) |
-                models.Q(description__icontains=search_query) |
-                models.Q(company__company_name__icontains=search_query)
+                models.Q(title__icontains=search_query)
             )
             
         return queryset.distinct()

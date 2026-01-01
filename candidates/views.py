@@ -34,8 +34,19 @@ from .serializers import DiscoverTalentSerializer
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-
-
+from django.db import transaction
+from django.db.models import Q
+from django.core.files.storage import default_storage
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+import requests
+import json
+import io
+import logging
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from .serializers import (
     CandidateSerializer,
@@ -72,7 +83,7 @@ class PublicJobListAPIView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
     pagination_class = PageNumberPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['title', 'description', 'company__name']
+    search_fields = ['title']
     ordering_fields = ['created_at', 'salary_min', 'salary_max']
     filterset_fields = {
         'job_type': ['exact'],
@@ -88,7 +99,7 @@ class PublicProjectListAPIView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
     pagination_class = PageNumberPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['title', 'description']
+    search_fields = ['title']
     ordering_fields = ['created_at', 'budget', 'deadline']
     filterset_fields = {
         'project_type': ['exact'],
@@ -382,20 +393,6 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
             return self.get_paginated_response(data)
         return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
 
-# Main Candidate ViewSet
-from django.db import transaction
-from django.db.models import Q
-from django.core.files.storage import default_storage
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-import requests
-import json
-import io
-import logging
 
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger('exception')
