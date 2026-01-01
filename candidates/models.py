@@ -1,7 +1,7 @@
 import uuid
 from django.db import models
 from django.conf import settings
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, FileExtensionValidator
 from utils.file_validators import (
     image_upload_path,
     resume_upload_path,
@@ -70,7 +70,12 @@ class Candidate(models.Model):
     
     # Portfolio & Media
     portfolio_links = models.JSONField(default=list)  # List of dicts: {name, url}
-    profile_image = models.FileField(upload_to=image_upload_path, blank=True, null=True)
+    profile_image = models.FileField(
+        upload_to=image_upload_path, 
+        blank=True, 
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
+    )
     resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)
     video_intro_url = models.FileField(upload_to=video_upload_path, blank=True, null=True)
     intro_video_description = models.TextField(blank=True, null=True)

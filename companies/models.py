@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.validators import FileExtensionValidator
 
 
 class Company(models.Model):
@@ -21,7 +22,12 @@ class Company(models.Model):
     size = models.CharField(max_length=30, choices=SIZE_CHOICES, blank=False)
     # founded = models.PositiveIntegerField(blank=True, null=True)
     website = models.URLField(blank=True, null=True)
-    logo = models.ImageField(upload_to='companies/logos/', blank=True, null=True)
+    logo = models.ImageField(
+        upload_to='companies/logos/', 
+        blank=True, 
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
+    )
     location = models.CharField(max_length=500, blank=False)
     values = models.JSONField(default=list) 
     

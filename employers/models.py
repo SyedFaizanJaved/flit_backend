@@ -1,5 +1,5 @@
 from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, FileExtensionValidator
 from django.conf import settings
 from django.utils import timezone
 
@@ -19,7 +19,12 @@ class Employer(models.Model):
     phone = models.CharField(max_length=20, blank=True, null=True)
     position = models.CharField(max_length=100, blank=True, null=True)
     department = models.CharField(max_length=100, blank=True, null=True)
-    profile_picture = models.ImageField(upload_to='employers/profile_pictures/', blank=True, null=True)
+    profile_picture = models.ImageField(
+        upload_to='employers/profile_pictures/', 
+        blank=True, 
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
+    )
     bio = models.TextField(max_length=500, blank=True, null=True)
     
     
