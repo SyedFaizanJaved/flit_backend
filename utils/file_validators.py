@@ -4,6 +4,7 @@ import uuid
 def custom_s3_upload_path(instance, filename, folder):
     """
     Generate a custom upload path with a UUID suffix to prevent filename collisions.
+    Spaces in filename are replaced with underscores to avoid URL encoding issues.
     
     Args:
         instance: The model instance where the FileField is defined.
@@ -13,6 +14,8 @@ def custom_s3_upload_path(instance, filename, folder):
     Returns:
         str: The generated file path.
     """
+    # Replace spaces with underscores in filename to avoid URL encoding issues (%20)
+    filename = filename.replace(' ', '_')
     name, ext = os.path.splitext(filename)
     suffix = uuid.uuid4().hex[:6]
     return f"{folder}/{name}_{suffix}{ext}"
