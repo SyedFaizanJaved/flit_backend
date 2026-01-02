@@ -1,10 +1,12 @@
 import os
 import uuid
+import re
 
 def custom_s3_upload_path(instance, filename, folder):
     """
     Generate a custom upload path with a UUID suffix to prevent filename collisions.
-    Spaces in filename are replaced with underscores to avoid URL encoding issues.
+    Spaces and special characters in filename are replaced with hyphens to avoid URL encoding issues.
+    Multiple consecutive spaces/special characters are collapsed into a single hyphen.
     
     Args:
         instance: The model instance where the FileField is defined.
@@ -14,10 +16,22 @@ def custom_s3_upload_path(instance, filename, folder):
     Returns:
         str: The generated file path.
     """
-    # Replace spaces with underscores in filename to avoid URL encoding issues (%20)
-    filename = filename.replace(' ', '_')
+    # Split filename into name and extension
     name, ext = os.path.splitext(filename)
+    
+    # Replace spaces and special characters (except alphanumeric, dots, hyphens, underscores) with hyphens
+    # This includes: +, *, &, %, $, #, @, !, etc.
+    name = re.sub(r'[^a-zA-Z0-9._-]', '-', name)
+    
+    # Collapse multiple consecutive hyphens into a single hyphen
+    name = re.sub(r'-+', '-', name)
+    
+    # Remove leading and trailing hyphens
+    name = name.strip('-')
+    
+    # Generate UUID suffix
     suffix = uuid.uuid4().hex[:6]
+    
     return f"{folder}/{name}_{suffix}{ext}"
 
 def resume_upload_path(instance, filename):
