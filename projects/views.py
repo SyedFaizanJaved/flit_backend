@@ -52,10 +52,27 @@ class PublicProjectViewSet(mixins.ListModelMixin,
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         
-        # Apply any additional filtering from query parameters
+        # Get search term if any
+        search_term = request.query_params.get('search', '').strip()
+        
+        # Apply category filter if provided
         category = request.query_params.get('category')
         if category:
-            queryset = queryset.filter(category=category)
+            if search_term:
+                # If searching, include both the search term and category filter
+                queryset = queryset.filter(
+                    models.Q(title__icontains=search_term) |
+                    models.Q(description__icontains=search_term),
+                    category=category
+                )
+            else:
+                queryset = queryset.filter(category=category)
+        elif search_term:
+            # If only searching without category filter
+            queryset = queryset.filter(
+                models.Q(title__icontains=search_term) |
+                models.Q(description__icontains=search_term)
+            )
             
         payment_type = request.query_params.get('paymentType')
         if payment_type:

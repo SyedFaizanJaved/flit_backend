@@ -40,14 +40,69 @@ class PublicJobViewSet(mixins.ListModelMixin,
                       mixins.RetrieveModelMixin,
                       GenericViewSet):
     """
-    Public API: Anyone can see active jobs
+    Public API: Anyone can see active jobs with search and filtering
     """
-    queryset = Job.objects.all()
+    queryset = Job.objects.filter(status='active')
     serializer_class = JobListSerializer
     pagination_class = CustomPagination
-
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
+    search_fields = ['title', 'description', 'company__company_name']
+    ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
+    ordering = ['-created_at']
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Get search term if any
+        search_term = request.query_params.get('search', '').strip()
+        
+        # Apply category filter if provided
+        category = request.query_params.get('category')
+        if category:
+            if search_term:
+                # If searching, include both the search term and category filter
+                queryset = queryset.filter(
+                    models.Q(title__icontains=search_term) |
+                    models.Q(description__icontains=search_term) |
+                    models.Q(company__company_name__icontains=search_term),
+                    category=category
+                )
+            else:
+                queryset = queryset.filter(category=category)
+        elif search_term:
+            # If only searching without category filter
+            queryset = queryset.filter(
+                models.Q(title__icontains=search_term) |
+                models.Q(description__icontains=search_term) |
+                models.Q(company__company_name__icontains=search_term)
+            )
+            
+        # Apply other filters
+        work_style = request.query_params.get('workStyle')
+        if work_style:
+            queryset = queryset.filter(workStyle=work_style)
+            
+        experience_level = request.query_params.get('experienceLevel')
+        if experience_level:
+            queryset = queryset.filter(experienceLevel=experience_level)
+            
+        employment_type = request.query_params.get('employmentType')
+        if employment_type:
+            queryset = queryset.filter(employmentType=employment_type)
+            
+        company_id = request.query_params.get('company')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
     search_fields = ['title']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     
