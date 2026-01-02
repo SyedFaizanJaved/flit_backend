@@ -530,6 +530,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         boolean_fields = ['is_available']
 
         # ====================== FILE UPLOADS ======================
+        # Handle video deletion if remove_old_video is true
+        if data.get('remove_old_video') == 'true':
+            if candidate.video_intro_url:
+                delete_old_file(candidate.video_intro_url)
+                candidate.video_intro_url = None
+                candidate.video_transcription = None
+                candidate.intro_video_description = None
+                updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
+                logger.info("Video deleted from profile")
+
         if 'profile_image' in files:
             if candidate.profile_image:
                 delete_old_file(candidate.profile_image)
@@ -856,17 +866,12 @@ class DiscoverTalentView(generics.ListAPIView):
                     # For multi-word queries, try exact match first
                     title_query = Q(title__iexact=q)
                     
-                    # If no exact matches, try partial matches on each word
+                    # If no exact matches, try partial matches from start
                     if not qs.filter(title_query).exists() and search_type == 'title':
-                        title_query = Q()
-                        for word in words:
-                            title_query &= Q(title__icontains=word)
+                        title_query = Q(title__istartswith=q)
                 else:
-                    # For single word, try exact match first, then partial
-                    if not qs.filter(title__iexact=words[0]).exists() and search_type == 'title':
-                        title_query = Q(title__icontains=words[0])
-                    else:
-                        title_query = Q(title__iexact=words[0])
+                    # For single word, search from start of title
+                    title_query = Q(title__istartswith=words[0])
             
             # Combine queries based on search type
             if search_type == 'name':
