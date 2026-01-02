@@ -117,19 +117,7 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                 candidate_id=candidate_id
             )
 
-            # Agar same action dobara kar raha hai
-            if instance.action == requested_action:
-                if requested_action == "pass":
-                    message = "You have already flited this candidate"
-                else:
-                    message = "You have already rejected this candidate"
-
-                return Response(
-                    {"detail": message},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Different action → update kar do (e.g., pass → reject ya reject → pass)
+            # Update the action to the new one (allowing toggling between pass/reject)
             instance.action = requested_action
             instance.save()
 
