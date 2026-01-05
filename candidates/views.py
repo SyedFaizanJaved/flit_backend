@@ -353,6 +353,7 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
                         'paymentType': project.paymentType if project else item.get('payment_type', 'fixed'),
                         'paymentAmount': project.paymentAmount if project else item.get('payment_amount', 0),
                         'work_style': project.work_style if project else item.get('work_style', 'remote'),
+                        'deadline': project.deadline.isoformat() if project and hasattr(project, 'deadline') and project.deadline else None,
                         'company_name': company_name,
                         'company_id': company_id,
                     }
@@ -380,6 +381,7 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
             work_style = serializers.CharField()
             company_name = serializers.CharField()
             company_id = serializers.IntegerField(allow_null=True)
+            deadline = serializers.CharField(allow_null=True)
 
         return DictSerializer
 
