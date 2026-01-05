@@ -96,33 +96,8 @@ def create_google_event(user,title, description, start_time, end_time, attendees
             logger.exception("Error in Google API response")
             meet_link = None
     
-    # Send email to attendees
-    if attendees and meet_link:
-        subject = f"Meeting Scheduled: {title}"
-        body = (
-            f"Hi there,\n\n"
-            f"You have been invited to a meeting.\n\n"
-            f"Title: {title}\n"
-            f"Description: {description or 'No description provided.'}\n"
-            f"Start Time (UTC): {start_time}\n"
-            f"End Time (UTC): {end_time}\n"
-            f"Google Meet Link: {meet_link}\n\n"
-            f"Regards,\nVR Meet Team"
-        )
-
-        try:
-            send_mail(
-                subject=subject,
-                message=body,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=attendees,
-                fail_silently=False,
-            )
-            print(f"Email sent successfully to {', '.join(attendees)}")
-        except Exception as e:
-            logger.exception("Email sending failed")
-            print(f"Email sending failed: {e}")
-            pass
+    # Google Calendar will automatically send invitations to attendees
+    # No need for custom email sending as it causes duplicate emails
 
     return meet_link, event.get("id")
 
