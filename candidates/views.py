@@ -340,21 +340,23 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
                         company_name = item['company'].get('company_name', 'Unknown')
                         company_id = item['company'].get('id')
                     
-                    formatted.append({
+                    # Use project data from database if available, otherwise use ML API data
+                    project_data = {
                         'id': pid,
-                        'title': item.get('title', 'No Title'),
-                        'description': item.get('description', ''),
-                        'category': item.get('category', 'other'),
-                        'status': 'active',
-                        'created_at': item.get('created_at', timezone.now().isoformat()),
-                        'skills': item.get('skills', []),
-                        'estimatedHours': item.get('estimated_hours', '1-2 weeks'),
-                        'paymentType': item.get('payment_type', 'fixed'),
-                        'paymentAmount': item.get('payment_amount', 0),
-                        'work_style': item.get('work_style', 'remote'),
+                        'title': project.title if project else item.get('title', 'No Title'),
+                        'description': project.description if project else item.get('description', ''),
+                        'category': project.category if project else item.get('category', 'other'),
+                        'status': project.status if project else 'active',
+                        'created_at': project.created_at.isoformat() if project else item.get('created_at', timezone.now().isoformat()),
+                        'skills': list(project.skills) if project and hasattr(project, 'skills') else item.get('skills', []),
+                        'estimatedHours': project.estimatedHours if project and hasattr(project, 'estimatedHours') else item.get('estimated_hours', '1-2 weeks'),
+                        'paymentType': project.paymentType if project else item.get('payment_type', 'fixed'),
+                        'paymentAmount': project.paymentAmount if project else item.get('payment_amount', 0),
+                        'work_style': project.work_style if project else item.get('work_style', 'remote'),
                         'company_name': company_name,
                         'company_id': company_id,
-                    })
+                    }
+                    formatted.append(project_data)
                 cache.set(cache_key, formatted, timeout=300)
                 return formatted
         except Exception as e:
