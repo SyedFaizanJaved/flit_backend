@@ -79,7 +79,7 @@ class Job(models.Model):
         ('operations', 'Operations'),
         ('writing', 'Writing'),
         ('technology/Digital', 'Technology/Digital'),
-        ('creative/,media', 'Creative/Media'),
+        ('creative/media', 'Creative/Media'),
         ('business/finance', 'Business/Finance'),
         ('trades/labour', 'Trades/Labour'),
         ('healthcare & welness', 'Healthcare & Wellness'),

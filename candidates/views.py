@@ -322,12 +322,17 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
                     if not pid:
                         continue
                         
-                    # Try to get project from database to fetch company info
+                    # Try to get active or open project from database
                     project = None
                     try:
-                        project = Project.objects.filter(id=pid).select_related('company').first()
+                        project = Project.objects.filter(
+                            id=pid, 
+                            status__in=['active', 'open']
+                        ).select_related('company').first()
+                        if not project:
+                            continue  # Skip if project is not active/open or doesn't exist
                     except (Project.DoesNotExist, ValueError):
-                        pass
+                        continue  # Skip if project doesn't exist
                     
                     # Prepare company info
                     company_name = 'Unknown'
@@ -340,20 +345,20 @@ class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
                         company_name = item['company'].get('company_name', 'Unknown')
                         company_id = item['company'].get('id')
                     
-                    # Use project data from database if available, otherwise use ML API data
+                    # Use project data from database (guaranteed to be active at this point)
                     project_data = {
-                        'id': pid,
-                        'title': project.title if project else item.get('title', 'No Title'),
-                        'description': project.description if project else item.get('description', ''),
-                        'category': project.category if project else item.get('category', 'other'),
-                        'status': project.status if project else 'active',
-                        'created_at': project.created_at.isoformat() if project else item.get('created_at', timezone.now().isoformat()),
-                        'skills': list(project.skills) if project and hasattr(project, 'skills') else item.get('skills', []),
-                        'estimatedHours': project.estimatedHours if project and hasattr(project, 'estimatedHours') else item.get('estimated_hours', '1-2 weeks'),
-                        'paymentType': project.paymentType if project else item.get('payment_type', 'fixed'),
-                        'paymentAmount': project.paymentAmount if project else item.get('payment_amount', 0),
-                        'work_style': project.work_style if project else item.get('work_style', 'remote'),
-                        'deadline': project.deadline.isoformat() if project and hasattr(project, 'deadline') and project.deadline else None,
+                        'id': project.id,
+                        'title': project.title,
+                        'description': project.description,
+                        'category': project.category,
+                        'status': project.status,
+                        'created_at': project.created_at.isoformat(),
+                        'skills': list(project.skills) if hasattr(project, 'skills') else [],
+                        'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
+                        'paymentType': project.paymentType,
+                        'paymentAmount': project.paymentAmount,
+                        'work_style': project.work_style,
+                        'deadline': project.deadline.isoformat() if hasattr(project, 'deadline') and project.deadline else None,
                         'company_name': company_name,
                         'company_id': company_id,
                     }
