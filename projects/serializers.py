@@ -258,7 +258,7 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         fields = (
             'title', 'description', 'company_name', 'category', 'skills',
             'paymentType', 'paymentAmount', 'estimatedHours', 
-            'deadline', 'status'
+            'deadline', 'status', 'work_style'
         )
         extra_kwargs = {
             'title': {'required': True},
