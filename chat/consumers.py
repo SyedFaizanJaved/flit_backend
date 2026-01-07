@@ -44,37 +44,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             total_count = result.get('total_count', 0)
 
             if updated_count > 0:
-                user_ids = sorted([str(messages_from_id), str(read_by_id)])
-                room_name = f"chat_{'_'.join(user_ids)}"
-
-                # Broadcast to chat room (real-time seen)
-                await self.channel_layer.group_send(
-                    room_name,
-                    {
-                        'type': 'messages_read',
-                        'sender_id': messages_from_id,
-                        'recipient_id': read_by_id,
-                        'read_at': str(timezone.now()),
-                        'unread_count': unread_count,
-                        'total_count': total_count
-                    }
-                )
-
-                # Broadcast to both users' chat lists
-                for user_id in [messages_from_id, read_by_id]:
-                    user_type = 'employer' if await self.is_employer(user_id) else 'candidate'
-                    group_name = f'chat_list_{user_type}_{user_id}'
-                    await self.channel_layer.group_send(
-                        group_name,
-                        {
-                            'type': 'message_read',
-                            'sender_id': messages_from_id,
-                            'recipient_id': read_by_id,
-                            'unread_count': unread_count,
-                            'total_count': total_count
-                        }
-                    )
-
                 self.logger.info(
                     f"Marked {updated_count} messages as read from {messages_from_id} to {read_by_id}"
                 )
