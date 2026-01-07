@@ -40,13 +40,28 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             result = await self.update_unread_count(messages_from_id, read_by_id, increment=False)
             updated_count = result.get('updated_count', 0)
-            unread_count = result.get('unread_count', 0)
-            total_count = result.get('total_count', 0)
 
             if updated_count > 0:
                 self.logger.info(
                     f"Marked {updated_count} messages as read from {messages_from_id} to {read_by_id}"
                 )
+
+                is_from_employer = await self.is_employer(messages_from_id)
+                from_type = 'employer' if is_from_employer else 'candidate'
+
+                is_to_employer = await self.is_employer(read_by_id)
+                to_type = 'employer' if is_to_employer else 'candidate'
+
+                await self.channel_layer.group_send(
+                    f'chat_list_{from_type}_{messages_from_id}',
+                    {'type': 'chat_list_update'}
+                )
+
+                await self.channel_layer.group_send(
+                    f'chat_list_{to_type}_{read_by_id}',
+                    {'type': 'chat_list_update'}
+                )
+
         except Exception as e:
             self.logger.error(f"Error in handle_messages_read: {str(e)}")
 
@@ -121,8 +136,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def update_unread_count(self, sender_id, recipient_id, increment=True):
-        from django.db.models import F, Count, Sum
-        from .models import ChatMessage
+        from django.db.models import F, Count
         
         if increment:
             updated = ChatMessage.objects.filter(
@@ -130,7 +144,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 recipient_id=recipient_id,
                 is_read=False
             ).update(unread_count=F('unread_count') + 1)
-            self.logger.debug(f"Incremented unread_count for {updated} messages from {sender_id} to {recipient_id}")
             
             unread_counts = ChatMessage.objects.filter(
                 recipient_id=recipient_id,
@@ -162,8 +175,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
             
             return {
-                'unread_count': unread_counts.get('unread_count', 0),
-                'total_count': unread_counts.get('total_count', 0),
+                'unread_count': unread_counts.get('total_unread', 0),
+                'total_count': unread_counts.get('unique_senders', 0),
                 'updated_count': updated
             }
 
@@ -286,16 +299,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'message_id': event['message_id'],
             'messageType': event['messageType'],
             'timestamp': event['timestamp'],
-            'unread_count': event.get('unread_count', 0),
-            'total_count': event.get('total_count', 0)
-        }))
-
-    async def messages_read(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'messages_read',
-            'sender_id': event['sender_id'],
-            'recipient_id': event['recipient_id'],
-            'read_at': event['read_at'],
             'unread_count': event.get('unread_count', 0),
             'total_count': event.get('total_count', 0)
         }))
@@ -437,11 +440,6 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                 profile_image_url = profile_image.url if profile_image and hasattr(profile_image, 'url') else None
                 full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or f"User {user.id}"
                 
-                latest_msg = ChatMessage.objects.filter(
-                    (Q(sender=user, recipient_id=user_id) | 
-                     Q(recipient=user, sender_id=user_id))
-                ).order_by('-created_at').first()
-                
                 title = ''
                 if hasattr(user, 'candidate_profile') and user.candidate_profile:
                     title = getattr(user.candidate_profile, 'title', '') or ''
@@ -454,7 +452,7 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                 user_data = {
                     'user_id': user.id,
                     'full_name': full_name,
-                    'title': title,  # Use the title we got from candidate_profile
+                    'title': title,
                     'profile_image': profile_image_url,
                     'last_message_time': user.last_message_time.isoformat() if hasattr(user, 'last_message_time') and user.last_message_time else None,
                     'unread_count': user.unread_count if hasattr(user, 'unread_count') else 0
@@ -496,11 +494,6 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                 employer_profile = getattr(user, 'employer_profile', None)
                 candidate_profile = getattr(user, 'candidate_profile', None)
                 
-                latest_msg = ChatMessage.objects.filter(
-                    (Q(sender=user, recipient_id=user_id) | 
-                     Q(recipient=user, sender_id=user_id))
-                ).order_by('-created_at').first()
-                
                 if employer_profile:
                     # Format for company users
                     company = getattr(employer_profile, 'company', None)
@@ -524,7 +517,7 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                         'company_name': company_name,
                         'industry': industry,
                         'logo': logo_url,
-                        'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
+                        'last_message_time': user.last_message_time.isoformat() if hasattr(user, 'last_message_time') and user.last_message_time else None,
                         'last_seen': user.last_login.isoformat() if user.last_login else None,
                         'unread_count': user.unread_count or 0,
                         'user_type': 'company'
@@ -544,7 +537,7 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
                         'full_name': full_name,
                         'title': title,
                         'profile_image': profile_image_url,
-                        'last_message_time': latest_msg.created_at.isoformat() if latest_msg else None,
+                        'last_message_time': user.last_message_time.isoformat() if hasattr(user, 'last_message_time') and user.last_message_time else None,
                         'unread_count': user.unread_count or 0
                     }
                     
@@ -579,7 +572,6 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
             await self.send_chat_list()
         else:
             self.logger.debug(f"Message not relevant for user {current_user_id}, skipping update")
-    
-    async def message_read(self, event):
-        self.logger.debug(f"Chat list refresh on message read for {self.group_name}")
+
+    async def chat_list_update(self, event):
         await self.send_chat_list()
