@@ -36,7 +36,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'skills', 'deadline', 'required_skills',
-            'status', 'created_at', 'updated_at', 'is_applied'
+            'status', 'work_style', 'created_at', 'updated_at', 'is_applied'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
     
@@ -203,7 +203,8 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         model = Project
         fields = (
             'title', 'description', 'company', 'category', 'skills', 'required_skills',
-            'paymentType', 'paymentAmount', 'estimatedHours', 'deadline','status'
+            'paymentType', 'paymentAmount', 'estimatedHours', 'deadline', 'status',
+            'work_style', 'collaboration', 'application_deadline', 'max_applicants'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -214,7 +215,11 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
             'paymentAmount': {'required': True, 'min_value': 0},
             'estimatedHours': {'required': True},
             'deadline': {'required': True},
-            'status': {'required': False}
+            'status': {'required': False},
+            'work_style': {'required': False},
+            'collaboration': {'required': False},
+            'application_deadline': {'required': False},
+            'max_applicants': {'required': False}
         }
     
     def create(self, validated_data):
