@@ -27,7 +27,7 @@ class Project(models.Model):
     
     WORK_STYLE_CHOICES = [
         ('remote', 'Remote'),
-        ('office', 'Office'),
+        ('in-person', 'In-Person'),
         ('hybrid', 'Hybrid'),
     ]
     
