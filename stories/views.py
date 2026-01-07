@@ -35,11 +35,12 @@ logger = logging.getLogger('stories')
 # STORY VIEWS
 # =============================
 
+
 class StoryListCreateView(generics.ListCreateAPIView):
     serializer_class = StorySerializer
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
-    pagination_class = CustomPagination  # Added pagination
+    pagination_class = CustomPagination
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -47,6 +48,7 @@ class StoryListCreateView(generics.ListCreateAPIView):
         return context
 
     def perform_create(self, serializer):
+        # ... (perform_create remains unchanged - same as before)
         user = self.request.user
         user_type = None
         company_id = None
@@ -90,19 +92,19 @@ class StoryListCreateView(generics.ListCreateAPIView):
         twenty_four_hours_ago = timezone.now() - timedelta(hours=24)
         queryset = queryset.filter(created_at__gte=twenty_four_hours_ago)
 
+        # Optional filter by user_type via query param (e.g., ?user_type=candidate)
         user_type = self.request.query_params.get('user_type')
         if user_type in ['employer', 'candidate']:
             queryset = queryset.filter(user_type=user_type)
-        elif hasattr(self.request.user, 'employer_profile'):
-            queryset = queryset.filter(user_type='employer')
-        elif hasattr(self.request.user, 'candidate_profile'):
-            queryset = queryset.filter(user_type='candidate')
 
+        # Optional filter by specific user
         user_id = self.request.query_params.get('user_id')
         if user_id:
             queryset = queryset.filter(user_id=user_id)
 
-        # Annotations for Story (likes is direct M2M, comments via FK)
+        # NO automatic filtering by logged-in user's type → everyone sees all stories
+
+        # Annotations
         like_count_sq = Subquery(
             Story.objects.filter(pk=OuterRef('pk'))
             .annotate(count=Count('likes'))
@@ -125,6 +127,7 @@ class StoryListCreateView(generics.ListCreateAPIView):
                 SavedStory.objects.filter(story_id=OuterRef('pk'), user=user)
             )
         ).order_by('-created_at')
+
 
 class StoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Story.objects.all()
@@ -720,6 +723,12 @@ class CandidateListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
 
+        queryset = Candidate.objects.all()
+
+        # Hide own candidate profile if the logged-in user is a candidate
+        if hasattr(user, 'candidate_profile'):
+            queryset = queryset.exclude(id=user.candidate_profile.id)
+
         like_count_sq = Like.objects.filter(
             candidate_id=OuterRef('pk')
         ).values('candidate_id').annotate(count=Count('id')).values('count')
@@ -732,7 +741,7 @@ class CandidateListView(generics.ListAPIView):
             story__candidate_id=OuterRef('pk')
         ).values('story__candidate_id').annotate(count=Count('id')).values('count')
 
-        return Candidate.objects.all().annotate(
+        return queryset.annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(candidate_id=OuterRef('pk'), user=user)),
@@ -743,6 +752,7 @@ class CandidateListView(generics.ListAPIView):
             ))
         ).order_by('-created_at')
 
+        
 class UserStoriesView(generics.ListAPIView):
     """
     View to get all stories for a specific user
