@@ -1,14 +1,5 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 from . import views
-from .views_company_project_job import (
-    CompanyLikeView, CompanyCommentListCreateView, CompanySaveView,
-    ProjectLikeView, ProjectCommentListCreateView, ProjectSaveView,
-    JobLikeView, JobCommentListCreateView, JobSaveView,
-    CompanyListView, ProjectListView, JobListView, CandidateListView,
-    CandidateLikeView, CandidateCommentListCreateView, CandidateSaveView,
-    AllSavedItemsView,UserStoriesView
-)
 
 app_name = 'stories'
 
@@ -23,33 +14,32 @@ urlpatterns = [
     path('saved/', views.SavedStoriesListView.as_view(), name='saved-stories'),
 
     # User stories
-    path('<int:user_id>/stories/', UserStoriesView.as_view(), name='user-stories'),
+    path('<int:user_id>/stories/', views.UserStoriesView.as_view(), name='user-stories'),
 
-    
     # Company interaction endpoints
-    path('companies/', CompanyListView.as_view(), name='company-list'),
-    path('companies/<int:pk>/like/', CompanyLikeView.as_view(), name='company-like'),
-    path('companies/<int:pk>/comments/', CompanyCommentListCreateView.as_view(), name='company-comments'),
-    path('companies/<int:pk>/save/', CompanySaveView.as_view(), name='company-save'),
-    
+    path('companies/', views.CompanyListView.as_view(), name='company-list'),
+    path('companies/<int:pk>/like/', views.CompanyLikeView.as_view(), name='company-like'),
+    path('companies/<int:pk>/comments/', views.CompanyCommentListCreateView.as_view(), name='company-comments'),
+    path('companies/<int:pk>/save/', views.CompanySaveView.as_view(), name='company-save'),
+
     # Project interaction endpoints
-    path('projects/', ProjectListView.as_view(), name='project-list'),
-    path('projects/<int:pk>/like/', ProjectLikeView.as_view(), name='project-like'),
-    path('projects/<int:pk>/comments/', ProjectCommentListCreateView.as_view(), name='project-comments'),
-    path('projects/<int:pk>/save/', ProjectSaveView.as_view(), name='project-save'),
-    
+    path('projects/', views.ProjectListView.as_view(), name='project-list'),
+    path('projects/<int:pk>/like/', views.ProjectLikeView.as_view(), name='project-like'),
+    path('projects/<int:pk>/comments/', views.ProjectCommentListCreateView.as_view(), name='project-comments'),
+    path('projects/<int:pk>/save/', views.ProjectSaveView.as_view(), name='project-save'),
+
     # Job interaction endpoints
-    path('jobs/', JobListView.as_view(), name='job-list'),
-    path('jobs/<int:pk>/like/', JobLikeView.as_view(), name='job-like'),
-    path('jobs/<int:pk>/comments/', JobCommentListCreateView.as_view(), name='job-comments'),
-    path('jobs/<int:pk>/save/', JobSaveView.as_view(), name='job-save'),
-    
+    path('jobs/', views.JobListView.as_view(), name='job-list'),
+    path('jobs/<int:pk>/like/', views.JobLikeView.as_view(), name='job-like'),
+    path('jobs/<int:pk>/comments/', views.JobCommentListCreateView.as_view(), name='job-comments'),
+    path('jobs/<int:pk>/save/', views.JobSaveView.as_view(), name='job-save'),
+
     # Candidate interaction endpoints
-    path('candidates/', CandidateListView.as_view(), name='candidate-list'),
-    path('candidates/<int:pk>/like/', CandidateLikeView.as_view(), name='candidate-like'),
-    path('candidates/<int:pk>/comments/', CandidateCommentListCreateView.as_view(), name='candidate-comments'),
-    path('candidates/<int:pk>/save/', CandidateSaveView.as_view(), name='candidate-save'),
-    
-    # Saved items
-    path('saved-items/', AllSavedItemsView.as_view(), name='all-saved-items'),
+    path('candidates/', views.CandidateListView.as_view(), name='candidate-list'),
+    path('candidates/<int:pk>/like/', views.CandidateLikeView.as_view(), name='candidate-like'),
+    path('candidates/<int:pk>/comments/', views.CandidateCommentListCreateView.as_view(), name='candidate-comments'),
+    path('candidates/<int:pk>/save/', views.CandidateSaveView.as_view(), name='candidate-save'),
+
+    # All saved items (companies, projects, jobs, candidates)
+    path('saved-items/', views.AllSavedItemsView.as_view(), name='all-saved-items'),
 ]
