@@ -5,48 +5,27 @@ import os
 import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
-from django.db.models import Q, F, Count, Case, When
+from django.db import transaction
+from django.db.models import Q, F, Count, Case, When, Value, IntegerField
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import status, permissions, viewsets, generics
+from rest_framework import viewsets, generics, permissions, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import PermissionDenied, NotFound
-from utils.pagination import CustomPagination  # YE SAHI HAI
+from utils.pagination import CustomPagination
+from utils.file_validators import (
+    resume_upload_path, video_upload_path, image_upload_path, document_upload_path
+)
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from jobs.models import Job
 from jobs.serializers import JobListSerializer
 from applications.models import JobApplication as Application, ProjectApplication
-from companies.models import Company
-from rest_framework import serializers 
-from employers.models import Employer
-import re
-from django.db.models import Q
-from rest_framework import generics
-from projects.models import Project
-from companies.models import Company
-from .models import Candidate
-from .serializers import DiscoverTalentSerializer
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from django.db import transaction
-from django.db.models import Q
-from django.core.files.storage import default_storage
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-import requests
-import json
-import io
-import logging
+from accounts.views import BaseRoleRegistrationView
+
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
 from .serializers import (
     CandidateSerializer,
@@ -54,13 +33,7 @@ from .serializers import (
     ReferenceRequestSerializer,
     WorkDNAQuestionSerializer,
     DiscoverTalentSerializer,
-    CompanyWithOpeningsSerializer,
 )
-from utils.pagination import CustomPagination
-from utils.file_validators import (
-    resume_upload_path, video_upload_path, image_upload_path, document_upload_path
-)
-from accounts.views import BaseRoleRegistrationView
 
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
@@ -76,12 +49,11 @@ class CandidateAccessMixin:
             raise NotFound("Candidate profile not found.")
 
 
-# Public Views
 class PublicJobListAPIView(generics.ListAPIView):
     queryset = Job.objects.filter(status='active')
     serializer_class = JobListSerializer
     permission_classes = [permissions.AllowAny]
-    pagination_class = PageNumberPagination
+    pagination_class = CustomPagination  
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['title']
     ordering_fields = ['created_at', 'salary_min', 'salary_max']
@@ -97,7 +69,7 @@ class PublicProjectListAPIView(generics.ListAPIView):
     queryset = Project.objects.filter(status='active')
     serializer_class = ProjectListSerializer
     permission_classes = [permissions.AllowAny]
-    pagination_class = PageNumberPagination
+    pagination_class = CustomPagination  
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['title']
     ordering_fields = ['created_at', 'budget', 'deadline']
@@ -108,310 +80,36 @@ class PublicProjectListAPIView(generics.ListAPIView):
         'collaboration_style': ['exact'],
     }
 
-
 class CandidateRegistrationView(BaseRoleRegistrationView):
     fixed_user_type = "candidate"
 
 
-# Dashboard Views
-class DashboardBaseView(CandidateAccessMixin, APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-
-class CandidateDashboardView(DashboardBaseView):
-    def get(self, request):
-        candidate = self.get_candidate()
-        return Response({
-            'profile': CandidateSerializer(candidate, context={'request': request}).data,
-            'applications': self._get_applications_data(candidate),
-            'latest_jobs': self._get_latest_jobs(candidate),
-            'latest_projects': self._get_latest_projects(candidate),
-        })
-
-    def _get_applications_data(self, candidate):
-        counts = Application.objects.filter(
-            candidate=candidate,
-            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
-        ).aggregate(
-            total=Count('id'),
-            job_apps=Count('id', filter=Q(job__isnull=False)),
-            project_apps=Count('id', filter=Q(project__isnull=False))
-        )
-        return {
-            'total_applications': counts['total'] or 0,
-            'job_applications_count': counts['job_apps'] or 0,
-            'project_applications_count': counts['project_apps'] or 0,
-            'references_count': ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count(),
-        }
-
-    def _get_latest_jobs(self, candidate, limit=5):
-        jobs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
-        return JobListSerializer(jobs, many=True, context={'request': self.request}).data
-
-    def _get_latest_projects(self, candidate, limit=5):
-        projects = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
-        return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
-
-
-class CandidateProfileDashboardView(DashboardBaseView):
-    def get(self, request):
-        candidate = self.get_candidate()
-        applications_count = Application.objects.filter(
-            candidate=candidate,
-            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
-        ).count()
-        job_count = Application.objects.filter(candidate=candidate, job__isnull=False).count()
-        project_count = applications_count - job_count
-        references_count = ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count()
-        reference_requests_count = ReferenceRequest.objects.filter(candidate=candidate).count()
-
-        return Response({
-            'profile': CandidateSerializer(candidate, context={'request': request}).data,
-            'profile_completed': candidate.is_profile_complete,
-            'applications_count': applications_count,
-            'job_applications_count': job_count,
-            'project_applications_count': project_count,
-            'references_count': references_count,
-            'reference_requests_count': reference_requests_count,
-        })
-
-
-class CandidateApplicationsView(DashboardBaseView, generics.ListAPIView):
+# ==================== REFERENCE REQUEST VIEWSET ====================
+class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
+    serializer_class = ReferenceRequestSerializer
     pagination_class = CustomPagination
 
-    def get_queryset(self):
-        candidate = self.get_candidate()
-        job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
-        project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
-
-        formatted = []
-        for app in job_apps:
-            formatted.append(self._format_app(app, 'job'))
-        for app in project_apps:
-            formatted.append(self._format_app(app, 'project'))
-        formatted.sort(key=lambda x: x['applied_at'], reverse=True)
-        return formatted
-
-    def _format_app(self, app, app_type):
-        if app_type == 'job':
-            return {
-                'app_id': app.id,
-                'id': app.job.id if app.job else None,
-                'title': app.job.title if app.job else 'Unknown',
-                'company': app.job.company.name if app.job and app.job.company else 'Unknown',
-                'status': app.status,
-                'applied_at': app.applied_at,
-                'type': 'job'
-            }
-        return {
-            'app_id': app.id,
-            'id': app.project.id if app.project else None,
-            'title': app.project.title if app.project else 'Unknown',
-            'company': app.project.company.name if app.project and app.project.company else 'Unknown',
-            'status': app.status,
-            'applied_at': app.applied_at,
-            'type': 'project'
-        }
-
-    def list(self, request, *args, **kwargs):
-        candidate = self.get_candidate()
-        queryset = self.get_queryset()
-        page = self.paginate_queryset(queryset)
-
-        counts = {
-            'job': Application.objects.filter(candidate=candidate).count(),
-            'project': ProjectApplication.objects.filter(candidate=candidate).count(),
-        }
-
-        data = {
-            'total_applications': counts['job'] + counts['project'],
-            'job_applications_count': counts['job'],
-            'project_applications_count': counts['project'],
-        }
-
-        if page is not None:
-            data['applications'] = page
-            return self.get_paginated_response(data)
-
-        data['applications'] = queryset
-        return Response(data)
-
-
-# Latest Jobs & Projects
-class CandidateLatestJobsView(CandidateAccessMixin, generics.ListAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = CustomPagination
-    serializer_class = JobListSerializer
+    def get_permissions(self):
+        if self.action == 'retrieve':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        from django.core.cache import cache
-        candidate = self.get_candidate()
-        cache_key = f'candidate_{candidate.id}_latest_jobs'
-        cached = cache.get(cache_key)
+        if self.action in ['retrieve']:
+            return ReferenceRequest.objects.all()
+        return ReferenceRequest.objects.filter(candidate=self.get_candidate()).order_by('-created_at')
 
-        if cached and cached.get('ml_success'):
-            return cached.get('jobs', [])
-
-        try:
-            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-            response = requests.get(ml_url, timeout=15)
-            if response.status_code == 200:
-                ranked = response.json().get('ranked_opportunities', [])
-                jobs = []
-                for item in ranked:
-                    job_id = item.get('job_id') or item.get('id')
-                    if not job_id:
-                        continue
-                    company = item.get('company', {})
-                    jobs.append({
-                        'id': job_id,
-                        'title': item.get('title', 'No Title'),
-                        'description': item.get('description', ''),
-                        'workStyle': item.get('work_style', 'remote'),
-                        'category': item.get('category', 'other'),
-                        'experienceLevel': item.get('experience_level', 'mid'),
-                        'employmentType': item.get('employment_type', 'full-time'),
-                        'salaryRangeMin': item.get('salary_range', {}).get('min'),
-                        'salaryRangeMax': item.get('salary_range', {}).get('max'),
-                        'status': item.get('status', 'active'),
-                        'created_at': item.get('created_at', timezone.now().isoformat()),
-                        'location': item.get('location'),
-                        'skills': item.get('skills', []),
-                        'company_name': company.get('company_name', 'Unknown'),
-                        'company_id': company.get('id'),
-                    })
-                if jobs:
-                    cache.set(cache_key, {'jobs': jobs, 'ml_success': True}, timeout=300)
-                return jobs
-        except Exception as e:
-            logger.warning(f"ML jobs fetch failed: {e}")
-        return []
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        page = self.paginate_queryset(queryset)
-        data = {'ml_success': bool(queryset), 'latest_jobs': page if page is not None else queryset}
-        if page is not None:
-            return self.get_paginated_response(data)
-        return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
+    def perform_create(self, serializer):
+        serializer.save(candidate=self.get_candidate())
 
 
-class CandidateLatestProjectsView(CandidateAccessMixin, generics.ListAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = CustomPagination
-    # serializer_class = ProjectListSerializer  # ← YEH COMMENT OUT KAR DO
-
-    def get_queryset(self):
-        from django.core.cache import cache
-        candidate = self.get_candidate()
-        cache_key = f'candidate_{candidate.id}_latest_projects'
-        cached = cache.get(cache_key)
-        if cached:
-            return cached
-
-        try:
-            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-            response = requests.get(ml_url, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                projects = data.get('ranked_projects') or data.get('opportunities') or []
-                
-                formatted = []
-                for item in projects:
-                    pid = item.get('id') or item.get('project_id')
-                    if not pid:
-                        continue
-                        
-                    # Try to get active or open project from database
-                    project = None
-                    try:
-                        project = Project.objects.filter(
-                            id=pid, 
-                            status__in=['active', 'open']
-                        ).select_related('company').first()
-                        if not project:
-                            continue  # Skip if project is not active/open or doesn't exist
-                    except (Project.DoesNotExist, ValueError):
-                        continue  # Skip if project doesn't exist
-                    
-                    # Prepare company info
-                    company_name = 'Unknown'
-                    company_id = None
-                    
-                    if project and project.company:
-                        company_name = project.company.company_name
-                        company_id = project.company.id
-                    elif isinstance(item.get('company'), dict):
-                        company_name = item['company'].get('company_name', 'Unknown')
-                        company_id = item['company'].get('id')
-                    
-                    # Use project data from database (guaranteed to be active at this point)
-                    project_data = {
-                        'id': project.id,
-                        'title': project.title,
-                        'description': project.description,
-                        'category': project.category,
-                        'status': project.status,
-                        'created_at': project.created_at.isoformat(),
-                        'skills': list(project.skills) if hasattr(project, 'skills') else [],
-                        'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
-                        'paymentType': project.paymentType,
-                        'paymentAmount': project.paymentAmount,
-                        'work_style': project.work_style,
-                        'deadline': project.deadline.isoformat() if hasattr(project, 'deadline') and project.deadline else None,
-                        'company_name': company_name,
-                        'company_id': company_id,
-                    }
-                    formatted.append(project_data)
-                cache.set(cache_key, formatted, timeout=300)
-                return formatted
-        except Exception as e:
-            logger.warning(f"ML projects fetch failed: {e}")
-        return []
-
-    # Serializer dynamically set karo kyun ke hum dict return kar rahe hain
-    def get_serializer_class(self):
-        # Ek simple dict serializer return karo jo sirf data pass through kare
-        class DictSerializer(serializers.Serializer):
-            id = serializers.IntegerField()
-            title = serializers.CharField()
-            description = serializers.CharField()
-            category = serializers.CharField()
-            status = serializers.CharField()
-            created_at = serializers.CharField()
-            skills = serializers.ListField(child=serializers.CharField())
-            estimatedHours = serializers.CharField()  # ← Yeh add kiya
-            paymentType = serializers.CharField()
-            paymentAmount = serializers.IntegerField()
-            work_style = serializers.CharField()
-            company_name = serializers.CharField()
-            company_id = serializers.IntegerField(allow_null=True)
-            deadline = serializers.CharField(allow_null=True)
-
-        return DictSerializer
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(queryset if page is None else page, many=True)
-        data = {
-            'ml_success': bool(queryset),
-            'latest_projects': serializer.data
-        }
-        if page is not None:
-            return self.get_paginated_response(data)
-        return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
-
-
-logger = logging.getLogger(__name__)
-exception_logger = logging.getLogger('exception')
-
+# ==================== MAIN CANDIDATE VIEWSET ====================
 class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     queryset = Candidate.objects.all()
     serializer_class = CandidateSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    pagination_class = PageNumberPagination
+    pagination_class = CustomPagination
 
     def get_object(self):
         if self.request.parser_context.get('kwargs', {}).get('pk') == 'profile':
@@ -427,19 +125,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             exception_logger.exception(f"File save failed: {e}")
             return None
 
-    # ====================== RETRIEVE (Only for viewing others' profiles) ======================
+    # ====================== RETRIEVE (public/private profile view) ======================
     def retrieve(self, request, pk=None):
         try:
             if not pk:
                 return Response({"error": "Candidate ID is required"}, status=400)
 
-            # Try by primary key first
             candidate = Candidate.objects.filter(
                 Q(pk=pk) &
                 (Q(profile_visibility="public") | Q(user=request.user))
             ).select_related('user').first()
 
-            # If not found, try by user__id
             if not candidate:
                 candidate = Candidate.objects.filter(
                     Q(user__id=pk) &
@@ -451,7 +147,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     "error": "Candidate not found or you don't have permission to view this profile"
                 }, status=404)
 
-            # Track profile view by employer
+            # Track profile view
             try:
                 if (hasattr(request.user, 'employer_profile') and
                     (not hasattr(request.user, 'candidate_profile') or candidate.user_id != request.user.id)):
@@ -473,21 +169,19 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             exception_logger.error(f"Unexpected error in candidate retrieve: {str(e)}", exc_info=True)
             return Response({"error": "An unexpected error occurred"}, status=500)
 
-    # ====================== PROFILE ENDPOINT (Own profile: GET + PATCH + PUT) ======================
-    @action(detail=False, methods=['get', 'patch', 'put'])
+    # ====================== PROFILE (own profile GET/PATCH/PUT) ======================
+    @action(detail=False, methods=['get', 'patch', 'put'], url_path='profile')
     def profile(self, request):
-        candidate = self.get_candidate()  # Assumes you have this method in CandidateAccessMixin
+        candidate = self.get_candidate()
 
         if request.method == 'GET':
             serializer = self.get_serializer(candidate)
             return Response(serializer.data)
 
-        # ====================== PATCH / PUT ======================
         data = request.data
         files = request.FILES
         updated_fields = []
 
-        # --------------------- Helper Functions ---------------------
         def to_boolean(value):
             if isinstance(value, bool):
                 return value
@@ -538,8 +232,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         list_fields = ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']
         boolean_fields = ['is_available']
 
-        # ====================== FILE UPLOADS ======================
-        # Handle video deletion if remove_old_video is true
+        # Video deletion
         if data.get('remove_old_video') == 'true':
             if candidate.video_intro_url:
                 delete_old_file(candidate.video_intro_url)
@@ -547,44 +240,34 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 candidate.video_transcription = None
                 candidate.intro_video_description = None
                 updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
-                logger.info("Video deleted from profile")
 
+        # File uploads
         if 'profile_image' in files:
             if candidate.profile_image:
                 delete_old_file(candidate.profile_image)
             candidate.profile_image = files['profile_image']
             updated_fields.append('profile_image')
-            logger.info("New profile image uploaded (old deleted)")
 
         if 'resume_file' in files or 'resume' in files:
             resume_file = files.get('resume_file') or files.get('resume')
             if candidate.resume_url:
                 delete_old_file(candidate.resume_url)
-
             path = self._save_file(resume_file, resume_upload_path)
             if path:
                 candidate.resume_url = path
                 candidate.portfolio_completed = True
                 updated_fields.extend(['resume_url', 'portfolio_completed'])
-                logger.info(f"New resume uploaded: {path}")
-
+                # ML parse logic 
                 try:
                     resume_file.seek(0)
                     files_ml = {'resume_file': (resume_file.name, io.BytesIO(resume_file.read()), resume_file.content_type)}
                     parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
                     resp = requests.post(parse_url, files=files_ml)
-                    logger.info(f"ML parse_cv response: {resp.status_code}")
-
                     if resp.status_code == 200:
                         result = resp.json()
                         if result.get('success'):
                             candidate.resume_data = result.get('data', {})
                             updated_fields.append('resume_data')
-                            logger.info("Resume parsed successfully")
-                        else:
-                            logger.warning(f"ML parse_cv failed: {result.get('message')}")
-                    else:
-                        logger.error(f"ML parse_cv failed: {resp.status_code}")
                 except Exception as e:
                     logger.error(f"Resume parsing exception: {e}", exc_info=True)
 
@@ -592,14 +275,12 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             video_file = files['video_file']
             if candidate.video_intro_url:
                 delete_old_file(candidate.video_intro_url)
-
             path = self._save_file(video_file, video_upload_path)
             if path:
                 candidate.video_intro_url = path
                 candidate.portfolio_completed = True
                 updated_fields.extend(['video_intro_url', 'portfolio_completed'])
-                logger.info(f"New video uploaded: {path}")
-
+                # ML video analysis
                 try:
                     video_file.seek(0)
                     analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
@@ -612,10 +293,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     headers = {}
                     if hasattr(settings, 'ML_API_KEY'):
                         headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
-
                     resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers)
-                    logger.info(f"ML video analysis response: {resp.status_code}")
-
                     if resp.status_code == 200:
                         analysis = resp.json().get('analysis', {})
                         if transcription := analysis.get('video_transcript'):
@@ -624,19 +302,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if description := analysis.get('description'):
                             candidate.intro_video_description = description
                             updated_fields.append('intro_video_description')
-                        logger.info("Video analysis completed")
-                    else:
-                        logger.error(f"ML video analysis failed: {resp.status_code}")
                 except Exception as e:
                     logger.error(f"Video analysis exception: {e}", exc_info=True)
 
-        # ====================== TEXT & LIST FIELDS ======================
+        # Text & list fields
         text_fields = [
             'full_name', 'title', 'bio', 'location', 'work_style', 'availability_type', 'is_available',
             'skills', 'superpowers', 'preferred_roles', 'portfolio_links', 'profile_visibility',
             'min_salary', 'max_salary', 'seniority_level', 'passion_projects'
         ]
-
         for field in text_fields:
             if field in data:
                 value = data[field]
@@ -658,7 +332,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     setattr(candidate, field, value)
                     updated_fields.append(field)
 
-        # ====================== COMPLETION FLAGS ======================
+        # Completion flags
         if any(k in data for k in ['full_name', 'title', 'bio', 'location']):
             candidate.basic_info_completed = True
             updated_fields.append('basic_info_completed')
@@ -676,110 +350,396 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             updated_fields.append('privacy_completed')
 
         candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
-        logger.info(f"Database save completed for candidate {candidate.id}")
 
-        # ====================== ML SYNC ======================
+        # ML sync (
         ml_success = True
         ml_message = "All ML APIs successfully executed"
-
         try:
-            ml_payload = {
-                "full_name": candidate.full_name or "",
-                "title": candidate.title or "",
-                "bio": candidate.bio or "",
-                "location": candidate.location or "",
-                "work_style": candidate.work_style or "",
-                "skills": candidate.skills or [],
-                "superpowers": candidate.superpowers or [],
-                "preferred_roles": candidate.preferred_roles or [],
-                "is_available": candidate.is_available or False,
-                "min_salary": candidate.min_salary if candidate.min_salary is not None else None,
-                "max_salary": candidate.max_salary if candidate.max_salary is not None else None,
-                "seniority_level": candidate.seniority_level or "",
-                "passion_projects": candidate.passion_projects or "",
-                "resume_url": get_file_url(candidate.resume_url),
-                "video_intro_url": get_file_url(candidate.video_intro_url),
-                "resume_data": candidate.resume_data or {},
-                "user_id": str(candidate.user.id),
-                "email": candidate.user.email or "",
-            }
+                ml_payload = {
+                    "full_name": candidate.full_name or "",
+                    "title": candidate.title or "",
+                    "bio": candidate.bio or "",
+                    "location": candidate.location or "",
+                    "work_style": candidate.work_style or "",
+                    "skills": candidate.skills or [],
+                    "superpowers": candidate.superpowers or [],
+                    "preferred_roles": candidate.preferred_roles or [],
+                    "is_available": candidate.is_available or False,
+                    "min_salary": candidate.min_salary if candidate.min_salary is not None else None,
+                    "max_salary": candidate.max_salary if candidate.max_salary is not None else None,
+                    "seniority_level": candidate.seniority_level or "",
+                    "passion_projects": candidate.passion_projects or "",
+                    "resume_url": get_file_url(candidate.resume_url),
+                    "video_intro_url": get_file_url(candidate.video_intro_url),
+                    "resume_data": candidate.resume_data or {},
+                    "user_id": str(candidate.user.id),
+                    "email": candidate.user.email or "",
+                }
 
-            headers = {"Content-Type": "application/json"}
-            if hasattr(settings, 'ML_API_KEY'):
-                headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+                headers = {"Content-Type": "application/json"}
+                if hasattr(settings, 'ML_API_KEY'):
+                    headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
 
-            update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate.id}"
-            create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
+                update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate.id}"
+                create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate.id}"
 
-            resp = requests.patch(update_url, json=ml_payload, headers=headers)
+                resp = requests.patch(update_url, json=ml_payload, headers=headers)
 
-            if resp.status_code == 404:
-                logger.info("Candidate not in ML, creating new")
-                resp = requests.post(create_url, json=ml_payload, headers=headers)
+                if resp.status_code == 404:
+                    logger.info("Candidate not in ML, creating new")
+                    resp = requests.post(create_url, json=ml_payload, headers=headers)
 
-            if resp.status_code not in (200, 201):
-                ml_success = False
-                ml_message = f"ML sync failed: HTTP {resp.status_code}"
-                logger.error(f"ML sync failed: {resp.status_code} - {resp.text[:500]}")
-            else:
-                logger.info(f"ML sync successful ({resp.status_code})")
-                ml_data = resp.json()
-                extra_saved = False
-                if ml_data.get('candidate_profile_summary'):
-                    candidate.candidate_profile_summary = ml_data['candidate_profile_summary']
-                    extra_saved = True
-                if ml_data.get('candidate_tags'):
-                    candidate.candidate_tags = ml_data['candidate_tags']
-                    extra_saved = True
-                if extra_saved:
-                    candidate.save(update_fields=['candidate_profile_summary', 'candidate_tags', 'updated_at'])
+                if resp.status_code not in (200, 201):
+                    ml_success = False
+                    ml_message = f"ML sync failed: HTTP {resp.status_code}"
+                    logger.error(f"ML sync failed: {resp.status_code} - {resp.text[:500]}")
+                else:
+                    logger.info(f"ML sync successful ({resp.status_code})")
+                    ml_data = resp.json()
+                    extra_saved = False
+                    if ml_data.get('candidate_profile_summary'):
+                        candidate.candidate_profile_summary = ml_data['candidate_profile_summary']
+                        extra_saved = True
+                    if ml_data.get('candidate_tags'):
+                        candidate.candidate_tags = ml_data['candidate_tags']
+                        extra_saved = True
+                    if extra_saved:
+                        candidate.save(update_fields=['candidate_profile_summary', 'candidate_tags', 'updated_at'])
 
         except Exception as e:
             ml_success = False
             ml_message = "ML sync failed due to exception"
             logger.error(f"ML sync exception: {e}", exc_info=True)
 
-        # ====================== FINAL RESPONSE ======================
         response_data = CandidateSerializer(candidate, context={'request': request}).data
         response_data['ml_success'] = ml_success
         response_data['ml_message'] = ml_message
-
         return Response(response_data)
 
-
-        
-# Work DNA
-class WorkDNAQuestionView(CandidateAccessMixin, APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request, candidate_id=None):
-        if candidate_id:
-            return self.evaluate_answers(candidate_id)
-
+     
+    # ====================== DASHBOARD ACTIONS ======================
+    @action(detail=False, methods=['get'], url_path='dashboard')
+    def dashboard(self, request):
         candidate = self.get_candidate()
-        work_dna = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+        return Response({
+            'profile': CandidateSerializer(candidate, context={'request': request}).data,
+            'applications': self._get_applications_summary(candidate),
+            'latest_jobs': self._get_latest_jobs_data(candidate),
+            'latest_projects': self._get_latest_projects_data(candidate),
+        })
 
-        if work_dna:
-            return Response(WorkDNAQuestionSerializer(work_dna).data)
+    @action(detail=False, methods=['get'], url_path='dashboard/profile')
+    def profile_dashboard(self, request):
+        candidate = self.get_candidate()
+        applications_count = Application.objects.filter(
+            candidate=candidate,
+            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
+        ).count()
+        job_count = Application.objects.filter(candidate=candidate, job__isnull=False).count()
+        project_count = applications_count - job_count
+        references_count = ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count()
+        reference_requests_count = ReferenceRequest.objects.filter(candidate=candidate).count()
 
+        return Response({
+            'profile': CandidateSerializer(candidate, context={'request': request}).data,
+            'profile_completed': candidate.is_profile_complete,
+            'applications_count': applications_count,
+            'job_applications_count': job_count,
+            'project_applications_count': project_count,
+            'references_count': references_count,
+            'reference_requests_count': reference_requests_count,
+        })
+
+    @action(detail=False, methods=['get'], url_path='dashboard/applications')
+    def applications(self, request):
+            candidate = self.get_candidate()
+
+            # Get all applications (job + project)
+            job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
+            project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
+
+            formatted = []
+            for app in job_apps:
+                formatted.append(self._format_application(app, 'job'))
+            for app in project_apps:
+                formatted.append(self._format_application(app, 'project'))
+
+            # Sort newest first
+            formatted.sort(key=lambda x: x['applied_at'], reverse=True)
+
+            # Use CustomPagination properly
+            page = self.paginate_queryset(formatted)
+            
+            counts = {
+                'job': Application.objects.filter(candidate=candidate).count(),
+                'project': ProjectApplication.objects.filter(candidate=candidate).count(),
+            }
+
+            data = {
+                'total_applications': counts['job'] + counts['project'],
+                'job_applications_count': counts['job'],
+                'project_applications_count': counts['project'],
+                'applications': page if page is not None else formatted,
+            }
+
+            if page is not None:
+                return self.get_paginated_response(data)  # ← Custom format with total_pages etc.
+            
+            return Response(data)
+
+    def _format_application(self, app, app_type):
+        if app_type == 'job':
+            return {
+                'app_id': app.id,
+                'id': app.job.id if app.job else None,
+                'title': app.job.title if app.job else 'Unknown',
+                'company': app.job.company.name if app.job and app.job.company else 'Unknown',
+                'status': app.status,
+                'applied_at': app.applied_at,
+                'type': 'job'
+            }
+        return {
+            'app_id': app.id,
+            'id': app.project.id if app.project else None,
+            'title': app.project.title if app.project else 'Unknown',
+            'company': app.project.company.name if app.project and app.project.company else 'Unknown',
+            'status': app.status,
+            'applied_at': app.applied_at,
+            'type': 'project'
+        }
+
+    def _get_applications_summary(self, candidate):
+        counts = Application.objects.filter(
+            candidate=candidate,
+            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
+        ).aggregate(
+            total=Count('id'),
+            job_apps=Count('id', filter=Q(job__isnull=False)),
+            project_apps=Count('id', filter=Q(project__isnull=False))
+        )
+        return {
+            'total_applications': counts['total'] or 0,
+            'job_applications_count': counts['job_apps'] or 0,
+            'project_applications_count': counts['project_apps'] or 0,
+            'references_count': ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count(),
+        }
+
+    def _get_latest_jobs_data(self, candidate, limit=5):
+        jobs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
+        return JobListSerializer(jobs, many=True, context={'request': self.request}).data
+
+    def _get_latest_projects_data(self, candidate, limit=5):
+        projects = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
+        return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
+
+    # ====================== LATEST JOBS & PROJECTS (ML version) ======================
+
+    @action(detail=False, methods=['get'], url_path='dashboard/latest-jobs')
+    def latest_jobs(self, request):
+        candidate = self.get_candidate()
+        from django.core.cache import cache
+        cache_key = f'candidate_{candidate.id}_latest_jobs'
+        cached = cache.get(cache_key)
+
+        if cached and cached.get('ml_success'):
+            queryset = cached.get('jobs', [])
+        else:
+            queryset = []
+            try:
+                ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
+                response = requests.get(ml_url, timeout=15)
+                if response.status_code == 200:
+                    ranked = response.json().get('ranked_opportunities', [])
+                    jobs = []
+                    job_ids = []  # For bulk query
+
+                    for item in ranked:
+                        job_id = item.get('job_id') or item.get('id')
+                        if not job_id:
+                            continue
+                        company = item.get('company', {})
+                        job_data = {
+                            'id': job_id,
+                            'title': item.get('title', 'No Title'),
+                            'description': item.get('description', ''),
+                            'workStyle': item.get('work_style', 'remote'),
+                            'category': item.get('category', 'other'),
+                            'experienceLevel': item.get('experience_level', 'mid'),
+                            'employmentType': item.get('employment_type', 'full-time'),
+                            'salaryRangeMin': item.get('salary_range', {}).get('min'),
+                            'salaryRangeMax': item.get('salary_range', {}).get('max'),
+                            'status': item.get('status', 'active'),
+                            'created_at': item.get('created_at', timezone.now().isoformat()),
+                            'location': item.get('location'),
+                            'skills': item.get('skills', []),
+                            'company_name': company.get('company_name', 'Unknown'),
+                            'company_id': company.get('id'),
+                            'has_applied': False  
+                        }
+                        jobs.append(job_data)
+                        job_ids.append(job_id)
+
+                    # Bulk check for job applications
+                    if job_ids:
+                        applied_job_ids = set(
+                            Application.objects.filter(
+                                candidate=candidate,
+                                job_id__in=job_ids
+                            ).values_list('job_id', flat=True)
+                        )
+                        for job in jobs:
+                            job['has_applied'] = job['id'] in applied_job_ids
+
+                    if jobs:
+                        cache.set(cache_key, {'jobs': jobs, 'ml_success': True}, timeout=300)
+                    queryset = jobs
+            except Exception as e:
+                logger.warning(f"ML jobs fetch failed: {e}")
+
+        page = self.paginate_queryset(queryset)
+        data = {
+            'ml_success': bool(queryset),
+            'latest_jobs': page if page is not None else queryset
+        }
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response({**data, 'count': len(queryset)})
+
+    @action(detail=False, methods=['get'], url_path='dashboard/latest-projects')
+    def latest_projects(self, request):
+        candidate = self.get_candidate()
+        from django.core.cache import cache
+        cache_key = f'candidate_{candidate.id}_latest_projects'
+        cached = cache.get(cache_key)
+        if cached:
+            queryset = cached
+        else:
+            queryset = []
+            try:
+                ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
+                response = requests.get(ml_url, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    projects = data.get('ranked_projects') or data.get('opportunities') or []
+                    formatted = []
+                    project_ids = []  # Collect IDs for bulk query
+
+                    for item in projects:
+                        pid = item.get('id') or item.get('project_id')
+                        if not pid:
+                            continue
+                        project = Project.objects.filter(
+                            id=pid,
+                            status__in=['active', 'open']
+                        ).select_related('company').first()
+                        if not project:
+                            continue
+
+                        company_name = project.company.company_name if project.company else 'Unknown'
+                        company_id = project.company.id if project.company else None
+
+                        project_data = {
+                            'id': project.id,
+                            'title': project.title,
+                            'description': project.description,
+                            'category': project.category,
+                            'status': project.status,
+                            'created_at': project.created_at.isoformat(),
+                            'skills': list(project.skills) if hasattr(project, 'skills') else [],
+                            'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
+                            'paymentType': project.paymentType,
+                            'paymentAmount': project.paymentAmount,
+                            'work_style': project.work_style,
+                            'deadline': project.deadline.isoformat() if project.deadline else None,
+                            'company_name': company_name,
+                            'company_id': company_id,
+                            'has_applied': False  
+                        }
+                        formatted.append(project_data)
+                        project_ids.append(project.id)
+
+                    # Bulk check for applications
+                    if project_ids:
+                        applied_project_ids = set(
+                            ProjectApplication.objects.filter(
+                                candidate=candidate,
+                                project_id__in=project_ids
+                            ).values_list('project_id', flat=True)
+                        )
+                        for proj in formatted:
+                            proj['has_applied'] = proj['id'] in applied_project_ids
+
+                    cache.set(cache_key, formatted, timeout=300)
+                    queryset = formatted
+            except Exception as e:
+                logger.warning(f"ML projects fetch failed: {e}")
+
+        class DictSerializer(serializers.Serializer):
+            id = serializers.IntegerField()
+            title = serializers.CharField()
+            description = serializers.CharField()
+            category = serializers.CharField()
+            status = serializers.CharField()
+            created_at = serializers.CharField()
+            skills = serializers.ListField(child=serializers.CharField())
+            estimatedHours = serializers.CharField()
+            paymentType = serializers.CharField()
+            paymentAmount = serializers.IntegerField()
+            work_style = serializers.CharField()
+            company_name = serializers.CharField()
+            company_id = serializers.IntegerField(allow_null=True)
+            deadline = serializers.CharField(allow_null=True)
+            has_applied = serializers.BooleanField()  
+
+        page = self.paginate_queryset(queryset)
+        serializer = DictSerializer(queryset if page is None else page, many=True)
+        data = {
+            'ml_success': bool(queryset),
+            'latest_projects': serializer.data
+        }
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
+
+    # ====================== AI MATCHING ======================
+    @action(detail=True, methods=['get'], url_path='ai-matching', permission_classes=[permissions.AllowAny])
+    def ai_matching(self, request, pk=None):
+        candidate_id = pk
+        total = request.query_params.get('total')
+        params = {'total': total} if total else {}
         try:
-            resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=30)
-            if resp.status_code == 200:
-                questions = resp.json().get('questions', [])
-                work_dna = WorkDNAQuestion.objects.create(
-                    candidate=candidate,
-                    candidate_name=candidate.full_name,
-                    questions=questions,
-                    total_questions=len(questions)
-                )
-                return Response(WorkDNAQuestionSerializer(work_dna).data)
-        except Exception as e:
-            logger.error(f"Work DNA fetch failed: {e}")
+            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params, timeout=15)
+            resp.raise_for_status()
+            return Response(resp.json())
+        except requests.RequestException:
+            return Response({'error': 'AI service unavailable'}, status=503)
 
-        return Response({'error': 'Failed to fetch questions'}, status=503)
-
-    def post(self, request):
+    # ====================== WORK DNA ======================
+    @action(detail=False, methods=['get', 'post'], url_path='work-dna/questions')
+    def work_dna_questions(self, request):
         candidate = self.get_candidate()
+
+        if request.method == 'GET':
+            work_dna = WorkDNAQuestion.objects.filter(candidate=candidate).first()
+            if work_dna:
+                return Response(WorkDNAQuestionSerializer(work_dna).data)
+
+            try:
+                resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=30)
+                if resp.status_code == 200:
+                    questions = resp.json().get('questions', [])
+                    work_dna = WorkDNAQuestion.objects.create(
+                        candidate=candidate,
+                        candidate_name=candidate.full_name,
+                        questions=questions,
+                        total_questions=len(questions)
+                    )
+                    return Response(WorkDNAQuestionSerializer(work_dna).data)
+            except Exception as e:
+                logger.error(f"Work DNA fetch failed: {e}")
+            return Response({'error': 'Failed to fetch questions'}, status=503)
+
+        # POST - save answers
         answers = request.data.get('answers', {})
         work_dna = WorkDNAQuestion.objects.filter(candidate=candidate).first()
         if not work_dna:
@@ -795,9 +755,10 @@ class WorkDNAQuestionView(CandidateAccessMixin, APIView):
         work_dna.save()
         return Response(WorkDNAQuestionSerializer(work_dna).data)
 
-    def evaluate_answers(self, candidate_id):
+    @action(detail=True, methods=['get'], url_path='work-dna/evaluate')
+    def evaluate_work_dna(self, request, pk=None):
         try:
-            candidate = Candidate.objects.get(id=candidate_id)
+            candidate = Candidate.objects.get(id=pk)
             work_dna = WorkDNAQuestion.objects.get(candidate=candidate)
             if not work_dna.answers:
                 return Response({'error': 'No answers'}, status=400)
@@ -813,25 +774,10 @@ class WorkDNAQuestionView(CandidateAccessMixin, APIView):
         return Response({'error': 'Evaluation failed'}, status=503)
 
 
-# Other Views
-class CandidateAIMatchingView(APIView):
-    permission_classes = [permissions.AllowAny]
-    def get(self, request, candidate_id):
-        total = request.query_params.get('total')
-        params = {'total': total} if total else {}
-        try:
-            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params)
-            resp.raise_for_status()
-            return Response(resp.json())
-        except requests.RequestException as e:
-            return Response({'error': 'AI service unavailable'}, status=503)
-
-
 class DiscoverTalentView(generics.ListAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = DiscoverTalentSerializer
-
     def get_queryset(self):
         qs = Candidate.objects.select_related('user').filter(
             user__is_active=True,
@@ -839,7 +785,7 @@ class DiscoverTalentView(generics.ListAPIView):
         )
 
         q = self.request.query_params.get('search', '').strip().lower()
-        search_type = self.request.query_params.get('search_type', 'both').lower()  # 'name', 'title', or 'both'
+        search_type = self.request.query_params.get('search_type', 'both').lower()  
 
         if q:
             words = [word.strip() for word in q.split() if word.strip()]
@@ -1031,26 +977,3 @@ class DiscoverTalentView(generics.ListAPIView):
             qs = qs.filter(skills__overlap=skills)
 
         return qs.distinct()
-
-class ReferenceRequestListView(CandidateAccessMixin, generics.ListCreateAPIView):
-    serializer_class = ReferenceRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = CustomPagination
-
-    def get_queryset(self):
-        return ReferenceRequest.objects.filter(candidate=self.get_candidate()).order_by('-created_at')
-
-    def perform_create(self, serializer):
-        serializer.save(candidate=self.get_candidate())
-
-
-class ReferenceRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = ReferenceRequestSerializer
-
-    def get_queryset(self):
-        if self.request.method == 'GET':
-            return ReferenceRequest.objects.all()
-        return ReferenceRequest.objects.filter(candidate__user=self.request.user)
-
-    def get_permissions(self):
-        return [permissions.AllowAny()] if self.request.method == 'GET' else [permissions.IsAuthenticated()]

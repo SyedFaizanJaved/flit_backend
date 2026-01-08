@@ -23,7 +23,6 @@ class EmployerRegistrationSerializer(serializers.ModelSerializer):
         }
     
     def create(self, validated_data):
-        # Create user
         user = User.objects.create_user(
             email=validated_data['email'],
             password=validated_data['password'],
@@ -31,27 +30,20 @@ class EmployerRegistrationSerializer(serializers.ModelSerializer):
             last_name=validated_data['last_name'],
             is_employer=True
         )
-        
-        # Create employer profile
         Employer.objects.create(
             user=user,
             first_name=validated_data['first_name'],
             last_name=validated_data['last_name']
         )
-        
         return user
 
 
 class EmployerSerializer(serializers.ModelSerializer):
-    """
-    Serializer for employer profile
-    """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     
     def get_company_id(self, obj):
-        """Return company ID only if company exists"""
         return obj.company.id if obj.company else None
     
     company_id = serializers.SerializerMethodField(method_name='get_company_id')
@@ -66,41 +58,25 @@ class EmployerSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def get_company(self, obj):
-        # If employer has company FK set, return its id
         if obj.company_id:
             return obj.company_id
-
-        # Otherwise try to return the most recently created company by the user
         try:
-            user = obj.user
-            latest = getattr(user, 'created_companies', None)
-            if latest is not None:
-                latest_company = latest.order_by('-created_at').first()
-                if latest_company:
-                    return latest_company.id
+            latest_company = obj.user.created_companies.order_by('-created_at').first()
+            return latest_company.id if latest_company else None
         except Exception:
-            pass
-
-        return None
+            return None
 
     def get_profile_completed(self, obj):
-        try:
-            return bool(getattr(obj, 'is_profile_complete', False))
-        except Exception:
-            return False
+        return bool(getattr(obj, 'is_profile_complete', False))
 
 
 class EmployerListSerializer(serializers.ModelSerializer):
-    """
-    Serializer for listing employers
-    """
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     host_email = serializers.SerializerMethodField()
     
     def get_company_id(self, obj):
-        """Return company ID only if company exists"""
         return obj.company.id if obj.company else None
     
     company_id = serializers.SerializerMethodField(method_name='get_company_id')
@@ -115,13 +91,9 @@ class EmployerListSerializer(serializers.ModelSerializer):
         )
 
     def get_profile_completed(self, obj):
-        try:
-            return bool(getattr(obj, 'is_profile_complete', False))
-        except Exception:
-            return False
+        return bool(getattr(obj, 'is_profile_complete', False))
             
     def get_host_email(self, obj):
-        # Only show host email if the requesting user is an employer
         request = self.context.get('request')
         if request and hasattr(request.user, 'employer_profile'):
             return obj.user.email if obj.user else None
@@ -129,9 +101,6 @@ class EmployerListSerializer(serializers.ModelSerializer):
 
 
 class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for updating employer profile sections
-    """
     class Meta:
         model = Employer
         fields = (
@@ -141,7 +110,6 @@ class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
         )
 
     def update(self, instance, validated_data):
-        # Update profile completion status
         if 'first_name' in validated_data and 'last_name' in validated_data:
             instance.basic_info_completed = True
         if 'company' in validated_data and validated_data.get('company'):
@@ -149,7 +117,6 @@ class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
 
         updated = super().update(instance, validated_data)
 
-        # Sync to user.profile_completed if employer profile is now complete
         try:
             user = instance.user
             if instance.is_profile_complete and not getattr(user, 'profile_completed', False):
@@ -162,9 +129,6 @@ class EmployerProfileUpdateSerializer(serializers.ModelSerializer):
 
 
 class EmployerPreferenceSerializer(serializers.ModelSerializer):
-    """
-    Serializer for employer preferences
-    """
     class Meta:
         model = EmployerPreference
         fields = '__all__'
@@ -172,9 +136,6 @@ class EmployerPreferenceSerializer(serializers.ModelSerializer):
 
 
 class EmployerComplianceSerializer(serializers.ModelSerializer):
-    """
-    Serializer for employer compliance
-    """
     class Meta:
         model = EmployerCompliance
         fields = '__all__'
@@ -183,6 +144,7 @@ class EmployerComplianceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['employer'] = self.context['request'].user.employer_profile
         return super().create(validated_data)
+
 
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user.id', read_only=True)
@@ -194,11 +156,8 @@ class EmployerConversationSummarySerializer(serializers.ModelSerializer):
         model = Candidate
         fields = ('id', 'title', 'last_message_time', 'unread_count')
     
+
 class EmployerCompanyConversationSummarySerializer(serializers.ModelSerializer):
-    """
-    Serializer used on the candidate side to list employers they have chatted with,
-    returning employer's user id, the associated company details, and unread message count.
-    """
     id = serializers.IntegerField(source='user.id', read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     industry = serializers.CharField(source='company.industry', read_only=True)
@@ -226,18 +185,17 @@ class CandidateActionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("action must be 'pass' or 'reject'")
         return data
 
+
 class CandidateActionDetailSerializer(serializers.ModelSerializer):
-    """Serializer for candidate actions with candidate details"""
+    """
+    Optimized - No N+1, no invalid prefetch
+    """
     user_id = serializers.SerializerMethodField()
     full_name = serializers.SerializerMethodField()
     title = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
-    
-    # Define fields directly without source
-    candidate_id = serializers.CharField(read_only=True)
-    employer_id = serializers.PrimaryKeyRelatedField(source='employer', read_only=True)
-    
+
     class Meta:
         model = CandidateAction
         fields = [
@@ -245,45 +203,87 @@ class CandidateActionDetailSerializer(serializers.ModelSerializer):
             'full_name', 'title', 'profile_image', 'skills',
             'candidate_id', 'employer_id'
         ]
-        read_only_fields = fields  # Make all fields read-only
-        
+
+    # Bulk fetch candidates once (no prefetch needed for skills)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._candidates_cache = {}
+
     def get_user_id(self, obj):
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            return candidate.user.id if hasattr(candidate, 'user') else None
-        except (Candidate.DoesNotExist, AttributeError):
-            return None
-    
+        candidate = self._candidates_cache.get(str(obj.candidate_id))
+        return candidate.user.id if candidate and candidate.user else None
+
     def get_full_name(self, obj):
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            return getattr(candidate, 'full_name', None)
-        except Candidate.DoesNotExist:
-            return None
-    
+        candidate = self._candidates_cache.get(str(obj.candidate_id))
+        return candidate.full_name if candidate else "Unknown"
+
     def get_title(self, obj):
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            return getattr(candidate, 'title', 'No title')
-        except Candidate.DoesNotExist:
-            return None
-    
+        candidate = self._candidates_cache.get(str(obj.candidate_id))
+        return candidate.title or "No title" if candidate else "No title"
+
     def get_profile_image(self, obj):
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            if hasattr(candidate, 'profile_image') and candidate.profile_image:
-                request = self.context.get('request')
-                if request:
-                    return request.build_absolute_uri(candidate.profile_image.url)
-                return candidate.profile_image.url
-        except (Candidate.DoesNotExist, ValueError, AttributeError):
-            pass
-        return None
-    
+        candidate = self._candidates_cache.get(str(obj.candidate_id))
+        if not candidate or not candidate.profile_image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(candidate.profile_image.url)
+        return candidate.profile_image.url
+
     def get_skills(self, obj):
-        try:
-            candidate = Candidate.objects.get(id=obj.candidate_id)
-            # Safely get skills with a default empty list
-            return getattr(candidate, 'skills', [])
-        except Candidate.DoesNotExist:
+        candidate = self._candidates_cache.get(str(obj.candidate_id))
+        if not candidate:
             return []
+            
+        raw_skills = getattr(candidate, 'skills', [])
+        if isinstance(raw_skills, (list, tuple)):
+            return raw_skills[:10]  # list of strings or dicts
+        elif isinstance(raw_skills, dict):
+            return [{'name': k, 'level': v} for k, v in raw_skills.items()][:10]
+        return []
+
+    def to_representation(self, instance):
+        # Bulk load all candidates in list view
+        if not self._candidates_cache:
+            # Get all instances for the page (paginated queryset)
+            instances = self.instance if hasattr(self.instance, '__iter__') else [instance]
+            candidate_ids = [obj.candidate_id for obj in instances if obj.candidate_id]
+            
+            if candidate_ids:
+                candidates = Candidate.objects.filter(id__in=candidate_ids).select_related('user')
+                self._candidates_cache = {str(c.id): c for c in candidates}
+
+        candidate = self._candidates_cache.get(str(instance.candidate_id))
+
+        data = super().to_representation(instance)
+
+        if candidate:
+            data['user_id'] = candidate.user.id if candidate.user else None
+            data['full_name'] = candidate.full_name or "Unknown"
+            data['title'] = candidate.title or "No title"
+
+            # Profile image
+            data['profile_image'] = (
+                self.context['request'].build_absolute_uri(candidate.profile_image.url)
+                if candidate.profile_image and self.context.get('request')
+                else candidate.profile_image.url if candidate.profile_image else None
+            )
+
+            # Skills - safe handling for JSONField / list / dict
+            raw_skills = getattr(candidate, 'skills', [])
+            if isinstance(raw_skills, (list, tuple)):
+                data['skills'] = raw_skills[:10]  # list of strings or dicts
+            elif isinstance(raw_skills, dict):
+                data['skills'] = [{'name': k, 'level': v} for k, v in raw_skills.items()][:10]
+            else:
+                data['skills'] = []
+        else:
+            data.update({
+                'user_id': None,
+                'full_name': "Candidate Not Found",
+                'title': "No title",
+                'profile_image': None,
+                'skills': []
+            })
+
+        return data
