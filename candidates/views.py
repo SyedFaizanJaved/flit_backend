@@ -557,6 +557,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         job_id = item.get('job_id') or item.get('id')
                         if not job_id:
                             continue
+                            
+                        # Only include active jobs
+                        if item.get('status') != 'active':
+                            continue
+                            
                         company = item.get('company', {})
                         job_data = {
                             'id': job_id,
