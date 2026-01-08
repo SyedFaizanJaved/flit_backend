@@ -547,7 +547,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             queryset = []
             try:
                 ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-                response = requests.get(ml_url, timeout=15)
+                response = requests.get(ml_url)
                 if response.status_code == 200:
                     ranked = response.json().get('ranked_opportunities', [])
                     jobs = []
@@ -617,7 +617,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             queryset = []
             try:
                 ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-                response = requests.get(ml_url, timeout=30)
+                response = requests.get(ml_url)
                 if response.status_code == 200:
                     data = response.json()
                     projects = data.get('ranked_projects') or data.get('opportunities') or []
@@ -708,7 +708,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         total = request.query_params.get('total')
         params = {'total': total} if total else {}
         try:
-            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params, timeout=15)
+            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params)
             resp.raise_for_status()
             return Response(resp.json())
         except requests.RequestException:
@@ -725,7 +725,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 return Response(WorkDNAQuestionSerializer(work_dna).data)
 
             try:
-                resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=30)
+                resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}")
                 if resp.status_code == 200:
                     questions = resp.json().get('questions', [])
                     work_dna = WorkDNAQuestion.objects.create(
@@ -755,7 +755,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         work_dna.save()
         return Response(WorkDNAQuestionSerializer(work_dna).data)
 
-    @action(detail=True, methods=['get'], url_path='work-dna/evaluate')
+    @action(detail=True, methods=['get'], url_path='evaluate-work-dna-answers')
     def evaluate_work_dna(self, request, pk=None):
         try:
             candidate = Candidate.objects.get(id=pk)
@@ -763,7 +763,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             if not work_dna.answers:
                 return Response({'error': 'No answers'}, status=400)
 
-            resp = requests.get(f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}", timeout=30)
+            resp = requests.get(f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}")
             if resp.status_code == 200:
                 result = resp.json()
                 work_dna.evaluation_result = result
