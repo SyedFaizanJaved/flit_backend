@@ -1,115 +1,64 @@
+# views.py
 import logging
-from rest_framework import viewsets, status, permissions, mixins, authentication
+import requests
+import time
+from django.conf import settings
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets, status, permissions, mixins
+from rest_framework.authentication import BaseAuthentication
 from rest_framework.decorators import action, authentication_classes
+from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+from accounts.permissions import IsEmployer
+from utils.pagination import CustomPagination
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
     ProjectSkillSerializer, ProjectMilestoneSerializer
 )
-from accounts.permissions import IsEmployer
-from rest_framework.filters import SearchFilter, OrderingFilter
-import requests
-import time
-import os
-from django.conf import settings
-from django.db import models
-from utils.pagination import CustomPagination
 
 exception_logger = logging.getLogger("exceptions")
 logger = logging.getLogger(__name__)
 
-
-class PublicAuthentication(authentication.BaseAuthentication):
-    """
-    Authentication class that allows any request (public access).
-    """
+class PublicAuthentication(BaseAuthentication):
     def authenticate(self, request):
-        return None  # Always return None to indicate no authentication needed
-
+        return None
 
 @authentication_classes([PublicAuthentication])
-class PublicProjectViewSet(mixins.ListModelMixin,
-                         mixins.RetrieveModelMixin,
-                         GenericViewSet):
-    """
-    Public API endpoint that allows viewing projects without authentication.
-    """
+class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectListSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = [PublicAuthentication]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'paymentType', 'company']
-    search_fields = ['title']
+    search_fields = ['title', 'description']
     ordering_fields = ['created_at', 'budget_min', 'budget_max']
     ordering = ['-created_at']
     pagination_class = CustomPagination
-    
+
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        
-        # Get search term if any
-        search_term = request.query_params.get('search', '').strip()
-        
-        # Apply category filter if provided
-        category = request.query_params.get('category')
-        if category:
-            if search_term:
-                # If searching, include both the search term and category filter
-                queryset = queryset.filter(
-                    models.Q(title__icontains=search_term) |
-                    models.Q(description__icontains=search_term),
-                    category=category
-                )
-            else:
-                queryset = queryset.filter(category=category)
-        elif search_term:
-            # If only searching without category filter
-            queryset = queryset.filter(
-                models.Q(title__icontains=search_term) |
-                models.Q(description__icontains=search_term)
-            )
-            
-        payment_type = request.query_params.get('paymentType')
-        if payment_type:
-            queryset = queryset.filter(paymentType=payment_type)
-            
-        company_id = request.query_params.get('company')
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
-            
-        search_query = request.query_params.get('search')
-        if search_query:
-            queryset = queryset.filter(
-                models.Q(title__icontains=search_query)
-            )
-        
+        queryset = self.filter_queryset(self.get_queryset().filter(status='active'))
+
         page = self.paginate_queryset(queryset)
-        
-        # If search parameter exists and no results found, return 404
-        if search_query and not page:
-            return Response(
-                {"detail": "No projects found matching the search criteria."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-            
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-            
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-        
-    def get_queryset(self):
-        """
-        Return only active projects
-        """
-        return super().get_queryset().distinct()
 
+        # Non-paginated case — same structure
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': queryset.count(),
+            'next': None,
+            'previous': None,
+            'total_pages': 1,
+            'current_page': 1,
+            'results': serializer.data
+        })
+
+    def get_queryset(self):
+        return super().get_queryset().filter(status__in=['active', 'open']).distinct()
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -123,69 +72,62 @@ class ProjectViewSet(viewsets.ModelViewSet):
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        # For employer users, only show their company's projects
+        qs = super().get_queryset().select_related('company')
+        
         if hasattr(self.request.user, 'employer_profile'):
             qs = qs.filter(company=self.request.user.employer_profile.company)
-        # Filter active projects for list view
-        if self.action == 'list':
+        
+        if self.action in ['list', 'my_projects']:
             qs = qs.filter(status='active')
-        return qs
+            qs = qs.prefetch_related('applications__candidate')
+        
+        return qs.distinct()
 
     def get_serializer_class(self):
-        if self.action == 'list':
+        if self.action in ['list', 'my_projects']:
             return ProjectListSerializer
         if self.action == 'create':
             return ProjectCreateSerializer
         if self.action in ['update', 'partial_update']:
             return ProjectUpdateSerializer
         return ProjectSerializer
-        
+
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
-        
-        # Initialize context with request
         context = self.get_serializer_context()
         context['request'] = request
-        
         serializer = self.get_serializer(instance, context=context)
         
-        # Check if user has candidate profile
         if hasattr(request.user, 'candidate_profile'):
             candidate = request.user.candidate_profile
-            
-            # Check applications directly
             from applications.models import ProjectApplication
-            applications = ProjectApplication.objects.filter(
+            ProjectApplication.objects.filter(
                 project=instance,
                 candidate=candidate,
                 is_withdrawn=False
-            )
-            
-            for app in applications:
-                # Application processing logic can go here
-                pass
+            ).exists()  
         return Response(serializer.data)
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status', 'shortlist_application', 'reject_application', 'skills', 'milestones']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'update_status',
+                            'shortlist_application', 'reject_application', 'skills', 'milestones']:
             return [permissions.IsAuthenticated(), IsEmployer()]
         return [permissions.IsAuthenticated()]
-        
+
     @action(detail=False, methods=['get'], url_path='my-projects')
     def my_projects(self, request):
-        # Get and filter the queryset
         queryset = self.filter_queryset(self.get_queryset())
-        queryset = queryset.filter(employer_id=request.user.id)
         
-        # Apply pagination
         page = self.paginate_queryset(queryset)
+        serializer = ProjectListSerializer(
+            page if page is not None else queryset,
+            many=True,
+            context={'request': request}
+        )
+        
         if page is not None:
-            serializer = ProjectListSerializer(page, many=True, context=self.get_serializer_context())
             return self.get_paginated_response(serializer.data)
-            
-        # Fallback if pagination is not applied
-        serializer = ProjectListSerializer(queryset, many=True, context=self.get_serializer_context())
+        
         return Response({
             'count': queryset.count(),
             'next': None,
@@ -194,7 +136,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'current_page': 1,
             'results': serializer.data
         })
-        
+
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
         if response.status_code != status.HTTP_201_CREATED:
@@ -224,7 +166,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             ml_payload = {
                 "title": project.title,
                 "description": project.description,
-                "company_name": project.company.company_name if hasattr(project, 'company') and project.company else "",
+                "company_name": project.company.company_name if project.company else "",
                 "category": project.category,
                 "skills": project.skills if hasattr(project, 'skills') else [],
                 "paymentType": project.paymentType,
@@ -240,7 +182,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     ml_api_url,
                     json=ml_payload,
                     headers={"Content-Type": "application/json"},
-                    timeout=30  # 30 second timeout
+                    timeout=30
                 )
                 logger.info(f"Project create ML API response status: {ml_response.status_code}")
                 
@@ -300,20 +242,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return response
         
     def update(self, request, *args, **kwargs):
-       
-        # First, perform the normal update
         response = super().update(request, *args, **kwargs)
         
         if response.status_code == status.HTTP_200_OK:
             try:
                 project = self.get_object()
                 
-                # Prepare data for ML API
                 ml_api_url = f"{settings.FLIT_AI_URL}/update_project_data/{project.id}"
                 ml_payload = {
                     "title": project.title,
                     "description": project.description,
-                    "company_name": project.company.company_name if hasattr(project, 'company') and project.company else "",
+                    "company_name": project.company.company_name if project.company else "",
                     "category": project.category,
                     "skills": project.skills if hasattr(project, 'skills') else [],
                     "paymentType": project.paymentType,
@@ -323,42 +262,36 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     "status": project.status
                 }
                 
-                # Call ML API with retry logic
                 max_retries = 2
                 timeout_seconds = 30
                 
                 for attempt in range(max_retries + 1):
                     try:
-                        print(f"Calling Project ML API (attempt {attempt + 1}/{max_retries + 1})...")
                         ml_response = requests.patch(
                             ml_api_url,
                             json=ml_payload,
                             headers={"Content-Type": "application/json"},
                             timeout=timeout_seconds
                         )
-                        break  # If successful, exit the retry loop
+                        break
                     except requests.exceptions.Timeout:
                         if attempt == max_retries:
                             exception_logger.error("Project ML API timed out after retries")
-                            raise  # Re-raise the timeout if we've exhausted all retries
-                        print(f"Project ML API timeout (attempt {attempt + 1}), retrying...")
+                            raise
                         time.sleep(1)
                     except requests.exceptions.RequestException as e:
                         exception_logger.exception("Project ML API request failed")
-                        print(f"Project ML API request failed: {str(e)}")
                         raise
                 
                 if ml_response.status_code == 200:
                     try:
                         ml_data = ml_response.json()
-                        # Update project with ML-enhanced data
                         if 'project_profile_summary' in ml_data:
                             project.project_profile_summary = ml_data['project_profile_summary']
                         if 'project_tags' in ml_data:
                             project.project_tags = ml_data['project_tags']
                         project.save()
                         
-                        # Format the response with ML data
                         response.data = {
                             'message': 'Project updated successfully',
                             'ml_success': True,
@@ -368,9 +301,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                         }
                     except Exception as e:
                         exception_logger.exception("Error processing Project ML API response")
-                        exception_logger.error(f"ML raw response: {ml_response.text}")
-                        print(f"Error processing Project ML API response: {str(e)}")
-                        print(f"Response content: {ml_response.text}")
                         response.data = {
                             'message': 'Project updated successfully (ML processing failed - invalid response format)',
                             'ml_success': False,
@@ -379,11 +309,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                             'data': response.data
                         }
                 else:
-                    error_msg = f"Project ML API returned status code {ml_response.status_code}"
-                    print(error_msg)
-                    print(f"Response content: {ml_response.text}")
                     response.data = {
-                        'message': f'Project updated successfully (ML processing failed - {error_msg})',
+                        'message': f'Project updated successfully (ML processing failed - HTTP {ml_response.status_code})',
                         'ml_success': False,
                         'project_profile_summary': None,
                         'project_tags': [],
@@ -392,15 +319,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     
             except Exception as e:
                 exception_logger.exception("Error calling Project ML API")
-                error_msg = f"Error calling Project ML API: {str(e)}"
-                print(error_msg)
-                if 'ml_response' in locals():
-                    exception_logger.error(f"ML API response status: {getattr(ml_response, 'status_code', 'N/A')}")
-                    exception_logger.error(f"ML API raw response: {getattr(ml_response, 'text', 'N/A')}")
-                    print(f"Response status: {getattr(ml_response, 'status_code', 'N/A')}")
-                    print(f"Response content: {getattr(ml_response, 'text', 'N/A')}")
-                
-                project = self.get_object()
                 response.data = {
                     'message': f'Project updated successfully (ML processing failed - {str(e)})',
                     'ml_success': False,
@@ -443,16 +361,24 @@ class ProjectViewSet(viewsets.ModelViewSet):
         serializer.save(project=project)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        # ==================== APPLICATIONS LIST ====================
     @action(detail=True, methods=['get'], url_path='applications')
     def applications(self, request, pk=None):
         try:
-            project = Project.objects.get(id=pk, employer=request.user)
+            project = Project.objects.get(
+                id=pk,
+                company=request.user.employer_profile.company
+            )
         except Project.DoesNotExist:
-            exception_logger.error("Project.DoesNotExist: Project not found")
-            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
-        applications = project.applications.all()
+            return Response(
+                {'error': 'Project not found or you do not have access'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        applications = project.applications.all()  # assuming related_name='applications'
+
         data = {
-            'project': ProjectSerializer(project).data,
+            'project': ProjectSerializer(project, context={'request': request}).data,
             'applications': [
                 {
                     'id': app.id,

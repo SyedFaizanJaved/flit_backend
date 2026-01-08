@@ -1,19 +1,44 @@
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, mixins, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.core.exceptions import ObjectDoesNotExist
+from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
 from .models import Company
-from .serializers import CompanySerializer, CompanyListSerializer, CompanyUpdateSerializer
+from .serializers import (
+    CompanySerializer,
+    CompanyListSerializer,
+    CompanyUpdateSerializer,
+)
 from employers.models import Employer
 import logging
+
 logger = logging.getLogger("exceptions")
 
-class CompanyViewSet(viewsets.ViewSet):
+User = get_user_model()
+
+
+# Custom Permission: Sirf company ka creator hi update/delete kar sake
+class IsCompanyOwner(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):
+        return obj.created_by == request.user
+
+
+class CompanyViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
     """
-    ViewSet for Company management
+    Optimized Company ViewSet
+    - Uses GenericViewSet + Mixins for less boilerplate
+    - Proper permissions
+    - Clean dashboard & custom actions
     """
+    queryset = Company.objects.all()
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['industry', 'size', 'is_verified']
@@ -21,141 +46,139 @@ class CompanyViewSet(viewsets.ViewSet):
     ordering_fields = ['created_at', 'company_name']
     ordering = ['-created_at']
 
-    def list(self, request):
-        queryset = Company.objects.all()
-        for backend in self.filter_backends:
-            queryset = backend().filter_queryset(request, queryset, self)
-        serializer = CompanyListSerializer(queryset, many=True)
-        return Response(serializer.data)
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return CompanyListSerializer
+        if self.action in ['update', 'partial_update']:
+            return CompanyUpdateSerializer
+        return CompanySerializer
 
-    def create(self, request):
-        serializer = CompanySerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            company = serializer.save()
+    def get_permissions(self):
+        """
+        Granular permissions:
+        - partial_update & destroy: only company owner
+        - verify: only staff/admin
+        """
+        if self.action in ['partial_update', 'update', 'destroy']:
+            return [permissions.IsAuthenticated(), IsCompanyOwner()]
+        if self.action == 'verify':
+            return [permissions.IsAdminUser()]
+        return super().get_permissions()
 
-            # Update employer's profile to link with the created company
-            try:
-                employer = request.user.employer_profile
-                employer.company = company
-                employer.company_info_completed = True
-                employer.save()
+    def get_queryset(self):
+        """
+        my_companies action ke liye filtered queryset
+        """
+        if self.action == 'my_companies':
+            return Company.objects.filter(created_by=self.request.user)
+        return super().get_queryset()
 
-                # Update user's profile_completed flag as well
-                if employer.is_profile_complete:
-                    request.user.profile_completed = True
-                    request.user.save(update_fields=['profile_completed'])
+    def perform_create(self, serializer):
+        """
+        Create ke time automatically created_by set kar do
+        """
+        serializer.save(created_by=self.request.user)
 
-            except Employer.DoesNotExist:
-                logger.error("Employer.DoesNotExist: Employer profile not found, creating new one")
-                # If employer profile doesn't exist, create it
-                employer = Employer.objects.create(
-                    user=request.user,
-                    company=company,
-                    company_info_completed=True,
-                    first_name=request.user.first_name,
-                    last_name=request.user.last_name
-                )
+    def create(self, request, *args, **kwargs):
+        """
+        Override create to handle Employer profile linking properly
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        company = serializer.save(created_by=request.user)
 
-                # Update user's profile_completed flag
-                if employer.is_profile_complete:
-                    request.user.profile_completed = True
-                    request.user.save(update_fields=['profile_completed'])
+        # Employer profile link or create
+        employer, created = Employer.objects.get_or_create(
+            user=request.user,
+            defaults={
+                'company': company,
+                'company_info_completed': True,
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name,
+            },
+        )
+        if not created:
+            employer.company = company
+            employer.company_info_completed = True
+            employer.save(update_fields=['company', 'company_info_completed'])
 
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Update user profile_completed flag if needed
+        if employer.is_profile_complete:
+            request.user.profile_completed = True
+            request.user.save(update_fields=['profile_completed'])
 
-    def retrieve(self, request, pk=None):
-        try:
-            company = Company.objects.get(pk=pk)
-            serializer = CompanySerializer(company)
-            return Response(serializer.data)
-        except Company.DoesNotExist:
-            logger.exception("Company lookup failed")
-            return Response({"message": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    def partial_update(self, request, pk=None):
-        try:
-            company = Company.objects.get(pk=pk, created_by=request.user)
-            serializer = CompanyUpdateSerializer(company, data=request.data, partial=True)
-            if serializer.is_valid():
-                serializer.save()
-                return Response(serializer.data)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        except Company.DoesNotExist:
-            logger.exception("Company not found")
-            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='my-companies')
     def my_companies(self, request):
-        queryset = Company.objects.filter(created_by=request.user)
+        """
+        Logged-in user ki apni companies list
+        """
+        queryset = self.get_queryset()  
         serializer = CompanySerializer(queryset, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=['get'], url_path='dashboard')
     def dashboard(self, request, pk=None):
-        try:
-            company = Company.objects.get(id=pk, created_by=request.user)
-            data = {
-                'company': CompanySerializer(company).data,
-                'company_name': company.company_name,
-                'name': company.name,
-                'jobs_count': getattr(company, 'jobs', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'jobs') else 0,
-                'projects_count': getattr(company, 'projects', type('obj', (object,), {'count': lambda: 0})()).count() if hasattr(company, 'projects') else 0,
-                'applications_count': 0,
-                'hires_count': 0,  
-            }
-            
-            # Add recent jobs (if jobs model exists)
-            if hasattr(company, 'jobs'):
-                recent_jobs = company.jobs.all()[:5]
-                data['recent_jobs'] = [
-                    {
-                        'id': job.id,
-                        'title': getattr(job, 'title', ''),
-                        'status': getattr(job, 'status', ''),
-                        'applications_count': getattr(job, 'applications', type('obj', (object,), {'count': lambda: 0})()).count(),
-                        'created_at': getattr(job, 'created_at', None)
-                    }
-                    for job in recent_jobs
-                ]
-            else:
-                data['recent_jobs'] = []
-            
-            # Add recent projects (similarly)
-            if hasattr(company, 'projects'):
-                recent_projects = company.projects.all()[:5]
-                data['recent_projects'] = [
-                    {
-                        'id': project.id,
-                        'title': getattr(project, 'title', ''),
-                        'status': getattr(project, 'status', ''),
-                        'applications_count': getattr(project, 'applications', type('obj', (object,), {'count': lambda: 0})()).count(),
-                        'created_at': getattr(project, 'created_at', None)
-                    }
-                    for project in recent_projects
-                ]
-            else:
-                data['recent_projects'] = []
-            
-            return Response(data, status=status.HTTP_200_OK)
-        except Company.DoesNotExist:
-            logger.exception("Company not found")
-            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+        """
+        Company dashboard with stats & recent jobs/projects
+        """
+        company = get_object_or_404(Company, id=pk, created_by=request.user)
+
+        data = {
+            'company': CompanySerializer(company).data,
+            'company_name': company.company_name,
+            'name': company.name,
+            'jobs_count': company.jobs.count() if hasattr(company, 'jobs') else 0,
+            'projects_count': company.projects.count() if hasattr(company, 'projects') else 0,
+            'applications_count': 0,  
+            'hires_count': 0,
+            'recent_jobs': [],
+            'recent_projects': [],
+        }
+
+        # Recent Jobs
+        if hasattr(company, 'jobs'):
+            recent_jobs = company.jobs.all()[:5]
+            data['recent_jobs'] = [
+                {
+                    'id': job.id,
+                    'title': getattr(job, 'title', ''),
+                    'status': getattr(job, 'status', ''),
+                    'applications_count': job.applications.count() if hasattr(job, 'applications') else 0,
+                    'created_at': job.created_at,
+                }
+                for job in recent_jobs
+            ]
+
+        if hasattr(company, 'projects'):
+            recent_projects = company.projects.all()[:5]
+            data['recent_projects'] = [
+                {
+                    'id': project.id,
+                    'title': getattr(project, 'title', ''),
+                    'status': getattr(project, 'status', ''),
+                    'applications_count': project.applications.count() if hasattr(project, 'applications') else 0,
+                    'created_at': project.created_at,
+                }
+                for project in recent_projects
+            ]
+
+        return Response(data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='verify')
     def verify(self, request, pk=None):
-        if not request.user.is_staff:
-            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-        
-        try:
-            company = Company.objects.get(id=pk)
-            company.is_verified = True
-            company.save()
-            
-            return Response({
+        """
+        Admin/Staff only: Company ko verify karna
+        """
+        company = get_object_or_404(Company, id=pk)
+        company.is_verified = True
+        company.save(update_fields=['is_verified'])
+
+        return Response(
+            {
                 'message': 'Company verified successfully',
-                'company': CompanySerializer(company).data
-            }, status=status.HTTP_200_OK)
-        except Company.DoesNotExist:
-            logger.exception("Company not found")
-            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+                'company': CompanySerializer(company).data,
+            },
+            status=status.HTTP_200_OK,
+        )
