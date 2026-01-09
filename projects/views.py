@@ -1,12 +1,12 @@
-# views.py
 import logging
 import requests
 import time
+import re  
 from django.conf import settings
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, permissions, mixins
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.decorators import action, authentication_classes
+from rest_framework.decorators import action, authentication_classes, permission_classes
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
@@ -38,15 +38,31 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
     ordering = ['-created_at']
     pagination_class = CustomPagination
 
+    def get_queryset(self):
+        # Base queryset with active status
+        queryset = super().get_queryset().filter(status='active')
+
+        # Apply search with whole word matching
+        search = self.request.query_params.get('search', None)
+        if search:
+            search_terms = search.strip().split()
+            for term in search_terms:
+                if term:
+                    escaped_term = re.escape(term)
+                    # Match whole word, including at start or end of title
+                    pattern = fr'(?:^|\s){escaped_term}(?:\s|$)'
+                    queryset = queryset.filter(title__iregex=pattern)
+
+        return queryset
+
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset().filter(status='active'))
+        queryset = self.filter_queryset(self.get_queryset())
 
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
 
-        # Non-paginated case — same structure
         serializer = self.get_serializer(queryset, many=True)
         return Response({
             'count': queryset.count(),
@@ -56,10 +72,6 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
             'current_page': 1,
             'results': serializer.data
         })
-
-    def get_queryset(self):
-        return super().get_queryset().filter(status__in=['active', 'open']).distinct()
-
 
 class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all()
@@ -72,16 +84,24 @@ class ProjectViewSet(viewsets.ModelViewSet):
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related('company')
-        
+        queryset = super().get_queryset()
+
         if hasattr(self.request.user, 'employer_profile'):
-            qs = qs.filter(company=self.request.user.employer_profile.company)
-        
+            queryset = queryset.filter(company=self.request.user.employer_profile.company)
+
+        search = self.request.query_params.get('search', None)
+        if search:
+            search_terms = search.strip().split()
+            for term in search_terms:
+                if term:
+                    escaped_term = re.escape(term)
+                    queryset = queryset.filter(title__iregex=fr'\b{escaped_term}\b')
+
         if self.action in ['list', 'my_projects']:
-            qs = qs.filter(status='active')
-            qs = qs.prefetch_related('applications__candidate')
-        
-        return qs.distinct()
+            queryset = queryset.filter(status='active')
+            queryset = queryset.prefetch_related('applications__candidate')
+
+        return queryset.distinct()
 
     def get_serializer_class(self):
         if self.action in ['list', 'my_projects']:
