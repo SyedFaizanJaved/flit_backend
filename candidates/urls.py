@@ -24,13 +24,17 @@ urlpatterns = [
         'delete': 'destroy'
     }), name='reference-request-detail'),
 
-    path('', include(router.urls)),
-   
     path('register/', CandidateRegistrationView.as_view(), name='candidate-register'),
     path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
-    path('verify-reference-token/', VerifyReferenceTokenView.as_view(), name='verify-reference-token'),
-    path('respond-to-reference/', ReferenceResponseView.as_view(), name='respond-to-reference'),
-    path('reference-response/', ReferenceResponsesView.as_view(), name='reference-response'),
-    path('reference-responses/', ReferenceResponsesView.as_view(), name='reference-responses'),
+  
 
+    # Reference verification and response
+    path('verify-reference-token/', VerifyReferenceTokenView.as_view(), name='verify-reference-token'),
+    path('respond-to-reference/', ReferenceResponseView.as_view(http_method_names=['get', 'post']), name='respond-to-reference'),
+    path('reference-responses/', ReferenceResponsesView.as_view(), name='reference-responses'),
+   
+
+    path('', include(router.urls)),
+   
+  
 ]
