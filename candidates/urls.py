@@ -32,5 +32,5 @@ urlpatterns = [
     path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
 
     path('verify-reference-token/', VerifyReferenceTokenView.as_view(), name='verify-reference-token'),
-    path('respond-to-reference/', ReferenceResponseView.as_view(), name='respond-to-reference'),
+    path('reference-response/', ReferenceResponseView.as_view(), name='reference-response'),
 ]
