@@ -41,7 +41,7 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
-    search_fields = ['title', 'description', 'company__company_name']
+    search_fields = ['title']  # Only search in title field
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
 
@@ -73,7 +73,7 @@ class JobViewSet(viewsets.ModelViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
-    search_fields = ['title', 'description', 'company__company_name']
+    search_fields = ['title']  # Only search in title field
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
 
