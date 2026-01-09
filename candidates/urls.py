@@ -30,7 +30,8 @@ urlpatterns = [
    
     path('register/', CandidateRegistrationView.as_view(), name='candidate-register'),
     path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
-
     path('verify-reference-token/', VerifyReferenceTokenView.as_view(), name='verify-reference-token'),
-    path('reference-response/', ReferenceResponseView.as_view(), name='reference-response'),
+    path('respond-to-reference/', ReferenceResponseView.as_view(), name='respond-to-reference'),
+    path('reference-responses/', ReferenceResponsesView.as_view(), name='reference-responses'),
+
 ]
