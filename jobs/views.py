@@ -1,7 +1,8 @@
-# jobs/views.py
 import logging
 import requests
 import time
+import re
+from rest_framework import permissions
 from django.conf import settings
 from django.db import models
 from django.shortcuts import get_object_or_404
@@ -41,9 +42,25 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
-    search_fields = ['title']  # Only search in title field
+    search_fields = ['title']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+    
+        search = self.request.query_params.get('search', None)
+        if search:
+            search_terms = search.strip().split()
+            for term in search_terms:
+                if term:
+                    escaped_term = re.escape(term)
+                    # Match whole word, including at start or end of title
+                    pattern = fr'(?:^|\s){escaped_term}(?:\s|$)'
+                    queryset = queryset.filter(title__iregex=pattern)
+       
+        return queryset
+   
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -73,20 +90,26 @@ class JobViewSet(viewsets.ModelViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['workStyle', 'category', 'experienceLevel', 'employmentType', 'company']
-    search_fields = ['title']  # Only search in title field
+    search_fields = ['title']
     ordering_fields = ['created_at', 'salaryRangeMin', 'salaryRangeMax']
     ordering = ['-created_at']
 
     def get_queryset(self):
         qs = super().get_queryset()
 
-        # Employer: only their company's jobs
         if hasattr(self.request.user, 'employer_profile'):
             qs = qs.filter(company=self.request.user.employer_profile.company)
 
-        # List action: only active jobs
         if self.action in ['list', 'my_jobs']:
             qs = qs.filter(status='active')
+
+        search = self.request.query_params.get('search', None)
+        if search:
+            search_terms = search.strip().split()
+            for term in search_terms:
+                if term:
+                    escaped_term = re.escape(term)
+                    qs = qs.filter(title__iregex=fr'\b{escaped_term}\b')
 
         return qs.distinct()
 
