@@ -19,93 +19,96 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def user_exists(self, user_id):
-        """Check if a user exists with the given ID"""
         try:
             return User.objects.filter(id=user_id).exists()
-        except Exception as e:
-            self.logger.error(f"Error checking if user {user_id} exists: {str(e)}")
+        except:
             return False
 
     @database_sync_to_async
     def is_employer(self, user_id):
-        """Check if the user is an employer"""
         try:
             return Employer.objects.filter(user_id=user_id).exists()
-        except Exception as e:
-            self.logger.error(f"Error checking if user {user_id} is employer: {str(e)}")
+        except:
             return False
 
     async def handle_messages_read(self, messages_from_id: int, read_by_id: int):
-        """Mark messages as read and broadcast update to chat lists"""
+        """
+        Mark messages AS READ only if they are:
+        FROM messages_from_id → TO read_by_id
+        """
         try:
-            result = await self.update_unread_count(messages_from_id, read_by_id, increment=False)
-            updated_count = result.get('updated_count', 0)
+            updated = await self._mark_read_specific_direction(messages_from_id, read_by_id)
+            if updated > 0:
+                self.logger.info(f"Marked {updated} messages as read: {messages_from_id} → {read_by_id}")
 
-            if updated_count > 0:
-                self.logger.info(
-                    f"Marked {updated_count} messages as read from {messages_from_id} to {read_by_id}"
-                )
-
-                is_from_employer = await self.is_employer(messages_from_id)
-                from_type = 'employer' if is_from_employer else 'candidate'
-
-                is_to_employer = await self.is_employer(read_by_id)
-                to_type = 'employer' if is_to_employer else 'candidate'
-
-                await self.channel_layer.group_send(
-                    f'chat_list_{from_type}_{messages_from_id}',
-                    {'type': 'chat_list_update'}
-                )
-
-                await self.channel_layer.group_send(
-                    f'chat_list_{to_type}_{read_by_id}',
-                    {'type': 'chat_list_update'}
-                )
+                # Notify both users' chat lists
+                for uid in [messages_from_id, read_by_id]:
+                    utype = 'employer' if await self.is_employer(uid) else 'candidate'
+                    await self.channel_layer.group_send(
+                        f'chat_list_{utype}_{uid}',
+                        {'type': 'chat_list_update'}
+                    )
 
         except Exception as e:
-            self.logger.error(f"Error in handle_messages_read: {str(e)}")
+            self.logger.error(f"handle_messages_read error: {str(e)}")
+
+    @database_sync_to_async
+    def _mark_read_specific_direction(self, sender_id, recipient_id):
+        updated = ChatMessage.objects.filter(
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            is_read=False
+        ).update(is_read=True, unread_count=0)
+
+        return updated
 
     async def connect(self):
         try:
-            self.sender_id = self.scope['url_route']['kwargs']['sender_id']
-            self.recipient_id = self.scope['url_route']['kwargs']['recipient_id']
+            self.sender_id    = int(self.scope['url_route']['kwargs']['sender_id'])
+            self.recipient_id = int(self.scope['url_route']['kwargs']['recipient_id'])
 
-            user_ids = sorted([str(self.sender_id), str(self.recipient_id)])
-            self.room_name = f"chat_{'_'.join(user_ids)}"
+            ids = sorted([str(self.sender_id), str(self.recipient_id)])
+            self.room_name = f"chat_{'_'.join(ids)}"
 
-            sender_exists = await self.user_exists(self.sender_id)
-            recipient_exists = await self.user_exists(self.recipient_id)
-
-            if not sender_exists or not recipient_exists:
-                self.logger.error("User not found")
+            if not await self.user_exists(self.sender_id) or not await self.user_exists(self.recipient_id):
                 await self.close(code=4001)
                 return
 
-            is_sender_employer = await self.is_employer(self.sender_id)
-            is_recipient_employer = await self.is_employer(self.recipient_id)
-
-            if is_sender_employer and is_recipient_employer:
-                self.logger.warning("Employer-to-employer messaging blocked")
+            if await self.is_employer(self.sender_id) and await self.is_employer(self.recipient_id):
                 await self.close(code=4000)
                 return
 
             await self.channel_layer.group_add(self.room_name, self.channel_name)
             await self.accept()
 
-            self.logger.info(f"Chat connected: {self.room_name}")
+            self.logger.info(f"Chat opened → reader={self.sender_id} | partner={self.recipient_id}")
 
-            # Immediately mark messages as read when chat opens
-            await self.handle_messages_read(self.recipient_id, self.sender_id)
+            await self.handle_messages_read(
+                messages_from_id = self.recipient_id,   
+                read_by_id       = self.sender_id   
+            )
 
-            # Start periodic read checker while chat is open
-            self.read_task = asyncio.create_task(self.periodic_read_checker())
+            # Periodic check — only for this conversation
+            self.read_task = asyncio.create_task(self._periodic_read())
 
         except Exception as e:
-            self.logger.error(f"Error in connect: {str(e)}", exc_info=True)
+            self.logger.error(f"connect error: {str(e)}", exc_info=True)
             await self.close(code=4002)
 
+    async def _periodic_read(self):
+        try:
+            while True:
+                await asyncio.sleep(3)
+                if not hasattr(self, 'channel_name'):
+                    return
+                await self.handle_messages_read(
+                    messages_from_id = self.recipient_id,
+                    read_by_id       = self.sender_id
+                )
+        except asyncio.CancelledError:
+            pass
+
     async def disconnect(self, close_code):
-        # Cancel periodic task if running
         if hasattr(self, 'read_task'):
             self.read_task.cancel()
             try:
@@ -115,190 +118,90 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         if hasattr(self, 'room_name'):
             try:
-                await asyncio.wait_for(
-                    self.channel_layer.group_discard(self.room_name, self.channel_name),
-                    timeout=1.0
-                )
-            except asyncio.TimeoutError:
-                self.logger.warning(f"Group discard timed out for {self.room_name}")
-            except Exception as e:
-                self.logger.warning(f"Error in group_discard: {e}")
-
-    async def periodic_read_checker(self):
-        """Periodically mark unread messages as read while chat is open"""
-        try:
-            while True:
-                await asyncio.sleep(3)  # every 3 seconds
-                if not hasattr(self, 'channel_name'):
-                    break
-                await self.handle_messages_read(self.recipient_id, self.sender_id)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            self.logger.error(f"Periodic read checker error: {str(e)}")
-
-    @database_sync_to_async
-    def update_unread_count(self, sender_id, recipient_id, increment=True):
-        if increment:
-            updated = ChatMessage.objects.filter(
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                is_read=False
-            ).update(unread_count=F('unread_count') + 1)
-
-            unread_counts = ChatMessage.objects.filter(
-                recipient_id=recipient_id,
-                is_read=False
-            ).aggregate(
-                total_unread=Count('id'),
-                unique_senders=Count('sender', distinct=True)
-            )
-
-            return {
-                'unread_count': unread_counts.get('total_unread', 0),
-                'total_count': unread_counts.get('unique_senders', 0)
-            }
-        else:
-            updated = ChatMessage.objects.filter(
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                is_read=False
-            ).update(is_read=True, unread_count=0)
-
-            unread_counts = ChatMessage.objects.filter(
-                recipient_id=recipient_id,
-                is_read=False
-            ).aggregate(
-                total_unread=Count('id'),
-                unique_senders=Count('sender', distinct=True)
-            )
-
-            return {
-                'unread_count': unread_counts.get('total_unread', 0),
-                'total_count': unread_counts.get('unique_senders', 0),
-                'updated_count': updated
-            }
+                await self.channel_layer.group_discard(self.room_name, self.channel_name)
+            except:
+                pass
 
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
-            self.logger.debug(f"Received from {self.sender_id}: {data}")
 
             if data.get('type') == 'read_messages':
-                sender_id = data.get('sender_id')
-                recipient_id = data.get('recipient_id')
-                if sender_id and recipient_id:
-                    if sender_id != self.recipient_id or recipient_id != self.sender_id:
-                        await self.send(text_data=json.dumps({
-                            'type': 'error',
-                            'error': 'Invalid users for read receipt'
-                        }))
+                s = data.get('sender_id')
+                r = data.get('recipient_id')
+                if s and r:
+                    if int(s) != self.recipient_id or int(r) != self.sender_id:
+                        await self.send(json.dumps({'error': 'Invalid read users'}))
                         return
-                    await self.handle_messages_read(sender_id, recipient_id)
+                    await self.handle_messages_read(int(s), int(r))
                 return
 
-            message = data.get('message') or data.get('content')
-            if not message:
-                raise ValueError('Message content is required')
+            msg = data.get('message') or data.get('content')
+            if not msg:
+                raise ValueError("No message content")
 
-            message_type = data.get('messageType') or data.get('message_type', 'text')
-            # You can add validation for allowed types here if needed
+            msg_type = data.get('messageType', 'text')
 
-            saved_message, error = await self.save_message(
-                sender_id=self.sender_id,
-                recipient_id=self.recipient_id,
-                message=message,
-                message_type=message_type
-            )
-
-            if error or not saved_message:
-                await self.send(text_data=json.dumps({
-                    'type': 'error',
-                    'error': 'Failed to save message'
-                }))
+            saved, err = await self._save_message(self.sender_id, self.recipient_id, msg, msg_type)
+            if err or not saved:
+                await self.send(json.dumps({'error': 'Save failed'}))
                 return
 
-            unread_counts = await self.update_unread_count(self.sender_id, self.recipient_id)
-
+            # For new outgoing message — no need to mark anything as read
+            # Just broadcast
             await self.channel_layer.group_send(
                 self.room_name,
                 {
                     'type': 'chat_message',
-                    'message': message,
+                    'message': msg,
                     'sender_id': self.sender_id,
                     'recipient_id': self.recipient_id,
-                    'message_id': str(saved_message.id),
-                    'messageType': message_type,
+                    'message_id': str(saved.id),
+                    'messageType': msg_type,
                     'timestamp': str(timezone.now()),
-                    'unread_count': unread_counts.get('unread_count', 0),
-                    'total_count': unread_counts.get('total_count', 0)
                 }
             )
 
-            # Notify chat list of both users
-            for user_id in [self.sender_id, self.recipient_id]:
-                user_type = 'employer' if await self.is_employer(user_id) else 'candidate'
-                group_name = f'chat_list_{user_type}_{user_id}'
+            # Notify both chat lists
+            for uid in [self.sender_id, self.recipient_id]:
+                ut = 'employer' if await self.is_employer(uid) else 'candidate'
+                await self.channel_layer.group_send(
+                    f'chat_list_{ut}_{uid}',
+                    {
+                        'type': 'chat_message',
+                        'sender_id': self.sender_id,
+                        'recipient_id': self.recipient_id,
+                        'is_new_message': uid == self.recipient_id
+                    }
+                )
 
-                payload = {
-                    'type': 'chat_message',
-                    'sender_id': self.sender_id,
-                    'recipient_id': self.recipient_id,
-                }
-
-                if user_id == self.recipient_id:
-                    payload.update({
-                        'unread_count': unread_counts.get('unread_count', 0),
-                        'total_count': unread_counts.get('total_count', 0),
-                        'is_new_message': True
-                    })
-
-                await self.channel_layer.group_send(group_name, payload)
-
-        except json.JSONDecodeError:
-            await self.send(text_data=json.dumps({'error': 'Invalid JSON'}))
-        except ValueError as ve:
-            await self.send(text_data=json.dumps({'error': str(ve)}))
         except Exception as e:
-            self.logger.exception(f"Error in receive: {str(e)}")
-            await self.send(text_data=json.dumps({'error': 'Internal server error'}))
+            self.logger.exception("receive error")
+            await self.send(json.dumps({'error': str(e)}))
 
     async def chat_message(self, event):
-        await self.send(text_data=json.dumps({
+        await self.send(json.dumps({
             'type': 'chat_message',
-            'message': event['message'],
-            'sender_id': event['sender_id'],
-            'recipient_id': event['recipient_id'],
-            'message_id': event['message_id'],
-            'messageType': event['messageType'],
-            'timestamp': event['timestamp'],
-            'unread_count': event.get('unread_count', 0),
-            'total_count': event.get('total_count', 0)
+            **{k: v for k, v in event.items() if k != 'type'}
         }))
 
     @database_sync_to_async
-    def save_message(self, sender_id, recipient_id, message, message_type='text'):
+    def _save_message(self, sender_id, recipient_id, message, message_type='text'):
         try:
-            sender = User.objects.get(id=sender_id)
-            recipient = User.objects.get(id=recipient_id)
-
-            msg_obj = ChatMessage.objects.create(
-                sender=sender,
-                recipient=recipient,
+            s = User.objects.get(id=sender_id)
+            r = User.objects.get(id=recipient_id)
+            msg = ChatMessage.objects.create(
+                sender=s,
+                recipient=r,
                 message=message,
                 messageType=message_type,
                 unread_count=1
             )
-            return msg_obj, None
-        except User.DoesNotExist as e:
-            return None, "User not found"
+            return msg, None
         except Exception as e:
-            self.logger.exception("Failed to save message")
             return None, str(e)
 
 
-# ChatListConsumer remains unchanged unless you have specific issues there
-            
 class ChatListConsumer(AsyncJsonWebsocketConsumer):
     logger = logging.getLogger(__name__)
 

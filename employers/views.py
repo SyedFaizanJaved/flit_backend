@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-
+import time
 from accounts.views import BaseRoleRegistrationView
 from utils.pagination import CustomPagination
 
@@ -336,13 +336,11 @@ class EmployerViewSet(viewsets.ViewSet):
 
             CandidateAction.objects.filter(employer=employer).delete()
 
-            # Employer profile delete
             employer.delete()
 
-            # User se employer-related flags clear
             request.user.profile_completed = False
             if hasattr(request.user, 'user_type'):
-                request.user.user_type = None  # ya 'candidate' ya default
+                request.user.user_type = None 
             request.user.save(update_fields=['profile_completed', 'user_type'])
 
             return Response({
@@ -411,16 +409,41 @@ class EmployerComplianceView(generics.RetrieveUpdateAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])  # Optional: agar sirf logged in employer access kare
+@permission_classes([permissions.IsAuthenticated])  
 def get_flitpass_data(request, company_id):
+    """
+    Fetch FlitPass data for a specific company from the ML API.
+    
+    Args:
+        request: The HTTP request object
+        company_id: ID of the company to fetch FlitPass data for
+        
+    Returns:
+        Response: JSON response containing FlitPass data or error message
+    """
     try:
         ml_api_url = f"{settings.FLIT_AI_URL}/flitpass/{company_id}"
-        response = requests.get(ml_api_url, timeout=10)
+        
+        # Make a single request 
+        response = requests.get(ml_api_url)
         response.raise_for_status()
+        
+        # Return the successful response
         return Response(response.json())
-    except requests.exceptions.RequestException as e:
-        exception_logger.exception("ML API call failed for company_id=%s", company_id)
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            return Response(
+                {"error": "No FlitPass data available for this company"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         return Response(
-            {"error": "Failed to fetch data from ML API"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            {"error": f"ML API error: {str(e)}"},
+            status=e.response.status_code
+        )
+        
+    except requests.exceptions.RequestException as e:
+        return Response(
+            {"error": f"Failed to fetch data from ML API: {str(e)}"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
         )

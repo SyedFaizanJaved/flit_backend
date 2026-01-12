@@ -12,6 +12,7 @@ from .serializers import (
     ProjectApplicationListSerializer,
 )
 from jobs.models import Job
+from django.core.cache import cache
 from projects.models import Project
 import logging
 from utils.pagination import CustomPagination
@@ -211,6 +212,9 @@ def apply_to_project(request, project_id):
             company=project.company,
             coverLetter=request.data.get("coverLetter", ""),
         )
+        
+        cache_key = f'candidate_{request.user.candidate_profile.id}_latest_projects'
+        cache.delete(cache_key)
 
         return Response(
             {

@@ -542,7 +542,19 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         cached = cache.get(cache_key)
 
         if cached and cached.get('ml_success'):
-            queryset = cached.get('jobs', [])
+            # Use cached data but update has_applied status from database
+            jobs = cached.get('jobs', [])
+            job_ids = [j['id'] for j in jobs if 'id' in j]
+            if job_ids:
+                applied_job_ids = set(
+                    Application.objects.filter(
+                        candidate=candidate,
+                        job_id__in=job_ids
+                    ).values_list('job_id', flat=True)
+                )
+                for job in jobs:
+                    job['has_applied'] = job['id'] in applied_job_ids
+            queryset = jobs
         else:
             queryset = []
             try:
@@ -617,6 +629,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:
+            # Use cached data but update has_applied status from database
+            project_ids = [p['id'] for p in cached if 'id' in p]
+            if project_ids:
+                applied_project_ids = set(
+                    ProjectApplication.objects.filter(
+                        candidate=candidate,
+                        project_id__in=project_ids
+                    ).values_list('project_id', flat=True)
+                )
+                for proj in cached:
+                    proj['has_applied'] = proj['id'] in applied_project_ids
             queryset = cached
         else:
             queryset = []
