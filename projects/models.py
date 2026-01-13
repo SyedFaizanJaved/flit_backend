@@ -59,7 +59,7 @@ class Project(models.Model):
         ('paused', 'Paused'),
         ('closed', 'Closed'),
         ('in-progress', 'In Progress'),
-        ('completed', 'Completed'),
+        ('completed', 'Completed')
     ]
     
     # Basic Information

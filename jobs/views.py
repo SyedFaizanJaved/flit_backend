@@ -100,7 +100,7 @@ class JobViewSet(viewsets.ModelViewSet):
         if hasattr(self.request.user, 'employer_profile'):
             qs = qs.filter(company=self.request.user.employer_profile.company)
 
-        if self.action in ['list', 'my_jobs']:
+        if self.action == 'list':
             qs = qs.filter(status='active')
 
         search = self.request.query_params.get('search', None)
