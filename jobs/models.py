@@ -52,6 +52,7 @@ class Job(models.Model):
         ('closed', 'Closed'),
         ('in-progress', 'In Progress'),
         ('filled', 'Filled'),
+        ('completed', 'Completed')
     ]
     
     EXPERIENCE_LEVEL_CHOICES = [

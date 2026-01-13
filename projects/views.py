@@ -97,7 +97,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     escaped_term = re.escape(term)
                     queryset = queryset.filter(title__iregex=fr'\b{escaped_term}\b')
 
-        if self.action in ['list', 'my_projects']:
+        # Only filter by active status for public list view
+        if self.action == 'list':
+            queryset = queryset.filter(status='active')
+        # my_projects will show all statuses
             queryset = queryset.filter(status='active')
             queryset = queryset.prefetch_related('applications__candidate')
 
