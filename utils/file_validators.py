@@ -36,15 +36,15 @@ def custom_s3_upload_path(instance, filename, folder):
 
 def resume_upload_path(instance, filename):
     """Generate upload path for resume files."""
-    return custom_s3_upload_path(instance, filename, "resumes")
+    return custom_s3_upload_path(instance, filename, "candidates/resumes")
 
 def image_upload_path(instance, filename):
-    """Generate upload path for image files."""
-    return custom_s3_upload_path(instance, filename, "images")
+    """Generate upload path for profile image files."""
+    return custom_s3_upload_path(instance, filename, "candidates/profile_images")
 
 def video_upload_path(instance, filename):
     """Generate upload path for video files."""
-    return custom_s3_upload_path(instance, filename, "videos")
+    return custom_s3_upload_path(instance, filename, "candidates/videos")
 
 def document_upload_path(instance, filename):
     """Generate upload path for general document files."""
