@@ -50,6 +50,7 @@ class Job(models.Model):
         ('active', 'Active'),
         ('paused', 'Paused'),
         ('closed', 'Closed'),
+        ('in-progress', 'In Progress'),
         ('filled', 'Filled'),
     ]
     
