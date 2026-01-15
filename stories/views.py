@@ -1,5 +1,3 @@
-# stories/views.py
-
 import logging
 from datetime import timedelta
 from django.contrib.contenttypes.models import ContentType
@@ -679,7 +677,8 @@ class ProjectListView(generics.ListAPIView):
             story__project_id=OuterRef('pk')
         ).values('story__project_id').annotate(count=Count('id')).values('count')
 
-        return Project.objects.select_related('company').all().annotate(
+        # Only show active projects in storyline
+        return Project.objects.select_related('company').filter(status='active').annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(project_id=OuterRef('pk'), user=user)),
@@ -707,7 +706,8 @@ class JobListView(generics.ListAPIView):
             story__job_id=OuterRef('pk')
         ).values('story__job_id').annotate(count=Count('id')).values('count')
 
-        return Job.objects.select_related('company').all().annotate(
+        # Only show active jobs in storyline
+        return Job.objects.select_related('company').filter(status='active').annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(job_id=OuterRef('pk'), user=user)),
@@ -723,7 +723,16 @@ class CandidateListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
 
-        queryset = Candidate.objects.all()
+        # Only show candidates with completed profiles (per team lead requirement).
+        # Candidate model doesn't have a DB field named `profile_completed`, so we define completion as:
+        # all sections completed.
+        queryset = Candidate.objects.filter(
+            basic_info_completed=True,
+            work_preferences_completed=True,
+            skills_completed=True,
+            portfolio_completed=True,
+            privacy_completed=True,
+        )
 
         # Hide own candidate profile if the logged-in user is a candidate
         if hasattr(user, 'candidate_profile'):

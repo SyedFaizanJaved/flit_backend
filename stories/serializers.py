@@ -162,7 +162,7 @@ class JobSerializer(serializers.ModelSerializer):
         model = Job
         fields = [
             'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'skills', 'applicationDeadline'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline'
         ]
 
 
@@ -173,6 +173,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.BooleanField(read_only=True)
     is_saved = serializers.BooleanField(read_only=True)
+    profile_completed = serializers.SerializerMethodField()
 
     class Meta:
         model = Candidate
@@ -180,5 +181,14 @@ class CandidateSerializer(serializers.ModelSerializer):
             'candidate_id', 'id', 'full_name', 'title', 'bio', 'location', 'work_style', 'is_available',
             'availability_type', 'skills', 'seniority_level', 'min_salary', 'max_salary',
             'salary_currency', 'profile_image', 'like_count', 'comment_count',
-            'is_liked', 'is_saved', 'created_at', 'user_id'
+            'is_liked', 'is_saved', 'created_at', 'user_id', 'profile_completed'
         ]
+
+    def get_profile_completed(self, obj):
+        return all([
+            bool(getattr(obj, 'basic_info_completed', False)),
+            bool(getattr(obj, 'work_preferences_completed', False)),
+            bool(getattr(obj, 'skills_completed', False)),
+            bool(getattr(obj, 'portfolio_completed', False)),
+            bool(getattr(obj, 'privacy_completed', False)),
+        ])
