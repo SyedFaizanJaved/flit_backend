@@ -15,6 +15,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
+from utils.email_service import send_shortlist_notification, send_rejection_notification
 from .models import Job, JobSkill, JobLanguage
 from .serializers import (
     JobSerializer, JobListSerializer, JobCreateSerializer, JobUpdateSerializer,
@@ -325,6 +326,18 @@ class JobViewSet(viewsets.ModelViewSet):
         app.is_rejected = False
         app.status = 'shortlisted'
         app.save()
+        
+        # Send email notification to candidate
+        try:
+            send_shortlist_notification(
+                candidate=app.candidate,
+                job_or_project_title=job.title,
+                application_type='job'
+            )
+        except Exception as e:
+            logger.error(f"Failed to send shortlist email notification: {str(e)}")
+            # Don't fail the request if email fails
+        
         return Response({'message': 'Application shortlisted successfully'})
 
     @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/reject')
@@ -336,4 +349,17 @@ class JobViewSet(viewsets.ModelViewSet):
         app.status = 'rejected'
         app.rejection_reason = request.data.get('rejection_reason', '')
         app.save()
+        
+        # Send email notification to candidate
+        try:
+            send_rejection_notification(
+                candidate=app.candidate,
+                job_or_project_title=job.title,
+                application_type='job',
+                rejection_reason=app.rejection_reason
+            )
+        except Exception as e:
+            logger.error(f"Failed to send rejection email notification: {str(e)}")
+            # Don't fail the request if email fails
+        
         return Response({'message': 'Application rejected successfully'})

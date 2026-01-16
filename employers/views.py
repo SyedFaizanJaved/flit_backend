@@ -27,6 +27,8 @@ from .serializers import (
     CandidateActionDetailSerializer,
 )
 from applications.models import JobApplication, ProjectApplication
+from candidates.models import Candidate
+from utils.email_service import send_flit_pass_notification
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -71,10 +73,35 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
         if requested_action not in ['pass', 'reject']:
             return Response({"detail": "action must be 'pass' or 'reject'"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Get candidate instance for email notification (only for 'pass' action)
+        candidate = None
+        if requested_action == 'pass':
+            try:
+                # Convert candidate_id to int if it's a string
+                candidate_id_int = int(candidate_id) if isinstance(candidate_id, str) else candidate_id
+                candidate = Candidate.objects.get(id=candidate_id_int)
+            except (Candidate.DoesNotExist, ValueError, TypeError) as e:
+                logger.warning(f"Candidate with id {candidate_id} not found for flit pass notification: {str(e)}")
+
         try:
             instance = CandidateAction.objects.get(employer=employer, candidate_id=candidate_id)
+            is_new_flit = instance.action != 'pass' and requested_action == 'pass'
             instance.action = requested_action
             instance.save()
+            
+            # Send email notification only when flitting (pass action) for the first time
+            if requested_action == 'pass' and is_new_flit and candidate:
+                try:
+                    company_name = employer.company.company_name if employer.company else None
+                    send_flit_pass_notification(
+                        candidate=candidate,
+                        employer_name=employer.full_name,
+                        company_name=company_name
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send flit pass email notification: {str(e)}")
+                    # Don't fail the request if email fails
+            
             serializer = CandidateActionDetailSerializer(instance, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
         except CandidateAction.DoesNotExist:
@@ -84,6 +111,20 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             })
             serializer.is_valid(raise_exception=True)
             serializer.save(employer=employer)
+            
+            # Send email notification when flitting (pass action) for the first time
+            if requested_action == 'pass' and candidate:
+                try:
+                    company_name = employer.company.company_name if employer.company else None
+                    send_flit_pass_notification(
+                        candidate=candidate,
+                        employer_name=employer.full_name,
+                        company_name=company_name
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send flit pass email notification: {str(e)}")
+                    # Don't fail the request if email fails
+            
             detail_serializer = CandidateActionDetailSerializer(serializer.instance, context={'request': request})
             return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
 
