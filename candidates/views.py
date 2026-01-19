@@ -809,7 +809,8 @@ class DiscoverTalentView(generics.ListAPIView):
     def get_queryset(self):
         qs = Candidate.objects.select_related('user').filter(
             user__is_active=True,
-            profile_visibility="public"
+            profile_visibility="public",
+            basic_info_completed=True,  
         )
 
         q = self.request.query_params.get('search', '').strip().lower()
@@ -820,8 +821,6 @@ class DiscoverTalentView(generics.ListAPIView):
             if not words:
                 return qs
 
-            from django.db.models import Q, Case, When, Value, IntegerField, F
-            
             # Initialize queries
             name_query = Q()
             title_query = Q()
