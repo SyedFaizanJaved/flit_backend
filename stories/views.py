@@ -728,10 +728,6 @@ class CandidateListView(generics.ListAPIView):
         # all sections completed.
         queryset = Candidate.objects.filter(
             basic_info_completed=True,
-            work_preferences_completed=True,
-            skills_completed=True,
-            portfolio_completed=True,
-            privacy_completed=True,
         )
 
         # Hide own candidate profile if the logged-in user is a candidate
