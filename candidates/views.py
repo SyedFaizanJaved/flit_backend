@@ -6,7 +6,7 @@ import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db import transaction
-from django.db.models import Q, F, Count, Case, When, Value, IntegerField
+from django.db.models import Q, F, Count, Case, When, Value, IntegerField, Sum
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, permissions, status, serializers
@@ -540,7 +540,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         from django.core.cache import cache
         cache_key = f'candidate_{candidate.id}_latest_jobs'
         cached = cache.get(cache_key)
-
+    
         if cached and cached.get('ml_success'):
             # Use cached data but update has_applied status from database
             jobs = cached.get('jobs', [])
@@ -985,8 +985,6 @@ class DiscoverTalentView(generics.ListAPIView):
             ]
             
             # Calculate total relevance score by summing all relevance fields
-            from django.db.models import Sum, F, Case, When, Value, IntegerField
-            
             # Start with a base score of 0
             score_expression = Value(0, output_field=IntegerField())
             
