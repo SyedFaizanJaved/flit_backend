@@ -238,7 +238,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 delete_old_file(candidate.video_intro_url)
                 candidate.video_intro_url = None
                 candidate.video_transcription = None
-                candidate.intro_video_description = None
+                candidate.intro_video_description = {}
                 updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
 
         # File uploads
@@ -299,8 +299,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if transcription := analysis.get('video_transcript'):
                             candidate.video_transcription = transcription
                             updated_fields.append('video_transcription')
-                        if description := analysis.get('description'):
-                            candidate.intro_video_description = description
+                        if analysis:
+                            candidate.intro_video_description = analysis
                             updated_fields.append('intro_video_description')
                 except Exception as e:
                     logger.error(f"Video analysis exception: {e}", exc_info=True)

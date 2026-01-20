@@ -78,7 +78,7 @@ class Candidate(models.Model):
     )
     resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)
     video_intro_url = models.FileField(upload_to=video_upload_path, blank=True, null=True)
-    intro_video_description = models.TextField(blank=True, null=True)
+    intro_video_description = models.JSONField(blank=True, null=True, default=dict)
     # Full raw transcription text returned by ML services
     video_transcription = models.TextField(blank=True, null=True)
     
