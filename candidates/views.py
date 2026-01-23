@@ -19,6 +19,8 @@ from utils.pagination import CustomPagination
 from utils.file_validators import (
     resume_upload_path, video_upload_path, image_upload_path, document_upload_path
 )
+from .serializers import AchievementSerializer
+from .models import Education, Experience, Achievement        
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from jobs.models import Job
@@ -33,6 +35,7 @@ from .serializers import (
     ReferenceRequestSerializer,
     WorkDNAQuestionSerializer,
     DiscoverTalentSerializer,
+    AchievementSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -181,6 +184,19 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         data = request.data
         files = request.FILES
         updated_fields = []
+        
+        # Debug logging for files
+        logger.info(f"Received files: {list(files.keys())}")
+        for key, file_obj in files.items():
+            logger.info(f"File key: {key}, name: {file_obj.name}, size: {file_obj.size}")
+        
+        # Debug logging for request data
+        logger.info(f"Request data keys: {list(data.keys())}")
+        for key, value in data.items():
+            if key in ['education', 'experience', 'achievements']:
+                logger.info(f"Data key: {key}, value type: {type(value)}, first 100 chars: {str(value)[:100]}")
+            else:
+                logger.info(f"Data key: {key}, value: {value}")
 
         def to_boolean(value):
             if isinstance(value, bool):
@@ -351,9 +367,105 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
         candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
 
-        # ML sync (
+        # Handle Education
+        if 'education' in data:
+            education_data = data['education']
+            # Parse JSON string if needed
+            if isinstance(education_data, str):
+                try:
+                    education_data = json.loads(education_data)
+                except json.JSONDecodeError:
+                    education_data = []
+            if isinstance(education_data, list):
+                # Delete existing education records
+                candidate.education.all().delete()
+                # Create new education records
+                for edu_data in education_data:
+                    if edu_data and edu_data.get('institution') and edu_data.get('start_date'):
+                        # Only create if required fields are present
+                        Education.objects.create(candidate=candidate, **edu_data)
+        
+        # Handle Experience
+        if 'experience' in data:
+            experience_data = data['experience']
+            # Parse JSON string if needed
+            if isinstance(experience_data, str):
+                try:
+                    experience_data = json.loads(experience_data)
+                except json.JSONDecodeError:
+                    experience_data = []
+            if isinstance(experience_data, list):
+                # Delete existing experience records
+                candidate.experience.all().delete()
+                # Create new experience records
+                for exp_data in experience_data:
+                    if exp_data and exp_data.get('company_name') and exp_data.get('position') and exp_data.get('start_date'):
+                        # Only create if required fields are present
+                        Experience.objects.create(candidate=candidate, **exp_data)
+        
+        # Handle Achievements
+        if 'achievements' in data:
+            achievements_data = data['achievements']
+            logger.info(f"Raw achievements data: {achievements_data}")
+            logger.info(f"Achievements data type: {type(achievements_data)}")
+            # Parse JSON string if needed
+            if isinstance(achievements_data, str):
+                try:
+                    achievements_data = json.loads(achievements_data)
+                    logger.info(f"Parsed achievements data: {achievements_data}")
+                except json.JSONDecodeError:
+                    achievements_data = []
+                    logger.error("Failed to parse achievements JSON")
+            if isinstance(achievements_data, list):
+                logger.info(f"Processing {len(achievements_data)} achievements")
+                # Delete existing achievement records
+                candidate.achievements.all().delete()
+                # Create new achievement records
+                for index, ach_data in enumerate(achievements_data):
+                    logger.info(f"Processing achievement {index}: {ach_data}")
+                    if ach_data and ach_data.get('title') and ach_data.get('achievement_type') and ach_data.get('date_achieved'):
+                        # Only create if required fields are present
+                        logger.info(f"Achievement {index} has required fields, creating...")
+                        
+                        # Try to find an image for this achievement
+                        # Check for achievement_image_0, achievement_image_1, etc.
+                        image_key = f'achievement_image_{index}'
+                        achievement_data = ach_data.copy()
+                        
+                        if image_key in request.FILES:
+                            achievement_data['image'] = request.FILES[image_key]
+                            logger.info(f"Found image for achievement {index} with key {image_key}")
+                        # Also check for single 'image' key for first achievement
+                        elif index == 0 and 'image' in request.FILES:
+                            achievement_data['image'] = request.FILES['image']
+                            logger.info(f"Found single image for first achievement")
+                        
+                        logger.info(f"Final achievement data keys: {list(achievement_data.keys())}")
+                        logger.info(f"Image in achievement data: {'image' in achievement_data}")
+                        
+                        serializer = AchievementSerializer(data=achievement_data)
+                        if serializer.is_valid():
+                            achievement = serializer.save(candidate=candidate)
+                            logger.info(f"Achievement created successfully with ID: {achievement.id}, Image: {achievement.image}")
+                        else:
+                            # Fallback to direct creation if serializer fails
+                            logger.error(f"Achievement serializer errors: {serializer.errors}")
+                            achievement = Achievement.objects.create(candidate=candidate, **ach_data)
+                            if 'image' in achievement_data:
+                                achievement.image = achievement_data['image']
+                                achievement.save()
+                                logger.info(f"Achievement created with direct method, Image: {achievement.image}")
+                    else:
+                        logger.warning(f"Achievement {index} missing required fields: title={ach_data.get('title')}, type={ach_data.get('achievement_type')}, date={ach_data.get('date_achieved')}")
+            else:
+                logger.error(f"Achievements data is not a list: {type(achievements_data)}")
+        else:
+            logger.info("No achievements data in request")
+        
+        # ML sync (TEMPORARILY DISABLED FOR PERFORMANCE)
         ml_success = True
-        ml_message = "All ML APIs successfully executed"
+        ml_message = "ML sync disabled for performance"
+        
         try:
                 ml_payload = {
                     "full_name": candidate.full_name or "",
@@ -1001,4 +1113,20 @@ class DiscoverTalentView(generics.ListAPIView):
         if skills := self.request.query_params.getlist('skills'):
             qs = qs.filter(skills__overlap=skills)
 
-        return qs.distinct()
+        return qs
+
+
+class AchievementViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
+    """
+    ViewSet for managing candidate achievements
+    """
+    serializer_class = AchievementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        candidate = self.get_candidate()
+        return Achievement.objects.filter(candidate=candidate).order_by('-date_achieved')
+    
+    def perform_create(self, serializer):
+        candidate = self.get_candidate()
+        serializer.save(candidate=candidate).distinct()

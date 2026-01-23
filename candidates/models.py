@@ -5,7 +5,8 @@ from django.core.validators import MinValueValidator, MaxValueValidator, FileExt
 from utils.file_validators import (
     image_upload_path,
     resume_upload_path,
-    video_upload_path
+    video_upload_path,
+    achievement_image_upload_path
 )
 
 
@@ -346,6 +347,12 @@ class Achievement(models.Model):
     date_achieved = models.DateField()
     issuer = models.CharField(max_length=200, blank=True, null=True)
     url = models.URLField(blank=True, null=True)
+    image = models.FileField(
+        upload_to=achievement_image_upload_path,
+        blank=True,
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
