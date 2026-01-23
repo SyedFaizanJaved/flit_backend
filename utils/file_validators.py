@@ -49,3 +49,7 @@ def video_upload_path(instance, filename):
 def document_upload_path(instance, filename):
     """Generate upload path for general document files."""
     return custom_s3_upload_path(instance, filename, "documents")
+
+def achievement_image_upload_path(instance, filename):
+    """Generate upload path for achievement image files."""
+    return custom_s3_upload_path(instance, filename, "candidates/achievements")

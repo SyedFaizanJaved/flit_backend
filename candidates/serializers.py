@@ -1,6 +1,7 @@
 import json
+import logging
 from rest_framework import serializers
-from .models import Candidate, ReferenceRequest, WorkDNAQuestion
+from .models import Candidate, ReferenceRequest, WorkDNAQuestion, Education, Experience, Achievement
 from companies.models import Company
 from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
@@ -150,6 +151,9 @@ class CandidateSerializer(serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     portfolio_links = serializers.SerializerMethodField()
     preferred_roles = serializers.SerializerMethodField()
+    education = serializers.SerializerMethodField()
+    experience = serializers.SerializerMethodField()
+    achievements = serializers.SerializerMethodField()
     
     def _parse_json_field(self, value):
         if isinstance(value, str):
@@ -171,6 +175,64 @@ class CandidateSerializer(serializers.ModelSerializer):
     def get_preferred_roles(self, obj):
         return self._parse_json_field(obj.preferred_roles)
     
+    def get_education(self, obj):
+        education_records = obj.education.all().order_by('-start_date')
+        data = []
+        for edu in education_records:
+            data.append({
+                'id': edu.id,
+                'institution': edu.institution,
+                'degree': edu.degree,
+                'field_of_study': edu.field_of_study,
+                'start_date': edu.start_date,
+                'end_date': edu.end_date,
+                'is_current': edu.is_current,
+                'gpa': edu.gpa,
+                'description': edu.description,
+                'created_at': edu.created_at,
+                'updated_at': edu.updated_at
+            })
+        return data
+    
+    def get_experience(self, obj):
+        experience_records = obj.experience.all().order_by('-start_date')
+        data = []
+        for exp in experience_records:
+            data.append({
+                'id': exp.id,
+                'company_name': exp.company_name,
+                'position': exp.position,
+                'employment_type': exp.employment_type,
+                'start_date': exp.start_date,
+                'end_date': exp.end_date,
+                'is_current': exp.is_current,
+                'location': exp.location,
+                'description': exp.description,
+                'achievements': exp.achievements,
+                'skills_used': exp.skills_used,
+                'created_at': exp.created_at,
+                'updated_at': exp.updated_at
+            })
+        return data
+    
+    def get_achievements(self, obj):
+        achievement_records = obj.achievements.all().order_by('-date_achieved')
+        data = []
+        for ach in achievement_records:
+            data.append({
+                'id': ach.id,
+                'title': ach.title,
+                'achievement_type': ach.achievement_type,
+                'description': ach.description,
+                'date_achieved': ach.date_achieved,
+                'issuer': ach.issuer,
+                'url': ach.url,
+                'image': self._get_file_url(ach.image) if ach.image else None,
+                'created_at': ach.created_at,
+                'updated_at': ach.updated_at
+            })
+        return data
+    
     def _get_file_url(self, file_field):
         """Helper method to get the URL for a file field"""
         if not file_field:
@@ -183,13 +245,28 @@ class CandidateSerializer(serializers.ModelSerializer):
             # If it's already a full URL, return it as is
             if url.startswith(('http://', 'https://')):
                 return url
+            
+            # Try to get the URL using Django's storage system first
+            if hasattr(file_field, 'url'):
+                try:
+                    full_url = file_field.url
+                    if hasattr(self, 'context') and 'request' in self.context:
+                        return self.context['request'].build_absolute_uri(full_url)
+                    return full_url
+                except:
+                    pass
                 
+            # Fallback to manual URL construction
             # Determine the base path based on the field name
             if hasattr(file_field, 'field'):
                 if file_field.field.name == 'resume_url':
-                    base_path = 'candidate_resume/'
+                    base_path = 'candidates/resumes/'
                 elif file_field.field.name == 'video_intro_url':
-                    base_path = 'candidate_video/'
+                    base_path = 'candidates/videos/'
+                elif file_field.field.name == 'profile_image':
+                    base_path = 'candidates/profile_images/'
+                elif file_field.field.name == 'image':
+                    base_path = 'candidates/achievements/'
                 else:
                     base_path = ''
                 
@@ -200,12 +277,18 @@ class CandidateSerializer(serializers.ModelSerializer):
             # If it's a path, construct the full URL
             if hasattr(file_field.storage, 'bucket_name'):
                 # For S3 storage
-                return f"https://{file_field.storage.bucket_name}.s3.{file_field.storage.region_name}.amazonaws.com/{url.lstrip('/')}"
+                full_url = f"https://{file_field.storage.bucket_name}.s3.{file_field.storage.region_name}.amazonaws.com/{url.lstrip('/')}"
+            else:
+                # For other storage backends, use the storage's url method
+                full_url = file_field.storage.url(url)
             
-            # For other storage backends, use the storage's url method
-            return file_field.storage.url(url)
+            # Build absolute URL if request is available
+            if hasattr(self, 'context') and 'request' in self.context:
+                return self.context['request'].build_absolute_uri(full_url)
+            return full_url
             
         except Exception as e:
+            logger = logging.getLogger(__name__)
             logger.error(f"Error generating URL for {file_field}: {str(e)}")
             return None
     
@@ -226,7 +309,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "profile_views", "viewers_count", "profile_views_display",
             "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
-            "resume_data" 
+            "resume_data", "education", "experience", "achievements"
         ]
         read_only_fields = ("user", "created_at", "updated_at")
     
@@ -626,6 +709,15 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
             user.save(update_fields=['profile_completed', 'updated_at'])
 
         return updated_instance
+
+
+class AchievementSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(required=False, allow_null=True)
+    
+    class Meta:
+        model = Achievement
+        fields = '__all__'
+        read_only_fields = ('candidate', 'created_at', 'updated_at')
 
 
 class CompanyWithOpeningsSerializer(serializers.ModelSerializer):
