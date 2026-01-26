@@ -266,6 +266,22 @@ class Education(models.Model):
         ('diploma', 'Diploma'),
     ]
     
+    GRADING_SYSTEM_CHOICES = [
+        ('gpa', 'GPA'),
+        ('gpr', 'GPR'),
+        ('grade', 'Grade'),
+        ('marks', 'Marks'),
+    ]
+    
+    GRADE_CHOICES = [
+        ('A', 'A'),
+        ('B', 'B'),
+        ('C', 'C'),
+        ('D', 'D'),
+        ('E', 'E'),
+        ('F', 'F'),
+    ]
+    
     candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='education')
     institution = models.CharField(max_length=200)
     degree = models.CharField(max_length=20, choices=DEGREE_CHOICES)
@@ -273,7 +289,14 @@ class Education(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(blank=True, null=True)
     is_current = models.BooleanField(default=False)
-    gpa = models.DecimalField(max_digits=3, decimal_places=2, blank=True, null=True)
+    
+    # Grading System
+    grading_system = models.CharField(max_length=10, choices=GRADING_SYSTEM_CHOICES, blank=True, null=True)
+    gpa = models.DecimalField(max_digits=3, decimal_places=2, blank=True, null=True, help_text="For GPA/GPR system")
+    grade = models.CharField(max_length=1, choices=GRADE_CHOICES, blank=True, null=True, help_text="For Grade system (A-F)")
+    total_marks = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, help_text="For Marks system")
+    obtained_marks = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, help_text="For Marks system")
+    
     description = models.TextField(blank=True, null=True)
     
     # Timestamps

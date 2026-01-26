@@ -5,6 +5,7 @@ import os
 import requests
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q, F, Count, Case, When, Value, IntegerField, Sum
 from django.utils import timezone
@@ -19,6 +20,7 @@ from utils.pagination import CustomPagination
 from utils.file_validators import (
     resume_upload_path, video_upload_path, image_upload_path, document_upload_path
 )
+from utils.pdf_generator import generate_pdf_from_cv_data
 from .serializers import AchievementSerializer
 from .models import Education, Experience, Achievement        
 from projects.models import Project
@@ -528,7 +530,79 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         response_data['ml_message'] = ml_message
         return Response(response_data)
 
-     
+    # ====================== DOWNLOAD RESUME ACTION ======================
+    @action(detail=False, methods=['get'], url_path='download-resume')
+    def download_resume(self, request):
+        candidate = self.get_candidate()
+
+        if candidate.resume_url and candidate.resume_url.name:
+            resume_url = request.build_absolute_uri(candidate.resume_url.url)
+            return Response({
+                'resume_url': resume_url,
+                'message': 'Resume already generated',
+                'generated': False
+            })
+
+        base_url = settings.FLIT_AI_URL.rstrip('/')
+        make_cv_url = f"{base_url}/make_cv/{candidate.id}"
+
+        headers = {}
+        if hasattr(settings, 'ML_API_KEY'):
+            headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+
+        try:
+            resp = requests.get(make_cv_url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            cv_data = resp.json()
+            
+            if not cv_data.get('name') and not cv_data.get('professional_summary'):
+                return Response({
+                    "error": "AI service returned empty or invalid CV data"
+                }, status=503)
+
+        except requests.RequestException as e:
+            logger.error(f"make_cv API failed for candidate {candidate.id}: {e}")
+            return Response({
+                "error": "We're having trouble generating your resume right now. Please try again in a few minutes."
+            }, status=503)
+
+        except ValueError:
+            logger.error(f"Invalid JSON from make_cv for candidate {candidate.id}")
+            return Response({"error": "Service returned invalid data"}, status=500)
+
+        try:
+            pdf_bytes = generate_pdf_from_cv_data(cv_data)
+        except Exception as e:
+            logger.exception(f"PDF generation failed for candidate {candidate.id}")
+            return Response({
+                "error": "Could not create PDF resume at this moment. Our team has been notified."
+            }, status=500)
+
+        # 4. Save file
+        try:
+            filename = f"resume_{candidate.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.pdf"
+            path = resume_upload_path(candidate, filename) 
+
+            default_storage.save(path, ContentFile(pdf_bytes))
+
+            candidate.resume_url = path
+            candidate.portfolio_completed = True
+            candidate.save(update_fields=['resume_url', 'portfolio_completed', 'updated_at'])
+
+            resume_url = request.build_absolute_uri(default_storage.url(path))
+
+            return Response({
+                'resume_url': resume_url,
+                'message': 'Your professional resume has been generated successfully!',
+                'generated': True
+            })
+
+        except Exception as save_error:
+            logger.error(f"Failed to save resume file for {candidate.id}: {save_error}", exc_info=True)
+            return Response({
+                "error": "Resume generated but could not be saved. Please contact support."
+            }, status=500)
+        
     # ====================== DASHBOARD ACTIONS ======================
     @action(detail=False, methods=['get'], url_path='dashboard')
     def dashboard(self, request):
@@ -737,7 +811,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard/latest-projects')
     def latest_projects(self, request):
         candidate = self.get_candidate()
-        from django.core.cache import cache
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:

@@ -187,7 +187,11 @@ class CandidateSerializer(serializers.ModelSerializer):
                 'start_date': edu.start_date,
                 'end_date': edu.end_date,
                 'is_current': edu.is_current,
+                'grading_system': edu.grading_system,
                 'gpa': edu.gpa,
+                'grade': edu.grade,
+                'total_marks': edu.total_marks,
+                'obtained_marks': edu.obtained_marks,
                 'description': edu.description,
                 'created_at': edu.created_at,
                 'updated_at': edu.updated_at
