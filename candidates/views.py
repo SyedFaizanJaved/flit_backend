@@ -4,6 +4,7 @@ import logging
 import os
 import requests
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.cache import cache
 from django.db import transaction
@@ -367,43 +368,70 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             candidate.privacy_completed = True
             updated_fields.append('privacy_completed')
 
-        candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
+        def _payload_for_model(item, exclude=('id', 'pk', 'created_at', 'updated_at', 'candidate')):
+            """Build kwargs for create/update from payload, excluding meta keys."""
+            return {k: v for k, v in item.items() if k not in exclude}
 
-        # Handle Education
-        if 'education' in data:
-            education_data = data['education']
-            # Parse JSON string if needed
-            if isinstance(education_data, str):
-                try:
-                    education_data = json.loads(education_data)
-                except json.JSONDecodeError:
-                    education_data = []
-            if isinstance(education_data, list):
-                # Delete existing education records
-                candidate.education.all().delete()
-                # Create new education records
-                for edu_data in education_data:
-                    if edu_data and edu_data.get('institution') and edu_data.get('start_date'):
-                        # Only create if required fields are present
-                        Education.objects.create(candidate=candidate, **edu_data)
-        
-        # Handle Experience
-        if 'experience' in data:
-            experience_data = data['experience']
-            # Parse JSON string if needed
-            if isinstance(experience_data, str):
-                try:
-                    experience_data = json.loads(experience_data)
-                except json.JSONDecodeError:
-                    experience_data = []
-            if isinstance(experience_data, list):
-                # Delete existing experience records
-                candidate.experience.all().delete()
-                # Create new experience records
-                for exp_data in experience_data:
-                    if exp_data and exp_data.get('company_name') and exp_data.get('position') and exp_data.get('start_date'):
-                        # Only create if required fields are present
-                        Experience.objects.create(candidate=candidate, **exp_data)
+        with transaction.atomic():
+            candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
+
+            # Handle Education – upsert by id to avoid duplicate key after dump/restore
+            if 'education' in data:
+                education_data = data['education']
+                if isinstance(education_data, str):
+                    try:
+                        education_data = json.loads(education_data)
+                    except json.JSONDecodeError:
+                        education_data = []
+                if isinstance(education_data, list):
+                    kept_edu_ids = []
+                    for edu_data in education_data:
+                        if not (edu_data and edu_data.get('institution') and edu_data.get('start_date')):
+                            continue
+                        item_id = edu_data.get('id') or edu_data.get('pk')
+                        payload = _payload_for_model(edu_data)
+                        existing = Education.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
+                        if existing:
+                            for k, v in payload.items():
+                                setattr(existing, k, v)
+                            existing.save()
+                            kept_edu_ids.append(existing.id)
+                        else:
+                            obj = Education.objects.create(candidate=candidate, **payload)
+                            kept_edu_ids.append(obj.id)
+                    if kept_edu_ids:
+                        candidate.education.exclude(id__in=kept_edu_ids).delete()
+                    else:
+                        candidate.education.all().delete()
+
+            # Handle Experience – upsert by id to avoid duplicate key after dump/restore
+            if 'experience' in data:
+                experience_data = data['experience']
+                if isinstance(experience_data, str):
+                    try:
+                        experience_data = json.loads(experience_data)
+                    except json.JSONDecodeError:
+                        experience_data = []
+                if isinstance(experience_data, list):
+                    kept_exp_ids = []
+                    for exp_data in experience_data:
+                        if not (exp_data and exp_data.get('company_name') and exp_data.get('position') and exp_data.get('start_date')):
+                            continue
+                        item_id = exp_data.get('id') or exp_data.get('pk')
+                        payload = _payload_for_model(exp_data)
+                        existing = Experience.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
+                        if existing:
+                            for k, v in payload.items():
+                                setattr(existing, k, v)
+                            existing.save()
+                            kept_exp_ids.append(existing.id)
+                        else:
+                            obj = Experience.objects.create(candidate=candidate, **payload)
+                            kept_exp_ids.append(obj.id)
+                    if kept_exp_ids:
+                        candidate.experience.exclude(id__in=kept_exp_ids).delete()
+                    else:
+                        candidate.experience.all().delete()
         
         # Handle Achievements
         if 'achievements' in data:
@@ -551,7 +579,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
 
         try:
-            resp = requests.get(make_cv_url, headers=headers, timeout=30)
+            # make_cv endpoint expects POST (GET returns 405 Method Not Allowed)
+            resp = requests.post(make_cv_url, headers=headers, json={})
             resp.raise_for_status()
             cv_data = resp.json()
             
