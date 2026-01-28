@@ -198,6 +198,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         for key, value in data.items():
             if key in ['education', 'experience', 'achievements']:
                 logger.info(f"Data key: {key}, value type: {type(value)}, first 100 chars: {str(value)[:100]}")
+            elif key.startswith('achievement_image_'):
+                logger.info(f"Data key: {key}, value: {value}")
             else:
                 logger.info(f"Data key: {key}, value: {value}")
 
@@ -433,60 +435,151 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     else:
                         candidate.experience.all().delete()
         
-        # Handle Achievements
+        # Handle Achievements - UPSERT logic with proper validation and image handling
         if 'achievements' in data:
             achievements_data = data['achievements']
-            logger.info(f"Raw achievements data: {achievements_data}")
-            logger.info(f"Achievements data type: {type(achievements_data)}")
+            logger.info(f"Processing achievements data: {achievements_data}")
+            
             # Parse JSON string if needed
             if isinstance(achievements_data, str):
                 try:
                     achievements_data = json.loads(achievements_data)
-                    logger.info(f"Parsed achievements data: {achievements_data}")
                 except json.JSONDecodeError:
-                    achievements_data = []
                     logger.error("Failed to parse achievements JSON")
+                    achievements_data = []
+            
             if isinstance(achievements_data, list):
+                # Apply soft limit of max 30 achievements
+                if len(achievements_data) > 30:
+                    logger.warning(f"Too many achievements ({len(achievements_data)}), limiting to 30")
+                    achievements_data = achievements_data[:30]
+                
                 logger.info(f"Processing {len(achievements_data)} achievements")
-                # Delete existing achievement records
-                candidate.achievements.all().delete()
-                # Create new achievement records
+                
+                kept_achievement_ids = []
+                validation_errors = []
+                achievements_to_update = []
+                
                 for index, ach_data in enumerate(achievements_data):
-                    logger.info(f"Processing achievement {index}: {ach_data}")
-                    if ach_data and ach_data.get('title') and ach_data.get('achievement_type') and ach_data.get('date_achieved'):
-                        # Only create if required fields are present
-                        logger.info(f"Achievement {index} has required fields, creating...")
-                        
-                        # Try to find an image for this achievement
-                        # Check for achievement_image_0, achievement_image_1, etc.
-                        image_key = f'achievement_image_{index}'
-                        achievement_data = ach_data.copy()
-                        
-                        if image_key in request.FILES:
-                            achievement_data['image'] = request.FILES[image_key]
-                            logger.info(f"Found image for achievement {index} with key {image_key}")
-                        # Also check for single 'image' key for first achievement
-                        elif index == 0 and 'image' in request.FILES:
-                            achievement_data['image'] = request.FILES['image']
-                            logger.info(f"Found single image for first achievement")
-                        
-                        logger.info(f"Final achievement data keys: {list(achievement_data.keys())}")
-                        logger.info(f"Image in achievement data: {'image' in achievement_data}")
-                        
-                        serializer = AchievementSerializer(data=achievement_data)
-                        if serializer.is_valid():
-                            achievement = serializer.save(candidate=candidate)
-                            logger.info(f"Achievement created successfully with ID: {achievement.id}, Image: {achievement.image}")
+                    if not ach_data:
+                        continue
+                    
+                    # Get achievement ID for upsert logic
+                    item_id = ach_data.get('id') or ach_data.get('pk')
+                    logger.info(f"Processing achievement {index}, ID: {item_id}, data: {ach_data}")
+                    
+                    # Handle image attachments
+                    achievement_data = ach_data.copy()
+                    image_key = f'achievement_image_{index}'
+                    
+                    if image_key in request.FILES:
+                        achievement_data['image'] = request.FILES[image_key]
+                        logger.info(f"Found image for achievement {index} with key {image_key}")
+                    elif index == 0 and 'image' in request.FILES:
+                        achievement_data['image'] = request.FILES['image']
+                        logger.info(f"Found single image for first achievement")
+                    
+                    # Prepare payload for serializer (exclude meta fields)
+                    payload = _payload_for_model(achievement_data)
+                    
+                    if item_id:
+                        # Update existing achievement
+                        existing = Achievement.objects.filter(candidate=candidate, id=item_id).first()
+                        if existing:
+                            try:
+                                serializer = AchievementSerializer(existing, data=payload, partial=True)
+                                if serializer.is_valid():
+                                    achievements_to_update.append(serializer)
+                                    kept_achievement_ids.append(existing.id)
+                                    logger.info(f"Queued achievement {item_id} for update")
+                                else:
+                                    validation_errors.append({
+                                        'achievement_id': item_id,
+                                        'index': index,
+                                        'errors': serializer.errors
+                                    })
+                                    logger.error(f"Achievement {item_id} validation errors: {serializer.errors}")
+                            except Exception as e:
+                                validation_errors.append({
+                                    'achievement_id': item_id,
+                                    'index': index,
+                                    'error': str(e)
+                                })
+                                logger.error(f"Exception validating achievement {item_id}: {e}")
                         else:
-                            # Fallback to direct creation if serializer fails
-                            logger.error(f"Achievement serializer errors: {serializer.errors}")
-                            achievement = Achievement.objects.create(candidate=candidate, **ach_data)
-                            if 'image' in achievement_data:
-                                achievement.image = achievement_data['image']
-                                achievement.save()
-                                logger.info(f"Achievement created with direct method, Image: {achievement.image}")
+                            # ID not found, treat as new achievement
+                            logger.info(f"Achievement ID {item_id} not found, treating as new")
+                            try:
+                                serializer = AchievementSerializer(data=payload)
+                                if serializer.is_valid():
+                                    achievement = serializer.save(candidate=candidate)
+                                    kept_achievement_ids.append(achievement.id)
+                                    logger.info(f"Created new achievement with ID: {achievement.id}")
+                                else:
+                                    validation_errors.append({
+                                        'achievement_id': 'new',
+                                        'index': index,
+                                        'errors': serializer.errors
+                                    })
+                                    logger.error(f"New achievement validation errors: {serializer.errors}")
+                            except Exception as e:
+                                validation_errors.append({
+                                    'achievement_id': 'new',
+                                    'index': index,
+                                    'error': str(e)
+                                })
+                                logger.error(f"Exception creating new achievement: {e}")
                     else:
-                        logger.warning(f"Achievement {index} missing required fields: title={ach_data.get('title')}, type={ach_data.get('achievement_type')}, date={ach_data.get('date_achieved')}")
+                        # Create new achievement
+                        try:
+                            serializer = AchievementSerializer(data=payload)
+                            if serializer.is_valid():
+                                achievement = serializer.save(candidate=candidate)
+                                kept_achievement_ids.append(achievement.id)
+                                logger.info(f"Created new achievement with ID: {achievement.id}")
+                            else:
+                                validation_errors.append({
+                                    'achievement_id': 'new',
+                                    'index': index,
+                                    'errors': serializer.errors
+                                })
+                                logger.error(f"New achievement validation errors: {serializer.errors}")
+                        except Exception as e:
+                            validation_errors.append({
+                                'achievement_id': 'new',
+                                'index': index,
+                                'error': str(e)
+                            })
+                            logger.error(f"Exception creating new achievement: {e}")
+                
+                # Bulk update achievements
+                if achievements_to_update:
+                    try:
+                        for serializer in achievements_to_update:
+                            serializer.save()
+                        logger.info(f"Bulk updated {len(achievements_to_update)} achievements")
+                    except Exception as e:
+                        logger.error(f"Error during bulk update: {e}")
+                        # Fall back to individual saves
+                        for serializer in achievements_to_update:
+                            try:
+                                serializer.save()
+                            except Exception as individual_error:
+                                logger.error(f"Failed to save achievement individually: {individual_error}")
+                
+                # Delete achievements not in the kept list
+                if kept_achievement_ids:
+                    deleted_count = candidate.achievements.exclude(id__in=kept_achievement_ids).delete()[0]
+                    logger.info(f"Deleted {deleted_count} old achievements")
+                else:
+                    # No achievements kept, delete all
+                    deleted_count = candidate.achievements.all().delete()[0]
+                    logger.info(f"Deleted all {deleted_count} achievements")
+                
+                # Log validation errors if any
+                if validation_errors:
+                    logger.warning(f"Found {len(validation_errors)} validation errors in achievements: {validation_errors}")
+                    # Don't fail the whole request, just log the errors
             else:
                 logger.error(f"Achievements data is not a list: {type(achievements_data)}")
         else:
