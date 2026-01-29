@@ -77,7 +77,8 @@ class Candidate(models.Model):
         null=True,
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
     )
-    resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)
+    resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)  # User uploaded resume
+    ai_resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)  # AI-generated resume
     video_intro_url = models.FileField(upload_to=video_upload_path, blank=True, null=True)
     intro_video_description = models.JSONField(blank=True, null=True, default=dict)
     # Full raw transcription text returned by ML services

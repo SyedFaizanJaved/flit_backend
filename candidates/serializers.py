@@ -142,6 +142,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
     resume_url = serializers.SerializerMethodField()
+    ai_resume_url = serializers.SerializerMethodField()
     video_intro_url = serializers.SerializerMethodField()
     viewers_count = serializers.SerializerMethodField()
     profile_views_display = serializers.SerializerMethodField()
@@ -265,6 +266,8 @@ class CandidateSerializer(serializers.ModelSerializer):
             if hasattr(file_field, 'field'):
                 if file_field.field.name == 'resume_url':
                     base_path = 'candidates/resumes/'
+                elif file_field.field.name == 'ai_resume_url':
+                    base_path = 'candidates/resumes/'
                 elif file_field.field.name == 'video_intro_url':
                     base_path = 'candidates/videos/'
                 elif file_field.field.name == 'profile_image':
@@ -302,6 +305,9 @@ class CandidateSerializer(serializers.ModelSerializer):
     def get_resume_url(self, obj):
         return self._get_file_url(obj.resume_url)
         
+    def get_ai_resume_url(self, obj):
+        return self._get_file_url(obj.ai_resume_url)
+        
     def get_video_intro_url(self, obj):
         return self._get_file_url(obj.video_intro_url)
     
@@ -309,7 +315,7 @@ class CandidateSerializer(serializers.ModelSerializer):
         model = Candidate
         fields = [
             "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
-            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "video_intro_url",
+            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "ai_resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "profile_views", "viewers_count", "profile_views_display",
             "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",

@@ -365,17 +365,92 @@ def generate_pdf_from_cv_data(cv_data):
                 story.append(Spacer(1, 0.08 * inch))
             story.append(Spacer(1, 0.05 * inch))
 
-        # —— Certifications ——
-        certifications = cv_data.get('certifications') or []
+        # —— Achievements ——
+        achievements = cv_data.get('achievements') or {}
+        if isinstance(achievements, dict):
+            # Handle nested achievements structure from ML response
+            certifications = achievements.get('certifications') or []
+            publications = achievements.get('publications') or []
+            awards = achievements.get('awards') or []
+            grants = achievements.get('grants') or []
+        else:
+            # Fallback for flat structure
+            certifications = cv_data.get('certifications') or []
+            publications = cv_data.get('publications') or []
+            awards = cv_data.get('awards') or []
+            grants = cv_data.get('grants') or []
+
+        # Display Certifications
         if certifications:
             story.append(_section_heading_table('Certifications'))
             story.append(Spacer(1, 0.06 * inch))
             for cert in certifications:
                 text = ''
                 if isinstance(cert, dict):
-                    text = (cert.get('name') or cert.get('title') or '').strip()
+                    name = (cert.get('name') or cert.get('title') or '').strip()
+                    date = cert.get('date_achieved', '').strip()
+                    text = name
+                    if date:
+                        text += f" ({_format_date(date)})"
                 elif isinstance(cert, str):
                     text = cert.strip()
+                if text:
+                    story.append(Paragraph(f"• {text}", bullet_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # Display Awards
+        if awards:
+            story.append(_section_heading_table('Awards'))
+            story.append(Spacer(1, 0.06 * inch))
+            for award in awards:
+                text = ''
+                if isinstance(award, dict):
+                    name = (award.get('name') or award.get('title') or '').strip()
+                    date = award.get('date_achieved', '').strip()
+                    issuer = award.get('issuer', '').strip()
+                    text = name
+                    if issuer:
+                        text += f" - {issuer}"
+                    if date:
+                        text += f" ({_format_date(date)})"
+                elif isinstance(award, str):
+                    text = award.strip()
+                if text:
+                    story.append(Paragraph(f"• {text}", bullet_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # Display Publications
+        if publications:
+            story.append(_section_heading_table('Publications'))
+            story.append(Spacer(1, 0.06 * inch))
+            for pub in publications:
+                text = ''
+                if isinstance(pub, dict):
+                    title = (pub.get('title') or pub.get('name') or '').strip()
+                    date = pub.get('date_achieved', '').strip()
+                    text = title
+                    if date:
+                        text += f" ({_format_date(date)})"
+                elif isinstance(pub, str):
+                    text = pub.strip()
+                if text:
+                    story.append(Paragraph(f"• {text}", bullet_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # Display Grants
+        if grants:
+            story.append(_section_heading_table('Grants'))
+            story.append(Spacer(1, 0.06 * inch))
+            for grant in grants:
+                text = ''
+                if isinstance(grant, dict):
+                    name = (grant.get('name') or grant.get('title') or '').strip()
+                    date = grant.get('date_achieved', '').strip()
+                    text = name
+                    if date:
+                        text += f" ({_format_date(date)})"
+                elif isinstance(grant, str):
+                    text = grant.strip()
                 if text:
                     story.append(Paragraph(f"• {text}", bullet_style))
             story.append(Spacer(1, 0.1 * inch))
