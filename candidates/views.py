@@ -656,14 +656,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def download_resume(self, request):
         candidate = self.get_candidate()
 
-        if candidate.resume_url and candidate.resume_url.name:
-            resume_url = request.build_absolute_uri(candidate.resume_url.url)
-            return Response({
-                'resume_url': resume_url,
-                'message': 'Resume already generated',
-                'generated': False
-            })
-
         base_url = settings.FLIT_AI_URL.rstrip('/')
         make_cv_url = f"{base_url}/make_cv/{candidate.id}"
 
@@ -673,7 +665,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
         try:
             # make_cv endpoint expects POST (GET returns 405 Method Not Allowed)
-            resp = requests.post(make_cv_url, headers=headers, json={})
+            # Add timeout to prevent long hanging requests
+            resp = requests.post(
+                make_cv_url, 
+                headers=headers, 
+                json={}, 
+                timeout=(30, 60)  # (connection_timeout, read_timeout) in seconds
+            )
             resp.raise_for_status()
             cv_data = resp.json()
             
@@ -682,6 +680,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     "error": "AI service returned empty or invalid CV data"
                 }, status=503)
 
+        except requests.exceptions.Timeout:
+            logger.error(f"make_cv API timeout for candidate {candidate.id}")
+            return Response({
+                "error": "Resume generation is taking too long. Please try again in a few minutes."
+            }, status=504)
         except requests.RequestException as e:
             logger.error(f"make_cv API failed for candidate {candidate.id}: {e}")
             return Response({
@@ -702,14 +705,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
         # 4. Save file
         try:
-            filename = f"resume_{candidate.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.pdf"
+            filename = f"ai_resume_{candidate.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.pdf"
             path = resume_upload_path(candidate, filename) 
 
             default_storage.save(path, ContentFile(pdf_bytes))
 
-            candidate.resume_url = path
+            candidate.ai_resume_url = path
             candidate.portfolio_completed = True
-            candidate.save(update_fields=['resume_url', 'portfolio_completed', 'updated_at'])
+            candidate.save(update_fields=['ai_resume_url', 'portfolio_completed', 'updated_at'])
 
             resume_url = request.build_absolute_uri(default_storage.url(path))
 
