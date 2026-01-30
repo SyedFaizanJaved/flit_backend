@@ -5,7 +5,8 @@ from django.core.validators import MinValueValidator, MaxValueValidator, FileExt
 from utils.file_validators import (
     image_upload_path,
     resume_upload_path,
-    video_upload_path
+    video_upload_path,
+    achievement_image_upload_path
 )
 
 
@@ -76,9 +77,10 @@ class Candidate(models.Model):
         null=True,
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
     )
-    resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)
+    resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)  # User uploaded resume
+    ai_resume_url = models.FileField(upload_to=resume_upload_path, blank=True, null=True)  # AI-generated resume
     video_intro_url = models.FileField(upload_to=video_upload_path, blank=True, null=True)
-    intro_video_description = models.TextField(blank=True, null=True)
+    intro_video_description = models.JSONField(blank=True, null=True, default=dict)
     # Full raw transcription text returned by ML services
     video_transcription = models.TextField(blank=True, null=True)
     
@@ -103,6 +105,7 @@ class Candidate(models.Model):
     candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
     search_query = models.TextField(blank=True, null=True)
     resume_data = models.JSONField(blank=True, null=True,default=dict)  # Store parsed resume data from ML API
+    professional_title = models.CharField(max_length=255, blank=True, null=True)
 
 
     # Timestamps
@@ -264,6 +267,22 @@ class Education(models.Model):
         ('diploma', 'Diploma'),
     ]
     
+    GRADING_SYSTEM_CHOICES = [
+        ('gpa', 'GPA'),
+        ('gpr', 'GPR'),
+        ('grade', 'Grade'),
+        ('marks', 'Marks'),
+    ]
+    
+    GRADE_CHOICES = [
+        ('A', 'A'),
+        ('B', 'B'),
+        ('C', 'C'),
+        ('D', 'D'),
+        ('E', 'E'),
+        ('F', 'F'),
+    ]
+    
     candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='education')
     institution = models.CharField(max_length=200)
     degree = models.CharField(max_length=20, choices=DEGREE_CHOICES)
@@ -271,7 +290,14 @@ class Education(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(blank=True, null=True)
     is_current = models.BooleanField(default=False)
-    gpa = models.DecimalField(max_digits=3, decimal_places=2, blank=True, null=True)
+    
+    # Grading System
+    grading_system = models.CharField(max_length=10, choices=GRADING_SYSTEM_CHOICES, blank=True, null=True)
+    gpa = models.DecimalField(max_digits=3, decimal_places=2, blank=True, null=True, help_text="For GPA/GPR system")
+    grade = models.CharField(max_length=1, choices=GRADE_CHOICES, blank=True, null=True, help_text="For Grade system (A-F)")
+    total_marks = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, help_text="For Marks system")
+    obtained_marks = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, help_text="For Marks system")
+    
     description = models.TextField(blank=True, null=True)
     
     # Timestamps
@@ -345,6 +371,12 @@ class Achievement(models.Model):
     date_achieved = models.DateField()
     issuer = models.CharField(max_length=200, blank=True, null=True)
     url = models.URLField(blank=True, null=True)
+    image = models.FileField(
+        upload_to=achievement_image_upload_path,
+        blank=True,
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'heic', 'heif'])]
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)

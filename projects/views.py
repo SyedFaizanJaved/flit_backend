@@ -142,6 +142,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def my_projects(self, request):
         queryset = self.filter_queryset(self.get_queryset())
         
+        # Get company for counting active items
+        company = None
+        if hasattr(request.user, 'employer_profile'):
+            company = request.user.employer_profile.company
+
+        # Count active projects
+        active_projects_count = 0
+        if company:
+            active_projects_count = Project.objects.filter(company=company, status='active').count()
+        
         page = self.paginate_queryset(queryset)
         serializer = ProjectListSerializer(
             page if page is not None else queryset,
@@ -150,7 +160,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         )
         
         if page is not None:
-            return self.get_paginated_response(serializer.data)
+            paginated_response = self.get_paginated_response(serializer.data)
+            # Reconstruct response with active_projects right after current_page
+            return Response({
+                'count': paginated_response.data['count'],
+                'next': paginated_response.data['next'],
+                'previous': paginated_response.data['previous'],
+                'total_pages': paginated_response.data['total_pages'],
+                'current_page': paginated_response.data['current_page'],
+                'active_projects': active_projects_count,
+                'results': paginated_response.data['results']
+            })
         
         return Response({
             'count': queryset.count(),
@@ -158,6 +178,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'previous': None,
             'total_pages': 1,
             'current_page': 1,
+            'active_projects': active_projects_count,
             'results': serializer.data
         })
 

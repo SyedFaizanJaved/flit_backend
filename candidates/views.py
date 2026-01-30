@@ -4,9 +4,11 @@ import logging
 import os
 import requests
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Q, F, Count, Case, When, Value, IntegerField
+from django.db.models import Q, F, Count, Case, When, Value, IntegerField, Sum
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, permissions, status, serializers
@@ -19,6 +21,9 @@ from utils.pagination import CustomPagination
 from utils.file_validators import (
     resume_upload_path, video_upload_path, image_upload_path, document_upload_path
 )
+from utils.pdf_generator import generate_pdf_from_cv_data
+from .serializers import AchievementSerializer
+from .models import Education, Experience, Achievement        
 from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from jobs.models import Job
@@ -33,6 +38,7 @@ from .serializers import (
     ReferenceRequestSerializer,
     WorkDNAQuestionSerializer,
     DiscoverTalentSerializer,
+    AchievementSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -181,6 +187,21 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         data = request.data
         files = request.FILES
         updated_fields = []
+        
+        # Debug logging for files
+        logger.info(f"Received files: {list(files.keys())}")
+        for key, file_obj in files.items():
+            logger.info(f"File key: {key}, name: {file_obj.name}, size: {file_obj.size}")
+        
+        # Debug logging for request data
+        logger.info(f"Request data keys: {list(data.keys())}")
+        for key, value in data.items():
+            if key in ['education', 'experience', 'achievements']:
+                logger.info(f"Data key: {key}, value type: {type(value)}, first 100 chars: {str(value)[:100]}")
+            elif key.startswith('achievement_image_'):
+                logger.info(f"Data key: {key}, value: {value}")
+            else:
+                logger.info(f"Data key: {key}, value: {value}")
 
         def to_boolean(value):
             if isinstance(value, bool):
@@ -238,7 +259,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 delete_old_file(candidate.video_intro_url)
                 candidate.video_intro_url = None
                 candidate.video_transcription = None
-                candidate.intro_video_description = None
+                candidate.intro_video_description = {}
                 updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
 
         # File uploads
@@ -299,8 +320,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if transcription := analysis.get('video_transcript'):
                             candidate.video_transcription = transcription
                             updated_fields.append('video_transcription')
-                        if description := analysis.get('description'):
-                            candidate.intro_video_description = description
+                        if analysis:
+                            candidate.intro_video_description = analysis
                             updated_fields.append('intro_video_description')
                 except Exception as e:
                     logger.error(f"Video analysis exception: {e}", exc_info=True)
@@ -349,11 +370,225 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             candidate.privacy_completed = True
             updated_fields.append('privacy_completed')
 
-        candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
+        def _payload_for_model(item, exclude=('id', 'pk', 'created_at', 'updated_at', 'candidate')):
+            """Build kwargs for create/update from payload, excluding meta keys."""
+            return {k: v for k, v in item.items() if k not in exclude}
 
-        # ML sync (
+        with transaction.atomic():
+            candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
+
+            # Handle Education – upsert by id to avoid duplicate key after dump/restore
+            if 'education' in data:
+                education_data = data['education']
+                if isinstance(education_data, str):
+                    try:
+                        education_data = json.loads(education_data)
+                    except json.JSONDecodeError:
+                        education_data = []
+                if isinstance(education_data, list):
+                    kept_edu_ids = []
+                    for edu_data in education_data:
+                        if not (edu_data and edu_data.get('institution') and edu_data.get('start_date')):
+                            continue
+                        item_id = edu_data.get('id') or edu_data.get('pk')
+                        payload = _payload_for_model(edu_data)
+                        existing = Education.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
+                        if existing:
+                            for k, v in payload.items():
+                                setattr(existing, k, v)
+                            existing.save()
+                            kept_edu_ids.append(existing.id)
+                        else:
+                            obj = Education.objects.create(candidate=candidate, **payload)
+                            kept_edu_ids.append(obj.id)
+                    if kept_edu_ids:
+                        candidate.education.exclude(id__in=kept_edu_ids).delete()
+                    else:
+                        candidate.education.all().delete()
+
+            # Handle Experience – upsert by id to avoid duplicate key after dump/restore
+            if 'experience' in data:
+                experience_data = data['experience']
+                if isinstance(experience_data, str):
+                    try:
+                        experience_data = json.loads(experience_data)
+                    except json.JSONDecodeError:
+                        experience_data = []
+                if isinstance(experience_data, list):
+                    kept_exp_ids = []
+                    for exp_data in experience_data:
+                        if not (exp_data and exp_data.get('company_name') and exp_data.get('position') and exp_data.get('start_date')):
+                            continue
+                        item_id = exp_data.get('id') or exp_data.get('pk')
+                        payload = _payload_for_model(exp_data)
+                        existing = Experience.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
+                        if existing:
+                            for k, v in payload.items():
+                                setattr(existing, k, v)
+                            existing.save()
+                            kept_exp_ids.append(existing.id)
+                        else:
+                            obj = Experience.objects.create(candidate=candidate, **payload)
+                            kept_exp_ids.append(obj.id)
+                    if kept_exp_ids:
+                        candidate.experience.exclude(id__in=kept_exp_ids).delete()
+                    else:
+                        candidate.experience.all().delete()
+        
+        # Handle Achievements - UPSERT logic with proper validation and image handling
+        if 'achievements' in data:
+            achievements_data = data['achievements']
+            logger.info(f"Processing achievements data: {achievements_data}")
+            
+            # Parse JSON string if needed
+            if isinstance(achievements_data, str):
+                try:
+                    achievements_data = json.loads(achievements_data)
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse achievements JSON")
+                    achievements_data = []
+            
+            if isinstance(achievements_data, list):
+                # Apply soft limit of max 30 achievements
+                if len(achievements_data) > 30:
+                    logger.warning(f"Too many achievements ({len(achievements_data)}), limiting to 30")
+                    achievements_data = achievements_data[:30]
+                
+                logger.info(f"Processing {len(achievements_data)} achievements")
+                
+                kept_achievement_ids = []
+                validation_errors = []
+                achievements_to_update = []
+                
+                for index, ach_data in enumerate(achievements_data):
+                    if not ach_data:
+                        continue
+                    
+                    # Get achievement ID for upsert logic
+                    item_id = ach_data.get('id') or ach_data.get('pk')
+                    logger.info(f"Processing achievement {index}, ID: {item_id}, data: {ach_data}")
+                    
+                    # Handle image attachments
+                    achievement_data = ach_data.copy()
+                    image_key = f'achievement_image_{index}'
+                    
+                    if image_key in request.FILES:
+                        achievement_data['image'] = request.FILES[image_key]
+                        logger.info(f"Found image for achievement {index} with key {image_key}")
+                    elif index == 0 and 'image' in request.FILES:
+                        achievement_data['image'] = request.FILES['image']
+                        logger.info(f"Found single image for first achievement")
+                    
+                    # Prepare payload for serializer (exclude meta fields)
+                    payload = _payload_for_model(achievement_data)
+                    
+                    if item_id:
+                        # Update existing achievement
+                        existing = Achievement.objects.filter(candidate=candidate, id=item_id).first()
+                        if existing:
+                            try:
+                                serializer = AchievementSerializer(existing, data=payload, partial=True)
+                                if serializer.is_valid():
+                                    achievements_to_update.append(serializer)
+                                    kept_achievement_ids.append(existing.id)
+                                    logger.info(f"Queued achievement {item_id} for update")
+                                else:
+                                    validation_errors.append({
+                                        'achievement_id': item_id,
+                                        'index': index,
+                                        'errors': serializer.errors
+                                    })
+                                    logger.error(f"Achievement {item_id} validation errors: {serializer.errors}")
+                            except Exception as e:
+                                validation_errors.append({
+                                    'achievement_id': item_id,
+                                    'index': index,
+                                    'error': str(e)
+                                })
+                                logger.error(f"Exception validating achievement {item_id}: {e}")
+                        else:
+                            # ID not found, treat as new achievement
+                            logger.info(f"Achievement ID {item_id} not found, treating as new")
+                            try:
+                                serializer = AchievementSerializer(data=payload)
+                                if serializer.is_valid():
+                                    achievement = serializer.save(candidate=candidate)
+                                    kept_achievement_ids.append(achievement.id)
+                                    logger.info(f"Created new achievement with ID: {achievement.id}")
+                                else:
+                                    validation_errors.append({
+                                        'achievement_id': 'new',
+                                        'index': index,
+                                        'errors': serializer.errors
+                                    })
+                                    logger.error(f"New achievement validation errors: {serializer.errors}")
+                            except Exception as e:
+                                validation_errors.append({
+                                    'achievement_id': 'new',
+                                    'index': index,
+                                    'error': str(e)
+                                })
+                                logger.error(f"Exception creating new achievement: {e}")
+                    else:
+                        # Create new achievement
+                        try:
+                            serializer = AchievementSerializer(data=payload)
+                            if serializer.is_valid():
+                                achievement = serializer.save(candidate=candidate)
+                                kept_achievement_ids.append(achievement.id)
+                                logger.info(f"Created new achievement with ID: {achievement.id}")
+                            else:
+                                validation_errors.append({
+                                    'achievement_id': 'new',
+                                    'index': index,
+                                    'errors': serializer.errors
+                                })
+                                logger.error(f"New achievement validation errors: {serializer.errors}")
+                        except Exception as e:
+                            validation_errors.append({
+                                'achievement_id': 'new',
+                                'index': index,
+                                'error': str(e)
+                            })
+                            logger.error(f"Exception creating new achievement: {e}")
+                
+                # Bulk update achievements
+                if achievements_to_update:
+                    try:
+                        for serializer in achievements_to_update:
+                            serializer.save()
+                        logger.info(f"Bulk updated {len(achievements_to_update)} achievements")
+                    except Exception as e:
+                        logger.error(f"Error during bulk update: {e}")
+                        # Fall back to individual saves
+                        for serializer in achievements_to_update:
+                            try:
+                                serializer.save()
+                            except Exception as individual_error:
+                                logger.error(f"Failed to save achievement individually: {individual_error}")
+                
+                # Delete achievements not in the kept list
+                if kept_achievement_ids:
+                    deleted_count = candidate.achievements.exclude(id__in=kept_achievement_ids).delete()[0]
+                    logger.info(f"Deleted {deleted_count} old achievements")
+                else:
+                    # No achievements kept, delete all
+                    deleted_count = candidate.achievements.all().delete()[0]
+                    logger.info(f"Deleted all {deleted_count} achievements")
+                
+                # Log validation errors if any
+                if validation_errors:
+                    logger.warning(f"Found {len(validation_errors)} validation errors in achievements: {validation_errors}")
+                    # Don't fail the whole request, just log the errors
+            else:
+                logger.error(f"Achievements data is not a list: {type(achievements_data)}")
+        else:
+            logger.info("No achievements data in request")
+        
+        # ML sync (TEMPORARILY DISABLED FOR PERFORMANCE)
         ml_success = True
-        ml_message = "All ML APIs successfully executed"
+        ml_message = "ML sync disabled for performance"
+        
         try:
                 ml_payload = {
                     "full_name": candidate.full_name or "",
@@ -416,7 +651,83 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         response_data['ml_message'] = ml_message
         return Response(response_data)
 
-     
+    # ====================== DOWNLOAD RESUME ACTION ======================
+    @action(detail=False, methods=['get'], url_path='download-resume')
+    def download_resume(self, request):
+        candidate = self.get_candidate()
+
+        base_url = settings.FLIT_AI_URL.rstrip('/')
+        make_cv_url = f"{base_url}/make_cv/{candidate.id}"
+
+        headers = {}
+        if hasattr(settings, 'ML_API_KEY'):
+            headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+
+        try:
+            # make_cv endpoint expects POST (GET returns 405 Method Not Allowed)
+            # Add timeout to prevent long hanging requests
+            resp = requests.post(
+                make_cv_url, 
+                headers=headers, 
+                json={}, 
+                timeout=(30, 60)  # (connection_timeout, read_timeout) in seconds
+            )
+            resp.raise_for_status()
+            cv_data = resp.json()
+            
+            if not cv_data.get('name') and not cv_data.get('professional_summary'):
+                return Response({
+                    "error": "AI service returned empty or invalid CV data"
+                }, status=503)
+
+        except requests.exceptions.Timeout:
+            logger.error(f"make_cv API timeout for candidate {candidate.id}")
+            return Response({
+                "error": "Resume generation is taking too long. Please try again in a few minutes."
+            }, status=504)
+        except requests.RequestException as e:
+            logger.error(f"make_cv API failed for candidate {candidate.id}: {e}")
+            return Response({
+                "error": "We're having trouble generating your resume right now. Please try again in a few minutes."
+            }, status=503)
+
+        except ValueError:
+            logger.error(f"Invalid JSON from make_cv for candidate {candidate.id}")
+            return Response({"error": "Service returned invalid data"}, status=500)
+
+        try:
+            pdf_bytes = generate_pdf_from_cv_data(cv_data)
+        except Exception as e:
+            logger.exception(f"PDF generation failed for candidate {candidate.id}")
+            return Response({
+                "error": "Could not create PDF resume at this moment. Our team has been notified."
+            }, status=500)
+
+        # 4. Save file
+        try:
+            filename = f"ai_resume_{candidate.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.pdf"
+            path = resume_upload_path(candidate, filename) 
+
+            default_storage.save(path, ContentFile(pdf_bytes))
+
+            candidate.ai_resume_url = path
+            candidate.portfolio_completed = True
+            candidate.save(update_fields=['ai_resume_url', 'portfolio_completed', 'updated_at'])
+
+            resume_url = request.build_absolute_uri(default_storage.url(path))
+
+            return Response({
+                'resume_url': resume_url,
+                'message': 'Your professional resume has been generated successfully!',
+                'generated': True
+            })
+
+        except Exception as save_error:
+            logger.error(f"Failed to save resume file for {candidate.id}: {save_error}", exc_info=True)
+            return Response({
+                "error": "Resume generated but could not be saved. Please contact support."
+            }, status=500)
+        
     # ====================== DASHBOARD ACTIONS ======================
     @action(detail=False, methods=['get'], url_path='dashboard')
     def dashboard(self, request):
@@ -540,7 +851,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         from django.core.cache import cache
         cache_key = f'candidate_{candidate.id}_latest_jobs'
         cached = cache.get(cache_key)
-
+    
         if cached and cached.get('ml_success'):
             # Use cached data but update has_applied status from database
             jobs = cached.get('jobs', [])
@@ -625,7 +936,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard/latest-projects')
     def latest_projects(self, request):
         candidate = self.get_candidate()
-        from django.core.cache import cache
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:
@@ -809,7 +1119,8 @@ class DiscoverTalentView(generics.ListAPIView):
     def get_queryset(self):
         qs = Candidate.objects.select_related('user').filter(
             user__is_active=True,
-            profile_visibility="public"
+            profile_visibility="public",
+            basic_info_completed=True,  
         )
 
         q = self.request.query_params.get('search', '').strip().lower()
@@ -820,8 +1131,6 @@ class DiscoverTalentView(generics.ListAPIView):
             if not words:
                 return qs
 
-            from django.db.models import Q, Case, When, Value, IntegerField, F
-            
             # Initialize queries
             name_query = Q()
             title_query = Q()
@@ -986,8 +1295,6 @@ class DiscoverTalentView(generics.ListAPIView):
             ]
             
             # Calculate total relevance score by summing all relevance fields
-            from django.db.models import Sum, F, Case, When, Value, IntegerField
-            
             # Start with a base score of 0
             score_expression = Value(0, output_field=IntegerField())
             
@@ -1004,4 +1311,20 @@ class DiscoverTalentView(generics.ListAPIView):
         if skills := self.request.query_params.getlist('skills'):
             qs = qs.filter(skills__overlap=skills)
 
-        return qs.distinct()
+        return qs
+
+
+class AchievementViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
+    """
+    ViewSet for managing candidate achievements
+    """
+    serializer_class = AchievementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        candidate = self.get_candidate()
+        return Achievement.objects.filter(candidate=candidate).order_by('-date_achieved')
+    
+    def perform_create(self, serializer):
+        candidate = self.get_candidate()
+        serializer.save(candidate=candidate).distinct()

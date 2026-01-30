@@ -124,6 +124,8 @@ class Job(models.Model):
     
     # Tags for search
     tags = models.JSONField(default=list)  
+    professional_title = models.CharField(max_length=255, blank=True, null=True)
+
     
     # SEO
     slug = models.SlugField(max_length=255, unique=True, blank=True)
