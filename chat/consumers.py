@@ -151,8 +151,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return
 
 
-            # Send email notification asynchronously
-            asyncio.create_task(self._send_notification_email(self.sender_id, self.recipient_id, msg))
+            # Send email notification asynchronously with delay check
+            asyncio.create_task(self._handle_notification(saved.id, self.sender_id, self.recipient_id, msg))
 
             # For new outgoing message — no need to mark anything as read
             # Just broadcast
@@ -208,6 +208,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             return None, str(e)
 
+    async def _handle_notification(self, message_id, sender_id, recipient_id, message_content):
+        """
+        Wait for a short delay and then check if the message has been read.
+        Only send email if the message is still unread.
+        """
+        try:
+             # Wait 10 seconds to give the user time to read the message
+            await asyncio.sleep(10)
+            
+            is_read = await self._is_message_read(message_id)
+            if not is_read:
+                await self._send_notification_email(sender_id, recipient_id, message_content)
+            else:
+                self.logger.info(f"Message {message_id} was read within delay, skipping email.")
+        except Exception as e:
+            self.logger.error(f"Notification handling error: {e}")
+
+    @database_sync_to_async
+    def _is_message_read(self, message_id):
+        try:
+            msg = ChatMessage.objects.get(id=message_id)
+            return msg.is_read
+        except ChatMessage.DoesNotExist:
+            return False
+            
     @database_sync_to_async
     def _send_notification_email(self, sender_id, recipient_id, message_content):
         try:
