@@ -533,7 +533,7 @@ def send_chat_message_notification(sender, recipient, message_content):
     base_url = get_base_url()
     
     # Construct chat URL (assuming /chat or /messages route)
-    chat_url = f"{base_url}/chat"
+    chat_url = f"{base_url}/candidate/dashboard"
     
     subject = f"New message from {sender_name}"
     
