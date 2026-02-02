@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import Company, CompanyImage, CompanyMilestone
 from django.conf import settings
 from employers.models import Employer
+import json
 
 
 class CompanyImageSerializer(serializers.ModelSerializer):
@@ -119,8 +120,6 @@ class CompanySerializer(serializers.ModelSerializer):
         except Exception:
             return False
 
-    # no is_profile_complete helper - using profile_completed only
-
 
 class CompanyListSerializer(serializers.ModelSerializer):
     """
@@ -134,12 +133,62 @@ class CompanyListSerializer(serializers.ModelSerializer):
 
 class CompanyUpdateSerializer(serializers.ModelSerializer):
     """
-    Serializer for updating company
+    Serializer for updating company with consolidated images and milestones
     """
+    uploaded_images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        write_only=True
+    )
+    milestones_data = serializers.JSONField(required=False, write_only=True)
+
     class Meta:
         model = Company
         fields = (
             'company_name', 'description', 'industry', 'size', 'website', 'logo', 
             'location', 'values', 'founded_year', 'culture', 'benefits', 
-            'social_links', 'work_mode'
+            'social_links', 'work_mode', 'uploaded_images', 'milestones_data'
         )
+
+    def update(self, instance, validated_data):
+        uploaded_images = validated_data.pop('uploaded_images', None)
+        milestones_data = validated_data.pop('milestones_data', None)
+
+        # Update basic fields using standard behavior
+        instance = super().update(instance, validated_data)
+
+        # Handle images bulk upload in the same request
+        if uploaded_images:
+            last_order = CompanyImage.objects.filter(company=instance).order_by('-order').values_list('order', flat=True).first() or 0
+            for index, image_file in enumerate(uploaded_images):
+                CompanyImage.objects.create(
+                    company=instance,
+                    image=image_file,
+                    order=last_order + index + 1
+                )
+
+        # Handle milestones bulk upload in the same request
+        if milestones_data:
+            # If milestones_data is a string (common when using form-data in Postman), parse it
+            if isinstance(milestones_data, str):
+                try:
+                    milestones_data = json.loads(milestones_data)
+                except json.JSONDecodeError:
+                    raise serializers.ValidationError({"milestones_data": "Invalid JSON format"})
+
+            if not isinstance(milestones_data, list):
+                milestones_data = [milestones_data]
+
+            for m_data in milestones_data:
+                try:
+                    CompanyMilestone.objects.create(
+                        company=instance,
+                        year=m_data.get('year'),
+                        title=m_data.get('title'),
+                        description=m_data.get('description', '')
+                    )
+                except Exception:
+                    # Skip invalid milestone data
+                    pass
+
+        return instance
