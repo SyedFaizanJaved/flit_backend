@@ -25,7 +25,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         fields = ('email', 'username', 'role', 'password', 'password_confirm', 'first_name', 'last_name')
         extra_kwargs = {
             'email': {'required': True},
-            'username': {'required': True},
+            'username': {'required': False},
             'role': {'required': True},
             'first_name': {'required': True},
             'last_name': {'required': False},
@@ -54,10 +54,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return value
 
     def validate_username(self, value):
-        if not re.match(r'^[a-zA-Z0-9]+$', value):
-            raise ValidationError('Username can only contain alphanumeric characters.')
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError('A user with this username already exists.')
+        if value:
+            if not re.match(r'^[a-zA-Z0-9]+$', value):
+                raise ValidationError('Username can only contain alphanumeric characters.')
+            if User.objects.filter(username=value).exists():
+                raise serializers.ValidationError('A user with this username already exists.')
         return value
     
     def validate_first_name(self, value):
@@ -89,6 +90,23 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data.pop('password_confirm')
+        
+        # Auto-generate username if not provided
+        if 'username' not in validated_data or not validated_data['username']:
+            email = validated_data.get('email')
+            base_username = email.split('@')[0]
+            # Sanitize username to be alphanumeric
+            base_username = re.sub(r'[^a-zA-Z0-9]', '', base_username)
+            if not base_username:
+                base_username = 'user'
+                
+            username = base_username
+            counter = 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base_username}{counter}"
+                counter += 1
+            validated_data['username'] = username
+
         # Role can be provided as id or name via nested representation
         role_value = validated_data.pop('role', None)
         role_obj = None
