@@ -1,19 +1,68 @@
 from rest_framework import serializers
-from .models import Company
+from .models import Company, CompanyImage, CompanyMilestone
 from django.conf import settings
 from employers.models import Employer
 
 
+class CompanyImageSerializer(serializers.ModelSerializer):
+    """
+    Serializer for company gallery images
+    """
+    image = serializers.ImageField(required=True)
+    
+    class Meta:
+        model = CompanyImage
+        fields = ('id', 'image', 'caption', 'order', 'created_at')
+        read_only_fields = ('created_at',)
+
+
+class CompanyImageBulkUploadSerializer(serializers.Serializer):
+    """
+    Serializer for bulk uploading company images
+    """
+    images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=True,
+        min_length=1,
+        max_length=15
+    )
+    caption = serializers.ListField(
+        child=serializers.CharField(max_length=200, required=False, allow_blank=True),
+        required=False
+    )
+
+
+class CompanyMilestoneSerializer(serializers.ModelSerializer):
+    """
+    Serializer for company milestones
+    """
+    class Meta:
+        model = CompanyMilestone
+        fields = ('id', 'year', 'title', 'description')
+
+
 class CompanySerializer(serializers.ModelSerializer):
     """
-    Serializer for company
+    Serializer for company with enhanced branding fields
     """
     profile_completed = serializers.SerializerMethodField(read_only=True)
+    images = CompanyImageSerializer(many=True, read_only=True)
+    milestones = CompanyMilestoneSerializer(many=True, read_only=True)
 
     class Meta:
         model = Company
-        fields = '__all__'
-        read_only_fields = ('created_by', 'created_at', 'updated_at', 'profile_completed')
+        fields = (
+            'id', 'company_name', 'description', 'industry', 'size', 'website', 'logo', 
+            'location', 'values', 'founded_year', 'culture', 'benefits', 'social_links', 
+            'work_mode', 'created_by', 'is_verified', 'is_active', 'is_completed', 
+            'total_jobs', 'total_projects', 'total_hires', 'total_employees', 
+            'created_at', 'updated_at', 'profile_completed', 'images', 'milestones'
+        )
+        read_only_fields = (
+            'created_by', 'created_at', 'updated_at', 'profile_completed', 
+            'is_verified', 'is_active', 'is_completed', 'total_jobs', 
+            'total_projects', 'total_hires', 'total_employees'
+        )
         extra_kwargs = {
             'company_name': {'required': True},
             'description': {'required': True},
@@ -80,7 +129,7 @@ class CompanyListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ('id', 'company_name', 'industry', 'description', 'size', 'logo', 'location', 'website', 'values',
-                  'is_active', 'created_at')
+                  'work_mode', 'is_active', 'created_at')
 
 
 class CompanyUpdateSerializer(serializers.ModelSerializer):
@@ -89,5 +138,8 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Company
-        fields = ('company_name', 'description', 'industry', 'size', 'website', 
-                 'logo', 'values', 'location')
+        fields = (
+            'company_name', 'description', 'industry', 'size', 'website', 'logo', 
+            'location', 'values', 'founded_year', 'culture', 'benefits', 
+            'social_links', 'work_mode'
+        )

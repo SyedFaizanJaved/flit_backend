@@ -53,3 +53,13 @@ def document_upload_path(instance, filename):
 def achievement_image_upload_path(instance, filename):
     """Generate upload path for achievement image files."""
     return custom_s3_upload_path(instance, filename, "candidates/achievements")
+
+
+def company_logo_upload_path(instance, filename):
+    """Generate upload path for company logos."""
+    return custom_s3_upload_path(instance, filename, "companies/logos")
+
+
+def company_gallery_upload_path(instance, filename):
+    """Generate upload path for company gallery images."""
+    return custom_s3_upload_path(instance, filename, "companies/gallery")
