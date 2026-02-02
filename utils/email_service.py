@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def get_base_url():
     """Get the base frontend URL from settings"""
-    return getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')
+    return getattr(settings, 'FLIT_REQUEST_URL')
 
 
 def get_logo_url():

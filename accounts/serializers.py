@@ -148,7 +148,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
              # Using AccessToken as per plan, but noting it might be short-lived.
              token.set_exp(lifetime=timedelta(hours=24))
              
-             verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')}/verify-email?token={token}"
+             verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL')}/auth/verify-email?token={token}"
              
              subject = 'Verify your email address'
              message = (
@@ -186,6 +186,9 @@ class UserLoginSerializer(serializers.Serializer):
                 raise serializers.ValidationError('Invalid credentials.')
             if not user.is_active:
                 raise serializers.ValidationError('User account is disabled.')
+            
+            if not getattr(user, 'is_verified', False):
+                 raise serializers.ValidationError('Please verify your email address before logging in.')
             attrs['user'] = user
         else:
             raise serializers.ValidationError('Must include email and password.')

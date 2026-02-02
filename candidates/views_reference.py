@@ -225,7 +225,7 @@ def send_reference_request_email(ref_request, request):
     """
     try:
         # Get base URL from settings (loaded from environment variables)
-        base_url = getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')
+        base_url = getattr(settings, 'FLIT_REQUEST_URL')
         frontend_url = f"{base_url}/reference-response"
         backend_url = request.build_absolute_uri('/')[:-1]  # Get current backend URL
         logo_url = f"{base_url}/flit_icon.png"  # Use the same base URL for assets
