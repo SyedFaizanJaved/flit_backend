@@ -14,7 +14,8 @@ from employers.models import Employer
 from candidates.models import Candidate
 from django.core.mail import send_mail
 from django.conf import settings
-
+from utils.email_service import send_chat_message_notification
+            
 
 class ChatConsumer(AsyncWebsocketConsumer):
     logger = logging.getLogger(__name__)
@@ -213,23 +214,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             sender = User.objects.get(id=sender_id)
             recipient = User.objects.get(id=recipient_id)
             
-            sender_name = sender.first_name or sender.username
+            send_chat_message_notification(sender, recipient, message_content)
             
-            subject = f"New message from {sender_name}"
-            body = (
-                f"Hi {recipient.first_name or recipient.username},\n\n"
-                f"You have received a new message from {sender_name}:\n\n"
-                f"\"{message_content}\"\n\n"
-                f"Login to FLIT to reply."
-            )
-            
-            send_mail(
-                subject,
-                body,
-                getattr(settings, 'DEFAULT_FROM_EMAIL', None),
-                [recipient.email],
-                # fail_silently=True
-            )
         except Exception as e:
             self.logger.error(f"Email sending failed: {e}")
 
