@@ -141,21 +141,45 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
         write_only=True
     )
     milestones_data = serializers.JSONField(required=False, write_only=True)
+    deleted_images = serializers.JSONField(required=False, write_only=True)
+    deleted_milestones = serializers.JSONField(required=False, write_only=True)
 
     class Meta:
         model = Company
         fields = (
             'company_name', 'description', 'industry', 'size', 'website', 'logo', 
             'location', 'values', 'founded_year', 'culture', 'benefits', 
-            'social_links', 'work_mode', 'uploaded_images', 'milestones_data'
+            'social_links', 'work_mode', 'uploaded_images', 'milestones_data', 'deleted_images', 'deleted_milestones'
         )
 
     def update(self, instance, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', None)
         milestones_data = validated_data.pop('milestones_data', None)
+        deleted_images = validated_data.pop('deleted_images', None)
+        deleted_milestones = validated_data.pop('deleted_milestones', None)
 
         # Update basic fields using standard behavior
         instance = super().update(instance, validated_data)
+
+        # Handle deleted images
+        if deleted_images:
+            if isinstance(deleted_images, str):
+                try:
+                    deleted_images = json.loads(deleted_images)
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(deleted_images, list):
+                CompanyImage.objects.filter(id__in=deleted_images, company=instance).delete()
+
+        # Handle deleted milestones
+        if deleted_milestones:
+            if isinstance(deleted_milestones, str):
+                try:
+                    deleted_milestones = json.loads(deleted_milestones)
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(deleted_milestones, list):
+                CompanyMilestone.objects.filter(id__in=deleted_milestones, company=instance).delete()
 
         # Handle images bulk upload in the same request
         if uploaded_images:
