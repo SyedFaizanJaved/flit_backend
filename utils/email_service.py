@@ -510,3 +510,115 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
 """
     
     return send_email(candidate_email, subject, text_content, html_content)
+
+
+def send_chat_message_notification(sender, recipient, message_content):
+    """
+    Send email notification when a user receives a chat message
+    
+    Args:
+        sender: User model instance (sender)
+        recipient: User model instance (recipient)
+        message_content: The content of the message
+    
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    recipient_name = recipient.first_name or recipient.username
+    sender_name = sender.first_name or sender.username
+    recipient_email = recipient.email
+    
+    logo_url = get_logo_url()
+    styles = get_email_styles()
+    base_url = get_base_url()
+    
+    # Construct chat URL (assuming /chat or /messages route)
+    chat_url = f"{base_url}/chat"
+    
+    subject = f"New message from {sender_name}"
+    
+    # Plain text version
+    text_content = f"""
+Hello {recipient_name},
+
+You have received a new message from {sender_name}:
+
+"{message_content}"
+
+Reply to this message here: {chat_url}
+
+Best regards,
+The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+"""
+    
+    # HTML version
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Message - Flit</title>
+    <style>
+        {styles}
+        .message-box {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #6c5ce7;
+            font-style: italic;
+        }}
+        .button {{
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-weight: bold;
+            margin-top: 20px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+                <span class="logo-text">FLIT</span>
+            </div>
+            <h1 class="header-title">New Message</h1>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">Hello {recipient_name},</p>
+            
+            <p>You have received a new message from <strong>{sender_name}</strong>:</p>
+            
+            <div class="message-box">
+                "{message_content}"
+            </div>
+            
+            <div style="text-align: center;">
+                <a href="{chat_url}" class="button" style="color: white;">Reply Now</a>
+            </div>
+            
+            <p style="margin-top: 30px; font-size: 13px; color: #7f8c8d;">
+                If the button doesn't work, copy and paste this link into your browser:<br>
+                <a href="{chat_url}" style="color: #667eea;">{chat_url}</a>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>Best regards,<br>
+            The <strong>Flit</strong> Team<br>
+            <small>Connecting you to your next opportunity.</small></p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    return send_email(recipient_email, subject, text_content, html_content)
