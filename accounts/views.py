@@ -1,7 +1,7 @@
 from rest_framework import generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes, api_view
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from django.contrib.auth import login, logout
 from django.core.paginator import Paginator
 from utils.pagination import CustomPagination
@@ -613,3 +613,38 @@ def roles_list(request):
         name__in=['candidate', 'employer']
     ).values('id', 'name', 'description'))
     return Response({'results': roles}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def verify_email(request):
+    """
+    Verify email address using the token sent via email.
+    """
+    token_str = request.query_params.get('token')
+    if not token_str:
+        return Response({'detail': 'Token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        access = AccessToken(token_str)
+    except Exception as e:
+        print(f"Token verification failed: {e}")
+        print(f"Token received: {token_str}")
+        return Response({'detail': f'Invalid or malformed token. Error: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if access.payload.get('purpose') != 'email_verification':
+        return Response({'detail': 'Invalid token purpose.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user_id = access.payload.get('user_id')
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if user.is_verified:
+        return Response({'message': 'Email is already verified.'}, status=status.HTTP_200_OK)
+
+    user.is_verified = True
+    user.save(update_fields=['is_verified'])
+
+    return Response({'message': 'Email verified successfully.'}, status=status.HTTP_200_OK)
