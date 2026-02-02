@@ -5,11 +5,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from .models import Company
+from .models import Company, CompanyImage, CompanyMilestone
 from .serializers import (
     CompanySerializer,
     CompanyListSerializer,
     CompanyUpdateSerializer,
+    CompanyImageSerializer,
+    CompanyImageBulkUploadSerializer,
+    CompanyMilestoneSerializer
 )
 from employers.models import Employer
 import logging
@@ -38,10 +41,10 @@ class CompanyViewSet(
     - Proper permissions
     - Clean dashboard & custom actions
     """
-    queryset = Company.objects.all()
+    queryset = Company.objects.all().prefetch_related('images', 'milestones')
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['industry', 'size', 'is_verified']
+    filterset_fields = ['industry', 'size', 'is_verified', 'work_mode']
     search_fields = ['company_name', 'industry', 'description']
     ordering_fields = ['created_at', 'company_name']
     ordering = ['-created_at']
@@ -51,6 +54,10 @@ class CompanyViewSet(
             return CompanyListSerializer
         if self.action in ['update', 'partial_update']:
             return CompanyUpdateSerializer
+        if self.action == 'upload_image':
+            return CompanyImageBulkUploadSerializer
+        if self.action == 'add_milestone':
+            return CompanyMilestoneSerializer
         return CompanySerializer
 
     def get_permissions(self):
@@ -59,7 +66,7 @@ class CompanyViewSet(
         - partial_update & destroy: only company owner
         - verify: only staff/admin
         """
-        if self.action in ['partial_update', 'update', 'destroy']:
+        if self.action in ['partial_update', 'update', 'destroy', 'upload_image', 'add_milestone', 'dashboard']:
             return [permissions.IsAuthenticated(), IsCompanyOwner()]
         if self.action == 'verify':
             return [permissions.IsAdminUser()]
@@ -70,7 +77,7 @@ class CompanyViewSet(
         my_companies action ke liye filtered queryset
         """
         if self.action == 'my_companies':
-            return Company.objects.filter(created_by=self.request.user)
+            return Company.objects.filter(created_by=self.request.user).prefetch_related('images', 'milestones')
         return super().get_queryset()
 
     def perform_create(self, serializer):
@@ -182,3 +189,61 @@ class CompanyViewSet(
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=['post'], url_path='upload-image')
+    def upload_image(self, request, pk=None):
+        """
+        Bulk upload gallery images for the company
+        """
+        company = self.get_object()
+        serializer = CompanyImageBulkUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            images_data = serializer.validated_data.get('images', [])
+            captions_data = serializer.validated_data.get('caption', [])
+            
+            created_images = []
+            # Get the current highest order to append new images
+            last_order = CompanyImage.objects.filter(company=company).order_by('-order').values_list('order', flat=True).first() or 0
+            
+            for index, image_file in enumerate(images_data):
+                # Map caption to image by index. If only one caption is sent for multiple images, 
+                # apply that single caption to all images in the batch.
+                if len(captions_data) == 1 and len(images_data) > 1:
+                    curr_caption = captions_data[0]
+                else:
+                    curr_caption = captions_data[index] if index < len(captions_data) else ""
+
+                img = CompanyImage.objects.create(
+                    company=company,
+                    image=image_file,
+                    caption=curr_caption,
+                    order=last_order + index + 1
+                )
+                created_images.append(img)
+            
+            # Re-fetch company with prefetched images to ensure the response reflects new additions
+            company = self.get_queryset().get(pk=company.pk)
+            company_serializer = CompanySerializer(company, context={'request': request})
+            return Response(
+                {
+                    "message": f"Successfully uploaded {len(created_images)} images.",
+                    "company": company_serializer.data
+                }, 
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='add-milestone')
+    def add_milestone(self, request, pk=None):
+        """
+        Add a milestone to the company history
+        """
+        company = self.get_object()
+        serializer = CompanyMilestoneSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(company=company)
+            # Re-fetch company with prefetched milestones to ensure the response reflects new additions
+            company = self.get_queryset().get(pk=company.pk)
+            company_serializer = CompanySerializer(company, context={'request': request})
+            return Response(company_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
