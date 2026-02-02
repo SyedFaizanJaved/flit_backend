@@ -12,6 +12,8 @@ from .models import ChatMessage
 from accounts.models import User
 from employers.models import Employer
 from candidates.models import Candidate
+from django.core.mail import send_mail
+from django.conf import settings
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -147,6 +149,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.send(json.dumps({'error': 'Save failed'}))
                 return
 
+
+            # Send email notification asynchronously
+            asyncio.create_task(self._send_notification_email(self.sender_id, self.recipient_id, msg))
+
             # For new outgoing message — no need to mark anything as read
             # Just broadcast
             await self.channel_layer.group_send(
@@ -200,6 +206,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return msg, None
         except Exception as e:
             return None, str(e)
+
+    @database_sync_to_async
+    def _send_notification_email(self, sender_id, recipient_id, message_content):
+        try:
+            sender = User.objects.get(id=sender_id)
+            recipient = User.objects.get(id=recipient_id)
+            
+            sender_name = sender.first_name or sender.username
+            
+            subject = f"New message from {sender_name}"
+            body = (
+                f"Hi {recipient.first_name or recipient.username},\n\n"
+                f"You have received a new message from {sender_name}:\n\n"
+                f"\"{message_content}\"\n\n"
+                f"Login to FLIT to reply."
+            )
+            
+            send_mail(
+                subject,
+                body,
+                getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                [recipient.email],
+                # fail_silently=True
+            )
+        except Exception as e:
+            self.logger.error(f"Email sending failed: {e}")
 
 
 class ChatListConsumer(AsyncJsonWebsocketConsumer):

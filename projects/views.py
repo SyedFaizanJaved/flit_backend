@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
+from utils.email_service import send_shortlist_notification, send_rejection_notification
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
@@ -470,6 +471,18 @@ class ProjectViewSet(viewsets.ModelViewSet):
         application.is_rejected = False
         application.status = 'shortlisted'
         application.save()
+        
+        # Send email notification to candidate
+        try:
+            send_shortlist_notification(
+                candidate=application.candidate,
+                job_or_project_title=project.title,
+                application_type='project'
+            )
+        except Exception as e:
+            logger.error(f"Failed to send shortlist email notification: {str(e)}")
+            # Don't fail the request if email fails
+        
         return Response({'message': 'Application shortlisted successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_shortlisted': application.is_shortlisted}}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/reject')
@@ -488,4 +501,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         application.status = 'rejected'
         application.rejection_reason = request.data.get('rejection_reason', '')
         application.save()
+        
+        # Send email notification to candidate
+        try:
+            send_rejection_notification(
+                candidate=application.candidate,
+                job_or_project_title=project.title,
+                application_type='project',
+                rejection_reason=application.rejection_reason
+            )
+        except Exception as e:
+            logger.error(f"Failed to send rejection email notification: {str(e)}")
+            # Don't fail the request if email fails
+        
         return Response({'message': 'Application rejected successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_rejected': application.is_rejected}}, status=status.HTTP_200_OK)

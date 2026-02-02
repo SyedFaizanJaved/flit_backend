@@ -33,9 +33,31 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'password_confirm': {'write_only': True},
         }
     
+    def validate_email(self, value):
+        # Custom validation as per requirements:
+        # 1. Must contain @
+        # 2. Domain part (after @) must be > 2 characters before the dot
+        # 3. Must have a dot
+        # 4. Characters after dot must be >= 2
+        
+        # Regex explanation:
+        # ^[^@]+        : Start with at least one non-@ character
+        # @             : Mandatory @ symbol
+        # [^@.]{3,}     : At least 3 characters (more than 2) that are not @ or dot
+        # \.            : Mandatory dot
+        # [^@]{2,}$     : At least 2 characters at the end
+        if not re.match(r'^[^@]+@[^@.]{3,}\.[^@]{2,}$', value):
+             raise serializers.ValidationError('Invalid email format. Domain must be more than 2 characters and extension must be at least 2 characters (e.g., example@domain.com).')
+
+        if User.objects.filter(email=value).exists():
+             raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
     def validate_username(self, value):
         if not re.match(r'^[a-zA-Z0-9]+$', value):
             raise ValidationError('Username can only contain alphanumeric characters.')
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('A user with this username already exists.')
         return value
     
     def validate_first_name(self, value):
@@ -116,6 +138,34 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             # Do not block user creation if profile creation fails
             pass
 
+        # Send verification email
+        try:
+             token = AccessToken.for_user(user)
+             token['purpose'] = 'email_verification'
+             # Set a reasonable expiration for verification link (e.g. 24 hours) if possible, 
+             # but AccessToken default lifetime is often short. 
+             # For verification, we might want a longer lifetime or a separate token type.
+             # Using AccessToken as per plan, but noting it might be short-lived.
+             token.set_exp(lifetime=timedelta(hours=24))
+             
+             verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')}/verify-email?token={token}"
+             
+             subject = 'Verify your email address'
+             message = (
+                 f"Hi {user.first_name},\n\n"
+                 f"Please click the link below to verify your email address:\n"
+                 f"{verification_url}\n\n"
+                 f"If you did not sign up for this account, please ignore this email."
+             )
+             from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+             send_mail(subject, message, from_email, [user.email], fail_silently=False)
+        except Exception as e:
+            # Log error but don't fail registration
+             # import logging
+             # logger = logging.getLogger(__name__)
+             # logger.error(f"Failed to send verification email to {user.email}: {e}")
+             pass
+
         return user
 
 
@@ -159,7 +209,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'email', 'username', 'role', 'role_id', 'first_name', 'last_name', 'full_name',
-            'created_at', 'company', 'company_name'
+            'created_at', 'company', 'company_name', 'is_verified'
         )
         read_only_fields = ('id', 'email', 'role', 'role_id', 'created_at')
     

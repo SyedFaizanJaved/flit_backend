@@ -8,6 +8,7 @@ from . import views
 urlpatterns = [
     # Authentication
     path('register/', views.UserRegistrationView.as_view(), name='user-register'),
+    path('verify-email/', views.verify_email, name='verify-email'),
     path('login/', views.user_login, name='user-login'),
     path('logout/', views.user_logout, name='user-logout'),
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
