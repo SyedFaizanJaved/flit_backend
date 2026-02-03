@@ -157,9 +157,29 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
         milestones_data = validated_data.pop('milestones_data', None)
         deleted_images = validated_data.pop('deleted_images', None)
         deleted_milestones = validated_data.pop('deleted_milestones', None)
+        
+        # Handle social_links separately since it comes as JSON string in FormData
+        social_links = validated_data.pop('social_links', None)
 
         # Update basic fields using standard behavior
         instance = super().update(instance, validated_data)
+
+        # Handle social_links update
+        if social_links is not None:
+            # If social_links is a string (from FormData), parse it
+            if isinstance(social_links, str):
+                try:
+                    social_links = json.loads(social_links)
+                except json.JSONDecodeError:
+                    social_links = {}
+            
+            # Ensure it's a dictionary
+            if not isinstance(social_links, dict):
+                social_links = {}
+            
+            # Update the social_links field
+            instance.social_links = social_links
+            instance.save(update_fields=['social_links'])
 
         # Handle deleted images
         if deleted_images:
@@ -205,12 +225,32 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
 
             for m_data in milestones_data:
                 try:
-                    CompanyMilestone.objects.create(
-                        company=instance,
-                        year=m_data.get('year'),
-                        title=m_data.get('title'),
-                        description=m_data.get('description', '')
-                    )
+                    # Check if this is an existing milestone (has id) or new milestone
+                    milestone_id = m_data.get('id')
+                    if milestone_id:
+                        # Update existing milestone
+                        try:
+                            milestone = CompanyMilestone.objects.get(id=milestone_id, company=instance)
+                            milestone.year = m_data.get('year', milestone.year)
+                            milestone.title = m_data.get('title', milestone.title)
+                            milestone.description = m_data.get('description', milestone.description)
+                            milestone.save()
+                        except CompanyMilestone.DoesNotExist:
+                            # If milestone doesn't exist, create it as new
+                            CompanyMilestone.objects.create(
+                                company=instance,
+                                year=m_data.get('year'),
+                                title=m_data.get('title'),
+                                description=m_data.get('description', '')
+                            )
+                    else:
+                        # Create new milestone
+                        CompanyMilestone.objects.create(
+                            company=instance,
+                            year=m_data.get('year'),
+                            title=m_data.get('title'),
+                            description=m_data.get('description', '')
+                        )
                 except Exception:
                     # Skip invalid milestone data
                     pass
