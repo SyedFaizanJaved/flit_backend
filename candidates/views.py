@@ -379,6 +379,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
             # Handle Education – upsert by id to avoid duplicate key after dump/restore
             if 'education' in data:
+                import time
+                edu_sync_start = time.time()
                 education_data = data['education']
                 if isinstance(education_data, str):
                     try:
@@ -405,9 +407,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         candidate.education.exclude(id__in=kept_edu_ids).delete()
                     else:
                         candidate.education.all().delete()
+                logger.info(f"Education processing took {time.time() - edu_sync_start:.2f}s")
 
             # Handle Experience – upsert by id to avoid duplicate key after dump/restore
             if 'experience' in data:
+                exp_sync_start = time.time()
                 experience_data = data['experience']
                 if isinstance(experience_data, str):
                     try:
@@ -434,9 +438,12 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         candidate.experience.exclude(id__in=kept_exp_ids).delete()
                     else:
                         candidate.experience.all().delete()
+                logger.info(f"Experience processing took {time.time() - exp_sync_start:.2f}s")
         
         # Handle Achievements - UPSERT logic with proper validation and image handling
         if 'achievements' in data:
+            import time
+            start_total = time.time()
             achievements_data = data['achievements']
             logger.info(f"Processing achievements data: {achievements_data}")
             
@@ -458,134 +465,115 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 
                 kept_achievement_ids = []
                 validation_errors = []
-                achievements_to_update = []
+                
+                # Pre-fetch existing achievements for robust matching
+                existing_achievements = list(candidate.achievements.all())
+
+                # Smart Image Mapping: Find which achievement should get the generic 'image' file
+                fallback_image_index = None
+                if 'image' in request.FILES and 'profile_image' not in request.FILES:
+                    # Look for the first achievement that doesn't have a URL in achievements_data
+                    for i, ach in enumerate(achievements_data):
+                        image_val = ach.get('image')
+                        if not image_val or not str(image_val).startswith('http'):
+                            fallback_image_index = i
+                            logger.info(f"Smart Mapping: Identified achievement at index {i} to receive generic 'image' file")
+                            break
+                    if fallback_image_index is None:
+                        fallback_image_index = 0
+                        logger.info("Smart Mapping: No achievement without URL found, defaulting to index 0 for 'image' file")
                 
                 for index, ach_data in enumerate(achievements_data):
+                    ach_start = time.time()
                     if not ach_data:
                         continue
                     
+                    # Prepare achievement data copy
+                    achievement_data = ach_data.copy()
+                    
+                    # Handle image field if it's a string (URL or empty)
+                    current_image = achievement_data.get('image')
+                    if isinstance(current_image, str):
+                        if current_image.startswith('http'):
+                            achievement_data.pop('image')
+                            logger.info(f"Removed image URL from achievement {index} payload")
+                        elif current_image == "":
+                            achievement_data['image'] = None
+
                     # Get achievement ID for upsert logic
-                    item_id = ach_data.get('id') or ach_data.get('pk')
-                    logger.info(f"Processing achievement {index}, ID: {item_id}, data: {ach_data}")
+                    item_id = achievement_data.get('id') or achievement_data.get('pk')
+                    
+                    # Robust matching fallback: match by normalized title and issuer
+                    if not item_id:
+                        title_norm = str(achievement_data.get('title') or "").strip().lower()
+                        issuer_norm = str(achievement_data.get('issuer') or "").strip().lower()
+                        
+                        if title_norm:
+                            for ex in existing_achievements:
+                                if (str(ex.title or "").strip().lower() == title_norm and 
+                                    str(ex.issuer or "").strip().lower() == issuer_norm):
+                                    item_id = ex.id
+                                    logger.info(f"Matched existing achievement {item_id} by normalized title/issuer")
+                                    break
+
+                    logger.info(f"Processing achievement {index}, ID: {item_id}")
                     
                     # Handle image attachments
-                    achievement_data = ach_data.copy()
                     image_key = f'achievement_image_{index}'
-                    
                     if image_key in request.FILES:
                         achievement_data['image'] = request.FILES[image_key]
                         logger.info(f"Found image for achievement {index} with key {image_key}")
-                    elif index == 0 and 'image' in request.FILES:
+                    elif index == fallback_image_index:
                         achievement_data['image'] = request.FILES['image']
-                        logger.info(f"Found single image for first achievement")
+                        logger.info(f"Using smart-mapped 'image' for achievement {index}")
                     
-                    # Prepare payload for serializer (exclude meta fields)
                     payload = _payload_for_model(achievement_data)
                     
-                    if item_id:
-                        # Update existing achievement
-                        existing = Achievement.objects.filter(candidate=candidate, id=item_id).first()
-                        if existing:
-                            try:
+                    try:
+                        if item_id:
+                            existing = candidate.achievements.filter(id=item_id).first()
+                            if existing:
                                 serializer = AchievementSerializer(existing, data=payload, partial=True)
                                 if serializer.is_valid():
-                                    achievements_to_update.append(serializer)
-                                    kept_achievement_ids.append(existing.id)
-                                    logger.info(f"Queued achievement {item_id} for update")
+                                    obj = serializer.save()
+                                    kept_achievement_ids.append(obj.id)
+                                    logger.info(f"Updated achievement {item_id} in {time.time() - ach_start:.2f}s")
                                 else:
-                                    validation_errors.append({
-                                        'achievement_id': item_id,
-                                        'index': index,
-                                        'errors': serializer.errors
-                                    })
-                                    logger.error(f"Achievement {item_id} validation errors: {serializer.errors}")
-                            except Exception as e:
-                                validation_errors.append({
-                                    'achievement_id': item_id,
-                                    'index': index,
-                                    'error': str(e)
-                                })
-                                logger.error(f"Exception validating achievement {item_id}: {e}")
-                        else:
-                            # ID not found, treat as new achievement
-                            logger.info(f"Achievement ID {item_id} not found, treating as new")
-                            try:
-                                serializer = AchievementSerializer(data=payload)
-                                if serializer.is_valid():
-                                    achievement = serializer.save(candidate=candidate)
-                                    kept_achievement_ids.append(achievement.id)
-                                    logger.info(f"Created new achievement with ID: {achievement.id}")
-                                else:
-                                    validation_errors.append({
-                                        'achievement_id': 'new',
-                                        'index': index,
-                                        'errors': serializer.errors
-                                    })
-                                    logger.error(f"New achievement validation errors: {serializer.errors}")
-                            except Exception as e:
-                                validation_errors.append({
-                                    'achievement_id': 'new',
-                                    'index': index,
-                                    'error': str(e)
-                                })
-                                logger.error(f"Exception creating new achievement: {e}")
-                    else:
-                        # Create new achievement
-                        try:
+                                    validation_errors.append({'index': index, 'errors': serializer.errors})
+                            else:
+                                item_id = None # Force creation if ID not found
+                        
+                        if not item_id:
                             serializer = AchievementSerializer(data=payload)
                             if serializer.is_valid():
-                                achievement = serializer.save(candidate=candidate)
-                                kept_achievement_ids.append(achievement.id)
-                                logger.info(f"Created new achievement with ID: {achievement.id}")
+                                obj = serializer.save(candidate=candidate)
+                                kept_achievement_ids.append(obj.id)
+                                logger.info(f"Created achievement {obj.id} in {time.time() - ach_start:.2f}s")
                             else:
-                                validation_errors.append({
-                                    'achievement_id': 'new',
-                                    'index': index,
-                                    'errors': serializer.errors
-                                })
-                                logger.error(f"New achievement validation errors: {serializer.errors}")
-                        except Exception as e:
-                            validation_errors.append({
-                                'achievement_id': 'new',
-                                'index': index,
-                                'error': str(e)
-                            })
-                            logger.error(f"Exception creating new achievement: {e}")
-                
-                # Bulk update achievements
-                if achievements_to_update:
-                    try:
-                        for serializer in achievements_to_update:
-                            serializer.save()
-                        logger.info(f"Bulk updated {len(achievements_to_update)} achievements")
+                                validation_errors.append({'index': index, 'errors': serializer.errors})
                     except Exception as e:
-                        logger.error(f"Error during bulk update: {e}")
-                        # Fall back to individual saves
-                        for serializer in achievements_to_update:
-                            try:
-                                serializer.save()
-                            except Exception as individual_error:
-                                logger.error(f"Failed to save achievement individually: {individual_error}")
+                        logger.error(f"Error processing achievement {index}: {e}", exc_info=True)
+                        validation_errors.append({'index': index, 'error': str(e)})
                 
-                # Delete achievements not in the kept list
-                if kept_achievement_ids:
-                    deleted_count = candidate.achievements.exclude(id__in=kept_achievement_ids).delete()[0]
-                    logger.info(f"Deleted {deleted_count} old achievements")
-                else:
-                    # No achievements kept, delete all
-                    deleted_count = candidate.achievements.all().delete()[0]
-                    logger.info(f"Deleted all {deleted_count} achievements")
+                # Deletion
+                deleted_ids = []
+                to_delete = candidate.achievements.exclude(id__in=kept_achievement_ids)
+                deleted_count = to_delete.count()
+                if deleted_count > 0:
+                    deleted_ids = list(to_delete.values_list('id', flat=True))
+                    to_delete.delete()
+                    logger.info(f"Deleted {deleted_count} achievements: {deleted_ids}")
                 
-                # Log validation errors if any
+                logger.info(f"Total achievements processing time: {time.time() - start_total:.2f}s")
                 if validation_errors:
-                    logger.warning(f"Found {len(validation_errors)} validation errors in achievements: {validation_errors}")
-                    # Don't fail the whole request, just log the errors
+                    logger.warning(f"Achievement validation errors: {validation_errors}")
             else:
-                logger.error(f"Achievements data is not a list: {type(achievements_data)}")
+                logger.error(f"Achievements data is not a list")
         else:
             logger.info("No achievements data in request")
         
         # ML sync (TEMPORARILY DISABLED FOR PERFORMANCE)
+        ml_sync_start = time.time()
         ml_success = True
         ml_message = "ML sync disabled for performance"
         
@@ -645,6 +633,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             ml_success = False
             ml_message = "ML sync failed due to exception"
             logger.error(f"ML sync exception: {e}", exc_info=True)
+        
+        logger.info(f"ML sync took {time.time() - ml_sync_start:.2f}s")
 
         response_data = CandidateSerializer(candidate, context={'request': request}).data
         response_data['ml_success'] = ml_success
