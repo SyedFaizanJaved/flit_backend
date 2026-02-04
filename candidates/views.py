@@ -471,7 +471,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
                 # Smart Image Mapping: Find which achievement should get the generic 'image' file
                 fallback_image_index = None
-                if 'image' in request.FILES and 'profile_image' not in request.FILES:
+                if 'image' in request.FILES:
                     # Look for the first achievement that doesn't have a URL in achievements_data
                     for i, ach in enumerate(achievements_data):
                         image_val = ach.get('image')
