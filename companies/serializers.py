@@ -49,6 +49,17 @@ class CompanySerializer(serializers.ModelSerializer):
     profile_completed = serializers.SerializerMethodField(read_only=True)
     images = CompanyImageSerializer(many=True, read_only=True)
     milestones = CompanyMilestoneSerializer(many=True, read_only=True)
+    uploaded_images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        write_only=True
+    )
+    caption = serializers.ListField(
+        child=serializers.CharField(max_length=200, required=False, allow_blank=True),
+        required=False,
+        write_only=True
+    )
+    milestones_data = serializers.JSONField(required=False, write_only=True)
 
     class Meta:
         model = Company
@@ -57,7 +68,8 @@ class CompanySerializer(serializers.ModelSerializer):
             'location', 'values', 'founded_year', 'culture', 'benefits', 'social_links', 
             'work_mode', 'created_by', 'is_verified', 'is_active', 'is_completed', 
             'total_jobs', 'total_projects', 'total_hires', 'total_employees', 
-            'created_at', 'updated_at', 'profile_completed', 'images', 'milestones'
+            'created_at', 'updated_at', 'profile_completed', 'images', 'milestones',
+            'uploaded_images', 'caption', 'milestones_data'
         )
         read_only_fields = (
             'created_by', 'created_at', 'updated_at', 'profile_completed', 
@@ -79,15 +91,69 @@ class CompanySerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
-        validated_data['created_by'] = self.context['request'].user
+        uploaded_images = validated_data.pop('uploaded_images', None)
+        captions_data = validated_data.pop('caption', [])
+        milestones_data = validated_data.pop('milestones_data', None)
+        
+        # Handle social_links parsing similar to update
+        if 'social_links' in validated_data and isinstance(validated_data['social_links'], str):
+            try:
+                validated_data['social_links'] = json.loads(validated_data['social_links'])
+            except json.JSONDecodeError:
+                validated_data['social_links'] = {}
+
+        # Ensure created_by is set to current user if not provided (should be provided by view but safe here)
+        if 'created_by' not in validated_data:
+            validated_data['created_by'] = self.context['request'].user
+            
         # Ensure completion flag is explicitly set to True on creation
         validated_data['is_completed'] = True
         company = super().create(validated_data)
 
-        # Try to link the created company to the creator's employer profile
+        # Handle images bulk upload
+        if uploaded_images:
+            for index, image_file in enumerate(uploaded_images):
+                # Map caption to image by index. If only one caption is sent for multiple images, 
+                # apply that single caption to all images in the batch.
+                if len(captions_data) == 1 and len(uploaded_images) > 1:
+                    curr_caption = captions_data[0]
+                else:
+                    curr_caption = captions_data[index] if index < len(captions_data) else ""
+
+                CompanyImage.objects.create(
+                    company=company,
+                    image=image_file,
+                    caption=curr_caption,
+                    order=index + 1
+                )
+
+        # Handle milestones bulk upload
+        if milestones_data:
+            # If milestones_data is a string (common when using form-data in Postman), parse it
+            if isinstance(milestones_data, str):
+                try:
+                    milestones_data = json.loads(milestones_data)
+                except json.JSONDecodeError:
+                    raise serializers.ValidationError({"milestones_data": "Invalid JSON format"})
+
+            if not isinstance(milestones_data, list):
+                milestones_data = [milestones_data]
+
+            for m_data in milestones_data:
+                try:
+                    CompanyMilestone.objects.create(
+                        company=company,
+                        year=m_data.get('year'),
+                        title=m_data.get('title'),
+                        description=m_data.get('description', '')
+                    )
+                except Exception as e:
+                    print(f"Error creating milestone during company setup: {e}")
+                    pass
+
+        # Link to creator's employer profile
         try:
             user = self.context['request'].user
-            # Ensure an Employer profile exists for the user, create if missing
             employer, _ = Employer.objects.get_or_create(
                 user=user,
                 defaults={'first_name': getattr(user, 'first_name', ''), 'last_name': getattr(user, 'last_name', '')}
@@ -97,17 +163,13 @@ class CompanySerializer(serializers.ModelSerializer):
             employer.company = company
             employer.company_info_completed = True
             employer.save(update_fields=['company', 'company_info_completed', 'updated_at'])
-            # Mark the user's profile as completed now that company info exists.
-            try:
+            
+            # Mark user profile as completed ONLY if all employer requirements are met
+            if employer.is_profile_complete:
                 if not getattr(user, 'profile_completed', False):
                     user.profile_completed = True
-                    # Save the user so subsequent serialization sees the updated flag
                     user.save(update_fields=['profile_completed', 'updated_at'])
-            except Exception:
-                # Don't let a user sync failure break company creation
-                pass
         except Exception:
-            # Don't break company creation if linking fails
             pass
 
         return company
@@ -201,7 +263,6 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
             if isinstance(deleted_milestones, list):
                 CompanyMilestone.objects.filter(id__in=deleted_milestones, company=instance).delete()
 
-        # Handle images bulk upload in the same request
         if uploaded_images:
             last_order = CompanyImage.objects.filter(company=instance).order_by('-order').values_list('order', flat=True).first() or 0
             for index, image_file in enumerate(uploaded_images):
@@ -224,35 +285,53 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
                 milestones_data = [milestones_data]
 
             for m_data in milestones_data:
-                try:
-                    # Check if this is an existing milestone (has id) or new milestone
-                    milestone_id = m_data.get('id')
-                    if milestone_id:
-                        # Update existing milestone
-                        try:
-                            milestone = CompanyMilestone.objects.get(id=milestone_id, company=instance)
-                            milestone.year = m_data.get('year', milestone.year)
-                            milestone.title = m_data.get('title', milestone.title)
-                            milestone.description = m_data.get('description', milestone.description)
-                            milestone.save()
-                        except CompanyMilestone.DoesNotExist:
-                            # If milestone doesn't exist, create it as new
-                            CompanyMilestone.objects.create(
-                                company=instance,
-                                year=m_data.get('year'),
-                                title=m_data.get('title'),
-                                description=m_data.get('description', '')
-                            )
-                    else:
-                        # Create new milestone
+                # Check if this is an existing milestone (has id) or new milestone
+                milestone_id = m_data.get('id')
+                
+                # Filter out temporary frontend IDs (e.g., timestamps > 2^31-1 if using Postgres Integer)
+                # Assuming valid DB IDs are reasonable integers. 
+                # Postgres Integer max is 2147483647. Timestamps are much larger.
+                is_temp_id = False
+                if milestone_id:
+                    try:
+                        mid_int = int(milestone_id)
+                        # Accessing a really large integer might be safe in Python but not for DB query if ID field is IntegerField
+                        if mid_int > 2147483647: 
+                            is_temp_id = True
+                    except (ValueError, TypeError):
+                        is_temp_id = True
+
+                if milestone_id and not is_temp_id:
+                    # Update existing milestone
+                    try:
+                        milestone = CompanyMilestone.objects.get(id=milestone_id, company=instance)
+                        milestone.year = m_data.get('year', milestone.year)
+                        milestone.title = m_data.get('title', milestone.title)
+                        milestone.description = m_data.get('description', milestone.description)
+                        milestone.save()
+                    except CompanyMilestone.DoesNotExist:
+                        # If ID provided but not found in DB, treat as new (or could ignore)
+                        # Here we choose to create new to be safe/flexible
                         CompanyMilestone.objects.create(
                             company=instance,
                             year=m_data.get('year'),
                             title=m_data.get('title'),
                             description=m_data.get('description', '')
                         )
-                except Exception:
-                    # Skip invalid milestone data
-                    pass
+                    except Exception as e:
+                        print(f"Error updating milestone {milestone_id}: {e}")
+                        # Don't silence other errors blindly
+                        pass 
+                else:
+                    # Create new milestone
+                    try:
+                        CompanyMilestone.objects.create(
+                            company=instance,
+                            year=m_data.get('year'),
+                            title=m_data.get('title'),
+                            description=m_data.get('description', '')
+                        )
+                    except Exception as e:
+                        print(f"Error creating milestone: {e}")
 
         return instance
