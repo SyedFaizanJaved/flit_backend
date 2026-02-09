@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
+import django.db
 from .models import Company, CompanyImage, CompanyMilestone
 from .serializers import (
     CompanySerializer,
@@ -86,6 +87,7 @@ class CompanyViewSet(
         """
         serializer.save(created_by=self.request.user)
 
+    @django.db.transaction.atomic
     def update(self, request, *args, **kwargs):
         """
         Consolidated update: handle basic info, images, and milestones
@@ -106,35 +108,20 @@ class CompanyViewSet(
         kwargs['partial'] = True
         return self.update(request, *args, **kwargs)
 
+    @django.db.transaction.atomic
     def create(self, request, *args, **kwargs):
         """
-        Override create to handle Employer profile linking properly
+        Override create to handle Employer profile linking and nested data properly.
+        Returns full company details in response.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        company = serializer.save(created_by=request.user)
+        company = serializer.save()
 
-        # Employer profile link or create
-        employer, created = Employer.objects.get_or_create(
-            user=request.user,
-            defaults={
-                'company': company,
-                'company_info_completed': True,
-                'first_name': request.user.first_name,
-                'last_name': request.user.last_name,
-            },
-        )
-        if not created:
-            employer.company = company
-            employer.company_info_completed = True
-            employer.save(update_fields=['company', 'company_info_completed'])
-
-        # Update user profile_completed flag if needed
-        if employer.is_profile_complete:
-            request.user.profile_completed = True
-            request.user.save(update_fields=['profile_completed'])
-
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Re-fetch company with prefetched images and milestones for a complete response
+        instance = self.get_queryset().get(pk=company.pk)
+        full_serializer = CompanySerializer(instance, context={'request': request})
+        return Response(full_serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='my-companies')
     def my_companies(self, request):
