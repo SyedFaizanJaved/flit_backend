@@ -29,6 +29,11 @@ def custom_s3_upload_path(instance, filename, folder):
     # Remove leading and trailing hyphens
     name = name.strip('-')
     
+    # Truncate to max 50 chars to avoid DB max_length issues (typically 100 chars)
+    # folder(max ~30) + / + name(50) + _ + suffix(6) + ext(max ~10) ~= 97 chars
+    if len(name) > 50:
+        name = name[:50].rstrip('-')
+    
     # Generate UUID suffix
     suffix = uuid.uuid4().hex[:6]
     
