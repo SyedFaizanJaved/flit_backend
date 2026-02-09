@@ -2,14 +2,27 @@ from rest_framework import serializers
 from .models import Company, CompanyImage, CompanyMilestone
 from django.conf import settings
 from employers.models import Employer
+from utils.file_validators import sanitize_filename
 import json
+import os
+
+
+
+
+class SanitizedImageField(serializers.ImageField):
+    """
+    Custom ImageField that sanitizes the filename before validation.
+    """
+    def to_internal_value(self, data):
+        data = sanitize_filename(data)
+        return super().to_internal_value(data)
 
 
 class CompanyImageSerializer(serializers.ModelSerializer):
     """
     Serializer for company gallery images
     """
-    image = serializers.ImageField(required=True)
+    image = SanitizedImageField(required=True)
     
     class Meta:
         model = CompanyImage
@@ -50,10 +63,11 @@ class CompanySerializer(serializers.ModelSerializer):
     images = CompanyImageSerializer(many=True, read_only=True)
     milestones = CompanyMilestoneSerializer(many=True, read_only=True)
     uploaded_images = serializers.ListField(
-        child=serializers.ImageField(),
+        child=SanitizedImageField(),
         required=False,
         write_only=True
     )
+    logo = SanitizedImageField(required=False, allow_null=True)
     caption = serializers.ListField(
         child=serializers.CharField(max_length=200, required=False, allow_blank=True),
         required=False,
@@ -89,6 +103,10 @@ class CompanySerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError("Company values are required and cannot be empty.")
         return value
+    
+    def validate_logo(self, value):
+        """Sanitize logo filename if it exists"""
+        return sanitize_filename(value)
     
     def create(self, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', None)
@@ -198,11 +216,12 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
     Serializer for updating company with consolidated images and milestones
     """
     uploaded_images = serializers.ListField(
-        child=serializers.ImageField(),
+        child=SanitizedImageField(),
         required=False,
         write_only=True
     )
     milestones_data = serializers.JSONField(required=False, write_only=True)
+    logo = SanitizedImageField(required=False, allow_null=True)
     deleted_images = serializers.JSONField(required=False, write_only=True)
     deleted_milestones = serializers.JSONField(required=False, write_only=True)
 
