@@ -2,6 +2,18 @@ import os
 import uuid
 import re
 
+
+def sanitize_filename(file_obj, max_length=50):
+    """
+    Sanitize and truncate the filename of an uploaded file.
+    This prevents Django's ImageField validation from failing on long original filenames.
+    """
+    if file_obj and hasattr(file_obj, 'name'):
+        name, ext = os.path.splitext(file_obj.name)
+        if len(name) > max_length:
+            file_obj.name = name[:max_length] + ext
+    return file_obj
+
 def custom_s3_upload_path(instance, filename, folder):
     """
     Generate a custom upload path with a UUID suffix to prevent filename collisions.
