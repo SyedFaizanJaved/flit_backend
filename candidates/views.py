@@ -469,19 +469,9 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 # Pre-fetch existing achievements for robust matching
                 existing_achievements = list(candidate.achievements.all())
 
-                # Smart Image Mapping: Find which achievement should get the generic 'image' file
-                fallback_image_index = None
-                if 'image' in request.FILES:
-                    # Look for the first achievement that doesn't have a URL in achievements_data
-                    for i, ach in enumerate(achievements_data):
-                        image_val = ach.get('image')
-                        if not image_val or not str(image_val).startswith('http'):
-                            fallback_image_index = i
-                            logger.info(f"Smart Mapping: Identified achievement at index {i} to receive generic 'image' file")
-                            break
-                    if fallback_image_index is None:
-                        fallback_image_index = 0
-                        logger.info("Smart Mapping: No achievement without URL found, defaulting to index 0 for 'image' file")
+                # Smart Image Mapping: Find which achievements should get generic 'image' files
+                generic_images = request.FILES.getlist('image')
+                generic_image_index = 0
                 
                 for index, ach_data in enumerate(achievements_data):
                     ach_start = time.time()
@@ -496,9 +486,10 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     if isinstance(current_image, str):
                         if current_image.startswith('http'):
                             achievement_data.pop('image')
-                            logger.info(f"Removed image URL from achievement {index} payload")
+                            # logger.info(f"Removed image URL from achievement {index} payload")
                         elif current_image == "":
                             achievement_data['image'] = None
+                            current_image = None # Treat as needing an image
 
                     # Get achievement ID for upsert logic
                     item_id = achievement_data.get('id') or achievement_data.get('pk')
@@ -522,10 +513,12 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     image_key = f'achievement_image_{index}'
                     if image_key in request.FILES:
                         achievement_data['image'] = request.FILES[image_key]
-                        logger.info(f"Found image for achievement {index} with key {image_key}")
-                    elif index == fallback_image_index:
-                        achievement_data['image'] = request.FILES['image']
-                        logger.info(f"Using smart-mapped 'image' for achievement {index}")
+                        logger.info(f"Found specific image for achievement {index} with key {image_key}")
+                    elif (not current_image or current_image == "") and generic_image_index < len(generic_images):
+                         # If no specific image and no URL, try to use next available generic image
+                        achievement_data['image'] = generic_images[generic_image_index]
+                        logger.info(f"Assigning generic image {generic_image_index} to achievement {index}")
+                        generic_image_index += 1
                     
                     payload = _payload_for_model(achievement_data)
                     
