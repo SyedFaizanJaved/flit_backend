@@ -30,6 +30,10 @@ class ProjectSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     is_applied = serializers.SerializerMethodField()
+    category = serializers.CharField(source='get_category_display', read_only=True)
+    paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
+    work_style = serializers.CharField(source='get_work_style_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Project
@@ -77,12 +81,16 @@ class ProjectListSerializer(serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
+    category = serializers.CharField(source='get_category_display', read_only=True)
+    paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
+    work_style = serializers.CharField(source='get_work_style_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Project
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
-                 'created_at', 'skills', 'is_applied', 'application_details')
+                 'work_style', 'created_at', 'skills', 'is_applied', 'application_details')
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model
