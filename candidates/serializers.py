@@ -345,7 +345,9 @@ class CandidateSerializer(serializers.ModelSerializer):
             instance.user.last_name = name_parts[1] if len(name_parts) > 1 else ''
             instance.user.save()
         
-        return super().update(instance, validated_data)
+        updated_instance = super().update(instance, validated_data)
+        self._update_completion_flags(updated_instance, validated_data)
+        return updated_instance
 
     def to_internal_value(self, data):
         """
@@ -427,10 +429,6 @@ class CandidateSerializer(serializers.ModelSerializer):
         self._update_completion_flags(instance, validated_data)
         return instance
 
-    def update(self, instance, validated_data):
-        updated_instance = super().update(instance, validated_data)
-        self._update_completion_flags(updated_instance, validated_data)
-        return updated_instance
     
     def get_profile_completed(self, obj):
         try:
