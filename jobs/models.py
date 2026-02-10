@@ -74,22 +74,21 @@ class Job(models.Model):
     location = models.CharField(max_length=200, blank=True, null=True)
     workStyle = models.CharField(max_length=20, choices=WORK_STYLE_CHOICES, default='remote')
     category = models.CharField(max_length=100, choices=[
-        ('engineering', 'Engineering'),
-        ('design', 'Design'),
-        ('marketing', 'Marketing'),
-        ('sales', 'Sales'),
-        ('operations', 'Operations'),
-        ('writing', 'Writing'),
-        ('technology/Digital', 'Technology/Digital'),
-        ('creative/media', 'Creative/Media'),
-        ('business/finance', 'Business/Finance'),
-        ('trades/labour', 'Trades/Labour'),
-        ('healthcare & welness', 'Healthcare & Wellness'),
-        ('education & training', 'Education & Training'),
-        ('hospitality & services', 'Hospitality & Services'),
-        ('nonprofit/community work', 'Nonprofit/Community Work'),
+        ('business_office', 'Business & Office'),
+        ('finance_accounting', 'Finance & Accounting'),
+        ('marketing_sales_communication', 'Marketing, Sales & Communication'),
+        ('technology', 'Technology'),
+        ('education_training', 'Education and Training'),
+        ('healthcare_wellness', 'Healthcare & Wellness'),
+        ('skilled_trades_labor', 'Skilled Trades & Labor'),
+        ('transportation_logistics', 'Transportation & Logistics'),
+        ('creative_design', 'Creative & Design'),
+        ('legal_government', 'Legal & Government'),
+        ('science_engineering_research', 'Science, Engineering & Research'),
+        ('hospitality_service', 'Hospitality & Service'),
+        ('retail_consumer_services', 'Retail & Consumer Services'),
+        ('nonprofit_social_impact', 'Nonprofit & Social Impact'),
         ('other', 'Other'),
-
     ])
     skills = models.JSONField(default=list)  # List of required skills
     experienceLevel = models.CharField(max_length=20, choices=EXPERIENCE_LEVEL_CHOICES)
