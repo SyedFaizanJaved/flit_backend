@@ -1139,16 +1139,16 @@ class DiscoverTalentView(generics.ListAPIView):
             
             # Build title query if searching by title or both
             if search_type in ['title', 'both']:
-                if len(words) >= 2:
-                    # For multi-word queries, try exact match first
-                    title_query = Q(title__iexact=q)
-                    
-                    # If no exact matches, try partial matches from start
-                    if not qs.filter(title_query).exists() and search_type == 'title':
-                        title_query = Q(title__istartswith=q)
-                else:
-                    # For single word, search from start of title
-                    title_query = Q(title__istartswith=words[0])
+                # For any number of words, we want to see if they appear in any order or if the full string matches
+                # But for the initial filter, we'll be more inclusive
+                title_query = Q(title__icontains=q)
+                
+                # If it's multi-word, also try matching each word (this will be handled by relevance too)
+                if len(words) > 1:
+                    word_query = Q()
+                    for word in words:
+                        word_query &= Q(title__icontains=word)
+                    title_query |= word_query
             
             # Combine queries based on search type
             if search_type == 'name':
@@ -1158,15 +1158,21 @@ class DiscoverTalentView(generics.ListAPIView):
             else:  # both
                 qs = qs.filter(name_query | title_query)
             
-            # If no results and searching both, try partial matches
+            # If no results and searching both, try partial matches on name from the base queryset
             if not qs.exists() and search_type in ['both', 'name']:
+                # Re-fetch the base queryset to avoid previous filters
+                base_qs = Candidate.objects.select_related('user').filter(
+                    user__is_active=True,
+                    profile_visibility="public",
+                    basic_info_completed=True,  
+                )
                 partial_name_query = Q()
                 for word in words:
                     partial_name_query |= (
                         Q(user__first_name__icontains=word) |
                         Q(user__last_name__icontains=word)
                     )
-                qs = qs.filter(partial_name_query)
+                qs = base_qs.filter(partial_name_query)
             
             # Create a base score of 0
             qs = qs.annotate(relevance=Value(0, output_field=IntegerField()))
