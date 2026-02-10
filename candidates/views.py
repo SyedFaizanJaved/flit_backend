@@ -1,7 +1,7 @@
-import io
 import json
 import logging
 import os
+import re
 import requests
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -531,7 +531,10 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                                         kept_achievement_ids.append(obj.id)
                                         logger.info(f"Updated achievement {item_id} in {time.time() - ach_start:.2f}s")
                                     else:
-                                        validation_errors.append({'index': index, 'errors': serializer.errors})
+                                        # Flatten errors to a simple list of strings
+                                        for field, errors in serializer.errors.items():
+                                            msg = errors[0] if isinstance(errors, list) else str(errors)
+                                            validation_errors.append(f"Achievement {index + 1} ({field}): {msg}")
                                 else:
                                     item_id = None # Force creation if ID not found
                             
@@ -542,14 +545,20 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                                     kept_achievement_ids.append(obj.id)
                                     logger.info(f"Created achievement {obj.id} in {time.time() - ach_start:.2f}s")
                                 else:
-                                    validation_errors.append({'index': index, 'errors': serializer.errors})
+                                    # Flatten errors to a simple list of strings
+                                    for field, errors in serializer.errors.items():
+                                        msg = errors[0] if isinstance(errors, list) else str(errors)
+                                        validation_errors.append(f"Achievement {index + 1} ({field}): {msg}")
                         except Exception as e:
                             logger.error(f"Error processing achievement {index}: {e}", exc_info=True)
-                            validation_errors.append({'index': index, 'error': str(e)})
+                            validation_errors.append(f"Achievement {index + 1} Error: {str(e)}")
                     
                     # If any achievement failed validation, raise error to rollback transaction
                     if validation_errors:
                         logger.warning(f"Achievement validation errors: {validation_errors}")
+                        # Raise as a single flat message if there's only one, otherwise a list
+                        if len(validation_errors) == 1:
+                            raise serializers.ValidationError({"achievements": validation_errors[0]})
                         raise serializers.ValidationError({"achievements": validation_errors})
 
                     # Deletion
@@ -1122,32 +1131,43 @@ class DiscoverTalentView(generics.ListAPIView):
             
             # Build name query if searching by name or both
             if search_type in ['name', 'both']:
-                if len(words) >= 2:
-                    # For two or more words, try different combinations of first and last name
-                    name_query = (
-                        Q(user__first_name__iexact=words[0], user__last_name__iexact=' '.join(words[1:])) |
-                        Q(user__first_name__iexact=' '.join(words[1:]), user__last_name__iexact=words[0]) |
-                        Q(user__first_name__iexact=words[-1], user__last_name__iexact=' '.join(words[:-1])) |
-                        Q(user__first_name__iexact=' '.join(words[:-1]), user__last_name__iexact=words[-1])
-                    )
+                # Search strictly in full_name (Candidate model) as that's what's visible on cards
+                # For short names (<= 3 chars), strictly match word boundaries to avoid false positives (e.g., "Al" matching "Khalid")
+                if len(q) <= 3:
+                    safe_q = re.escape(q)
+                    name_query = Q(full_name__iregex=fr'\y{safe_q}')
                 else:
-                    # For single word, search in first or last name
-                    name_query = (
-                        Q(user__first_name__iexact=words[0]) |
-                        Q(user__last_name__iexact=words[0])
-                    )
+                    name_query = Q(full_name__icontains=q)
+                
+                # For multiple words, also try matching them individually in the full_name
+                if len(words) > 1:
+                    word_name_query = Q()
+                    for word in words:
+                        if len(word) <= 3:
+                            safe_word = re.escape(word)
+                            word_name_query &= Q(full_name__iregex=fr'\y{safe_word}')
+                        else:
+                            word_name_query &= Q(full_name__icontains=word)
+                    name_query |= word_name_query
             
             # Build title query if searching by title or both
             if search_type in ['title', 'both']:
-                # For any number of words, we want to see if they appear in any order or if the full string matches
-                # But for the initial filter, we'll be more inclusive
-                title_query = Q(title__icontains=q)
+                # For short titles (<= 3 chars), strictly match word boundaries to avoid false positives (e.g., "AI" matching "Blockchain")
+                if len(q) <= 3:
+                    safe_q = re.escape(q)
+                    title_query = Q(title__iregex=fr'\y{safe_q}')
+                else:
+                    title_query = Q(title__icontains=q)
                 
-                # If it's multi-word, also try matching each word (this will be handled by relevance too)
+                # For multi-word queries, also try matching each word
                 if len(words) > 1:
                     word_query = Q()
                     for word in words:
-                        word_query &= Q(title__icontains=word)
+                        if len(word) <= 3:
+                            safe_word = re.escape(word)
+                            word_query &= Q(title__iregex=fr'\y{safe_word}')
+                        else:
+                            word_query &= Q(title__icontains=word)
                     title_query |= word_query
             
             # Combine queries based on search type
@@ -1168,10 +1188,11 @@ class DiscoverTalentView(generics.ListAPIView):
                 )
                 partial_name_query = Q()
                 for word in words:
-                    partial_name_query |= (
-                        Q(user__first_name__icontains=word) |
-                        Q(user__last_name__icontains=word)
-                    )
+                    if len(word) <= 3:
+                        safe_word = re.escape(word)
+                        partial_name_query |= Q(full_name__iregex=fr'\y{safe_word}')
+                    else:
+                        partial_name_query |= Q(full_name__icontains=word)
                 qs = base_qs.filter(partial_name_query)
             
             # Create a base score of 0
@@ -1187,15 +1208,19 @@ class DiscoverTalentView(generics.ListAPIView):
                 )
             )
             
-            # Full name exact match (high priority)
-            full_name = ' '.join(words).strip()
+            # Full name exact or contains match (high priority)
+            full_name_val = ' '.join(words).strip()
             qs = qs.annotate(
                 full_name_match=Case(
                     When(
-                        Q(user__first_name__iexact=full_name) | 
-                        Q(user__last_name__iexact=full_name) |
-                        Q(user__first_name__iexact=words[0]) & Q(user__last_name__iexact=' '.join(words[1:]).strip() if len(words) > 1 else ''),
-                        then=Value(800)  # High score for exact full name match
+                        Q(full_name__iexact=full_name_val) |
+                        Q(user__first_name__iexact=full_name_val) | 
+                        Q(user__last_name__iexact=full_name_val),
+                        then=Value(800)
+                    ),
+                    When(
+                        Q(full_name__icontains=full_name_val),
+                        then=Value(400)
                     ),
                     default=Value(0),
                     output_field=IntegerField()
@@ -1237,7 +1262,23 @@ class DiscoverTalentView(generics.ListAPIView):
                         default=Value(0),
                         output_field=IntegerField()
                     ),
-                    # Name matches
+                    # Name matches (Full Name)
+                    f'full_name_exact_{i}': Case(
+                        When(full_name__iexact=word, then=Value(weight * 4)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'full_name_start_{i}': Case(
+                        When(full_name__istartswith=word, then=Value(weight * 3)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    f'full_name_contains_{i}': Case(
+                        When(full_name__icontains=word, then=Value(weight * 2)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    ),
+                    # Name matches (User parts)
                     f'first_name_exact_{i}': Case(
                         When(user__first_name__iexact=word, then=Value(weight * 3)),
                         default=Value(0),
@@ -1277,6 +1318,9 @@ class DiscoverTalentView(generics.ListAPIView):
                 *[f'title_exact_{i}' for i in range(len(words))],
                 *[f'title_start_{i}' for i in range(len(words))],
                 *[f'title_contains_{i}' for i in range(len(words))],
+                *[f'full_name_exact_{i}' for i in range(len(words))],
+                *[f'full_name_start_{i}' for i in range(len(words))],
+                *[f'full_name_contains_{i}' for i in range(len(words))],
                 *[f'first_name_exact_{i}' for i in range(len(words))],
                 *[f'first_name_start_{i}' for i in range(len(words))],
                 *[f'first_name_contains_{i}' for i in range(len(words))],
