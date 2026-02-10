@@ -440,130 +440,132 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         candidate.experience.all().delete()
                 logger.info(f"Experience processing took {time.time() - exp_sync_start:.2f}s")
         
-        # Handle Achievements - UPSERT logic with proper validation and image handling
-        if 'achievements' in data:
-            import time
-            start_total = time.time()
-            achievements_data = data['achievements']
-            logger.info(f"Processing achievements data: {achievements_data}")
-            
-            # Parse JSON string if needed
-            if isinstance(achievements_data, str):
-                try:
-                    achievements_data = json.loads(achievements_data)
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse achievements JSON")
-                    achievements_data = []
-            
-            if isinstance(achievements_data, list):
-                # Apply soft limit of max 30 achievements
-                if len(achievements_data) > 30:
-                    logger.warning(f"Too many achievements ({len(achievements_data)}), limiting to 30")
-                    achievements_data = achievements_data[:30]
+            # Handle Achievements - UPSERT logic with proper validation and image handling
+            if 'achievements' in data:
+                start_total = time.time()
+                achievements_data = data['achievements']
+                logger.info(f"Processing achievements data: {achievements_data}")
                 
-                logger.info(f"Processing {len(achievements_data)} achievements")
-                
-                kept_achievement_ids = []
-                validation_errors = []
-                
-                # Pre-fetch existing achievements for robust matching
-                existing_achievements = list(candidate.achievements.all())
-
-                # Smart Image Mapping: Find which achievements should get generic 'image' files
-                generic_images = request.FILES.getlist('image')
-                generic_image_index = 0
-                
-                for index, ach_data in enumerate(achievements_data):
-                    ach_start = time.time()
-                    if not ach_data:
-                        continue
-                    
-                    # Prepare achievement data copy
-                    achievement_data = ach_data.copy()
-                    
-                    # Handle image field if it's a string (URL or empty)
-                    current_image = achievement_data.get('image')
-                    if isinstance(current_image, str):
-                        if current_image.startswith('http'):
-                            achievement_data.pop('image')
-                            # logger.info(f"Removed image URL from achievement {index} payload")
-                        elif current_image == "":
-                            achievement_data['image'] = None
-                            current_image = None # Treat as needing an image
-
-                    # Get achievement ID for upsert logic
-                    item_id = achievement_data.get('id') or achievement_data.get('pk')
-                    
-                    # Robust matching fallback: match by normalized title and issuer
-                    if not item_id:
-                        title_norm = str(achievement_data.get('title') or "").strip().lower()
-                        issuer_norm = str(achievement_data.get('issuer') or "").strip().lower()
-                        
-                        if title_norm:
-                            for ex in existing_achievements:
-                                if (str(ex.title or "").strip().lower() == title_norm and 
-                                    str(ex.issuer or "").strip().lower() == issuer_norm):
-                                    item_id = ex.id
-                                    logger.info(f"Matched existing achievement {item_id} by normalized title/issuer")
-                                    break
-
-                    logger.info(f"Processing achievement {index}, ID: {item_id}")
-                    
-                    # Handle image attachments
-                    image_key = f'achievement_image_{index}'
-                    if image_key in request.FILES:
-                        achievement_data['image'] = request.FILES[image_key]
-                        logger.info(f"Found specific image for achievement {index} with key {image_key}")
-                    elif (not current_image or current_image == "") and generic_image_index < len(generic_images):
-                         # If no specific image and no URL, try to use next available generic image
-                        achievement_data['image'] = generic_images[generic_image_index]
-                        logger.info(f"Assigning generic image {generic_image_index} to achievement {index}")
-                        generic_image_index += 1
-                    
-                    payload = _payload_for_model(achievement_data)
-                    
+                # Parse JSON string if needed
+                if isinstance(achievements_data, str):
                     try:
-                        if item_id:
-                            existing = candidate.achievements.filter(id=item_id).first()
-                            if existing:
-                                serializer = AchievementSerializer(existing, data=payload, partial=True)
+                        achievements_data = json.loads(achievements_data)
+                    except json.JSONDecodeError:
+                        logger.error("Failed to parse achievements JSON")
+                        achievements_data = []
+                
+                if isinstance(achievements_data, list):
+                    # Apply soft limit of max 30 achievements
+                    if len(achievements_data) > 30:
+                        logger.warning(f"Too many achievements ({len(achievements_data)}), limiting to 30")
+                        achievements_data = achievements_data[:30]
+                    
+                    logger.info(f"Processing {len(achievements_data)} achievements")
+                    
+                    kept_achievement_ids = []
+                    validation_errors = []
+                    
+                    # Pre-fetch existing achievements for robust matching
+                    existing_achievements = list(candidate.achievements.all())
+
+                    # Smart Image Mapping: Find which achievements should get generic 'image' files
+                    generic_images = request.FILES.getlist('image')
+                    generic_image_index = 0
+                    
+                    for index, ach_data in enumerate(achievements_data):
+                        ach_start = time.time()
+                        if not ach_data:
+                            continue
+                        
+                        # Prepare achievement data copy
+                        achievement_data = ach_data.copy()
+                        
+                        # Handle image field if it's a string (URL or empty)
+                        current_image = achievement_data.get('image')
+                        if isinstance(current_image, str):
+                            if current_image.startswith('http'):
+                                achievement_data.pop('image')
+                                # logger.info(f"Removed image URL from achievement {index} payload")
+                            elif current_image == "":
+                                achievement_data['image'] = None
+                                current_image = None # Treat as needing an image
+
+                        # Get achievement ID for upsert logic
+                        item_id = achievement_data.get('id') or achievement_data.get('pk')
+                        
+                        # Robust matching fallback: match by normalized title and issuer
+                        if not item_id:
+                            title_norm = str(achievement_data.get('title') or "").strip().lower()
+                            issuer_norm = str(achievement_data.get('issuer') or "").strip().lower()
+                            
+                            if title_norm:
+                                for ex in existing_achievements:
+                                    if (str(ex.title or "").strip().lower() == title_norm and 
+                                        str(ex.issuer or "").strip().lower() == issuer_norm):
+                                        item_id = ex.id
+                                        logger.info(f"Matched existing achievement {item_id} by normalized title/issuer")
+                                        break
+
+                        logger.info(f"Processing achievement {index}, ID: {item_id}")
+                        
+                        # Handle image attachments
+                        image_key = f'achievement_image_{index}'
+                        if image_key in request.FILES:
+                            achievement_data['image'] = request.FILES[image_key]
+                            logger.info(f"Found specific image for achievement {index} with key {image_key}")
+                        elif (not current_image or current_image == "") and generic_image_index < len(generic_images):
+                             # If no specific image and no URL, try to use next available generic image
+                            achievement_data['image'] = generic_images[generic_image_index]
+                            logger.info(f"Assigning generic image {generic_image_index} to achievement {index}")
+                            generic_image_index += 1
+                        
+                        payload = _payload_for_model(achievement_data)
+                        
+                        try:
+                            if item_id:
+                                existing = candidate.achievements.filter(id=item_id).first()
+                                if existing:
+                                    serializer = AchievementSerializer(existing, data=payload, partial=True)
+                                    if serializer.is_valid():
+                                        obj = serializer.save()
+                                        kept_achievement_ids.append(obj.id)
+                                        logger.info(f"Updated achievement {item_id} in {time.time() - ach_start:.2f}s")
+                                    else:
+                                        validation_errors.append({'index': index, 'errors': serializer.errors})
+                                else:
+                                    item_id = None # Force creation if ID not found
+                            
+                            if not item_id:
+                                serializer = AchievementSerializer(data=payload)
                                 if serializer.is_valid():
-                                    obj = serializer.save()
+                                    obj = serializer.save(candidate=candidate)
                                     kept_achievement_ids.append(obj.id)
-                                    logger.info(f"Updated achievement {item_id} in {time.time() - ach_start:.2f}s")
+                                    logger.info(f"Created achievement {obj.id} in {time.time() - ach_start:.2f}s")
                                 else:
                                     validation_errors.append({'index': index, 'errors': serializer.errors})
-                            else:
-                                item_id = None # Force creation if ID not found
-                        
-                        if not item_id:
-                            serializer = AchievementSerializer(data=payload)
-                            if serializer.is_valid():
-                                obj = serializer.save(candidate=candidate)
-                                kept_achievement_ids.append(obj.id)
-                                logger.info(f"Created achievement {obj.id} in {time.time() - ach_start:.2f}s")
-                            else:
-                                validation_errors.append({'index': index, 'errors': serializer.errors})
-                    except Exception as e:
-                        logger.error(f"Error processing achievement {index}: {e}", exc_info=True)
-                        validation_errors.append({'index': index, 'error': str(e)})
-                
-                # Deletion
-                deleted_ids = []
-                to_delete = candidate.achievements.exclude(id__in=kept_achievement_ids)
-                deleted_count = to_delete.count()
-                if deleted_count > 0:
-                    deleted_ids = list(to_delete.values_list('id', flat=True))
-                    to_delete.delete()
-                    logger.info(f"Deleted {deleted_count} achievements: {deleted_ids}")
-                
-                logger.info(f"Total achievements processing time: {time.time() - start_total:.2f}s")
-                if validation_errors:
-                    logger.warning(f"Achievement validation errors: {validation_errors}")
+                        except Exception as e:
+                            logger.error(f"Error processing achievement {index}: {e}", exc_info=True)
+                            validation_errors.append({'index': index, 'error': str(e)})
+                    
+                    # If any achievement failed validation, raise error to rollback transaction
+                    if validation_errors:
+                        logger.warning(f"Achievement validation errors: {validation_errors}")
+                        raise serializers.ValidationError({"achievements": validation_errors})
+
+                    # Deletion
+                    deleted_ids = []
+                    to_delete = candidate.achievements.exclude(id__in=kept_achievement_ids)
+                    deleted_count = to_delete.count()
+                    if deleted_count > 0:
+                        deleted_ids = list(to_delete.values_list('id', flat=True))
+                        to_delete.delete()
+                        logger.info(f"Deleted {deleted_count} achievements: {deleted_ids}")
+                    
+                    logger.info(f"Total achievements processing time: {time.time() - start_total:.2f}s")
+                else:
+                    logger.error(f"Achievements data is not a list")
             else:
-                logger.error(f"Achievements data is not a list")
-        else:
-            logger.info("No achievements data in request")
+                logger.info("No achievements data in request")
         
         # ML sync (TEMPORARILY DISABLED FOR PERFORMANCE)
         ml_sync_start = time.time()
