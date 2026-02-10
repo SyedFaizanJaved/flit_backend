@@ -30,6 +30,11 @@ class JobSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     is_applied = serializers.SerializerMethodField()
+    workStyle = serializers.CharField(source='get_workStyle_display', read_only=True)
+    category = serializers.CharField(source='get_category_display', read_only=True)
+    experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
+    employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Job
@@ -88,6 +93,11 @@ class JobListSerializer(serializers.ModelSerializer):
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
+    workStyle = serializers.CharField(source='get_workStyle_display', read_only=True)
+    category = serializers.CharField(source='get_category_display', read_only=True)
+    experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
+    employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Job
