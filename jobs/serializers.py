@@ -35,6 +35,7 @@ class JobSerializer(serializers.ModelSerializer):
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    skills = serializers.SerializerMethodField()
     
     class Meta:
         model = Job
@@ -44,6 +45,11 @@ class JobSerializer(serializers.ModelSerializer):
             'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
             'status', 'created_at', 'updated_at', 'is_applied'
         )
+    
+    def get_skills(self, obj):
+        """Return skills with first letter capitalized"""
+        skills = obj.skills or []
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
     
     def get_is_applied(self, obj):
         """
@@ -98,6 +104,7 @@ class JobListSerializer(serializers.ModelSerializer):
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    skills = serializers.SerializerMethodField()
     
     class Meta:
         model = Job
@@ -106,6 +113,11 @@ class JobListSerializer(serializers.ModelSerializer):
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
             'status', 'created_at', 'skills', 'is_applied', 'application_details'
         )
+    
+    def get_skills(self, obj):
+        """Return skills with first letter capitalized"""
+        skills = obj.skills or []
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
     
     def get_is_applied(self, obj):
         """

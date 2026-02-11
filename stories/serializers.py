@@ -137,6 +137,11 @@ class ProjectSerializer(serializers.ModelSerializer):
     
     company = CompanyBasicSerializer(read_only=True)
     skills = serializers.SerializerMethodField()
+    
+    # Formatted fields
+    paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
+    category = serializers.CharField(source='get_category_display', read_only=True)
 
     class Meta:
         model = Project
@@ -147,7 +152,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         ]
 
     def get_skills(self, obj):
-        return list(ProjectSkill.objects.filter(project=obj).values_list('name', flat=True))
+        skills = list(ProjectSkill.objects.filter(project=obj).values_list('name', flat=True))
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
 
 
 class JobSerializer(serializers.ModelSerializer):
@@ -157,13 +163,27 @@ class JobSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.BooleanField(read_only=True)
     is_saved = serializers.BooleanField(read_only=True)
+    
+    # Formatted fields
+    employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
+    workStyle = serializers.CharField(source='get_workStyle_display', read_only=True)
+    category = serializers.CharField(source='get_category_display', read_only=True)
+    experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
+    skills = serializers.SerializerMethodField()
 
     class Meta:
         model = Job
         fields = [
             'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline',
+            'workStyle', 'category', 'experienceLevel'
         ]
+    
+    def get_skills(self, obj):
+        """Return skills with first letter capitalized"""
+        skills = obj.skills or []
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
 
 
 class CandidateSerializer(serializers.ModelSerializer):
@@ -174,6 +194,12 @@ class CandidateSerializer(serializers.ModelSerializer):
     is_liked = serializers.BooleanField(read_only=True)
     is_saved = serializers.BooleanField(read_only=True)
     profile_completed = serializers.SerializerMethodField()
+    
+    # Formatted fields
+    work_style = serializers.CharField(source='get_work_style_display', read_only=True)
+    availability_type = serializers.CharField(source='get_availability_type_display', read_only=True)
+    seniority_level = serializers.CharField(source='get_seniority_level_display', read_only=True)
+    skills = serializers.SerializerMethodField()
 
     class Meta:
         model = Candidate
@@ -183,6 +209,11 @@ class CandidateSerializer(serializers.ModelSerializer):
             'salary_currency', 'profile_image', 'like_count', 'comment_count',
             'is_liked', 'is_saved', 'created_at', 'user_id', 'profile_completed'
         ]
+    
+    def get_skills(self, obj):
+        """Return skills with first letter capitalized"""
+        skills = obj.skills or []
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
 
     def get_profile_completed(self, obj):
         return all([
