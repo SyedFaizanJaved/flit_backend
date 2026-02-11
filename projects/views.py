@@ -43,16 +43,13 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
         # Base queryset with active status
         queryset = super().get_queryset().filter(status='active')
 
-        # Apply search with whole word matching
+        # Apply search with partial word matching
         search = self.request.query_params.get('search', None)
         if search:
             search_terms = search.strip().split()
             for term in search_terms:
                 if term:
-                    escaped_term = re.escape(term)
-                    # Match whole word, including at start or end of title
-                    pattern = fr'(?:^|\s){escaped_term}(?:\s|$)'
-                    queryset = queryset.filter(title__iregex=pattern)
+                    queryset = queryset.filter(title__icontains=term)
 
         return queryset
 
@@ -95,8 +92,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             search_terms = search.strip().split()
             for term in search_terms:
                 if term:
-                    escaped_term = re.escape(term)
-                    queryset = queryset.filter(title__iregex=fr'\b{escaped_term}\b')
+                    queryset = queryset.filter(title__icontains=term)
 
         # Only filter by active status for public list view
         if self.action == 'list':

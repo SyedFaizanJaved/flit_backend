@@ -55,10 +55,7 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
             search_terms = search.strip().split()
             for term in search_terms:
                 if term:
-                    escaped_term = re.escape(term)
-                    # Match whole word, including at start or end of title
-                    pattern = fr'(?:^|\s){escaped_term}(?:\s|$)'
-                    queryset = queryset.filter(title__iregex=pattern)
+                    queryset = queryset.filter(title__icontains=term)
        
         return queryset
    
@@ -109,8 +106,7 @@ class JobViewSet(viewsets.ModelViewSet):
             search_terms = search.strip().split()
             for term in search_terms:
                 if term:
-                    escaped_term = re.escape(term)
-                    qs = qs.filter(title__iregex=fr'\b{escaped_term}\b')
+                    qs = qs.filter(title__icontains=term)
 
         return qs.distinct()
 
