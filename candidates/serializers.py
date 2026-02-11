@@ -12,7 +12,7 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     Serializer for discover_talent endpoint with minimal required fields
     """
     fullName = serializers.CharField(source='full_name', read_only=True)
-    title = serializers.CharField(required=False, allow_blank=True)
+    title = serializers.SerializerMethodField()
     bio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     skills = serializers.SerializerMethodField()
     availability = serializers.SerializerMethodField()
@@ -25,6 +25,9 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     
     def get_userId(self, obj):
         return obj.user.id if obj.user else None
+    
+    def get_title(self, obj):
+        return obj.title.title() if obj.title else obj.title
         
     def get_profileImage(self, obj):
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
@@ -70,14 +73,16 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'skills') and obj.skills:
             # Handle both list and queryset cases
             if hasattr(obj.skills, 'all'):  # It's a queryset
-                return [skill.name for skill in obj.skills.all()]
+                skills = [skill.name for skill in obj.skills.all()]
+                return [skill.title() if isinstance(skill, str) else skill for skill in skills]
             elif isinstance(obj.skills, list):  # It's already a list
-                return [skill.name if hasattr(skill, 'name') else skill for skill in obj.skills]
+                skills = [skill.name if hasattr(skill, 'name') else skill for skill in obj.skills]
+                return [skill.title() if isinstance(skill, str) else skill for skill in skills]
             elif isinstance(obj.skills, str):  # It's a JSON string
                 try:
                     skills_list = json.loads(obj.skills)
                     if isinstance(skills_list, list):
-                        return skills_list
+                        return [skill.title() if isinstance(skill, str) else skill for skill in skills_list]
                 except json.JSONDecodeError:
                     pass
         return []
@@ -156,6 +161,13 @@ class CandidateSerializer(serializers.ModelSerializer):
     experience = serializers.SerializerMethodField()
     achievements = serializers.SerializerMethodField()
     
+    # Formatted fields
+    title = serializers.SerializerMethodField()
+    location = serializers.SerializerMethodField()
+    work_style = serializers.CharField(source='get_work_style_display', read_only=True)
+    availability_type = serializers.CharField(source='get_availability_type_display', read_only=True)
+    seniority_level = serializers.CharField(source='get_seniority_level_display', read_only=True)
+    
     def _parse_json_field(self, value):
         if isinstance(value, str):
             try:
@@ -168,7 +180,9 @@ class CandidateSerializer(serializers.ModelSerializer):
         return self._parse_json_field(obj.superpowers)
         
     def get_skills(self, obj):
-        return self._parse_json_field(obj.skills)
+        skills = self._parse_json_field(obj.skills)
+        # Capitalize first letter of each skill
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
         
     def get_portfolio_links(self, obj):
         return self._parse_json_field(obj.portfolio_links)
@@ -176,19 +190,25 @@ class CandidateSerializer(serializers.ModelSerializer):
     def get_preferred_roles(self, obj):
         return self._parse_json_field(obj.preferred_roles)
     
+    def get_title(self, obj):
+        return obj.title.title() if obj.title else obj.title
+    
+    def get_location(self, obj):
+        return obj.location.title() if obj.location else obj.location
+    
     def get_education(self, obj):
         education_records = obj.education.all().order_by('-start_date')
         data = []
         for edu in education_records:
             data.append({
                 'id': edu.id,
-                'institution': edu.institution,
-                'degree': edu.degree,
-                'field_of_study': edu.field_of_study,
+                'institution': edu.institution.title() if edu.institution else edu.institution,
+                'degree': edu.degree.title() if edu.degree else edu.degree,
+                'field_of_study': edu.field_of_study.title() if edu.field_of_study else edu.field_of_study,
                 'start_date': edu.start_date,
                 'end_date': edu.end_date,
                 'is_current': edu.is_current,
-                'grading_system': edu.grading_system,
+                'grading_system': edu.grading_system.title() if edu.grading_system else edu.grading_system,
                 'gpa': edu.gpa,
                 'grade': edu.grade,
                 'total_marks': edu.total_marks,
@@ -205,13 +225,13 @@ class CandidateSerializer(serializers.ModelSerializer):
         for exp in experience_records:
             data.append({
                 'id': exp.id,
-                'company_name': exp.company_name,
-                'position': exp.position,
-                'employment_type': exp.employment_type,
+                'company_name': exp.company_name.title() if exp.company_name else exp.company_name,
+                'position': exp.position.title() if exp.position else exp.position,
+                'employment_type': exp.employment_type.replace('-', ' ').title() if exp.employment_type else exp.employment_type,
                 'start_date': exp.start_date,
                 'end_date': exp.end_date,
                 'is_current': exp.is_current,
-                'location': exp.location,
+                'location': exp.location.title() if exp.location else exp.location,
                 'description': exp.description,
                 'achievements': exp.achievements,
                 'skills_used': exp.skills_used,
@@ -226,11 +246,11 @@ class CandidateSerializer(serializers.ModelSerializer):
         for ach in achievement_records:
             data.append({
                 'id': ach.id,
-                'title': ach.title,
-                'achievement_type': ach.achievement_type,
+                'title': ach.title.title() if ach.title else ach.title,
+                'achievement_type': ach.achievement_type.replace('_', ' ').title() if ach.achievement_type else ach.achievement_type,
                 'description': ach.description,
                 'date_achieved': ach.date_achieved,
-                'issuer': ach.issuer,
+                'issuer': ach.issuer.title() if ach.issuer else ach.issuer,
                 'url': ach.url,
                 'image': self._get_file_url(ach.image) if ach.image else None,
                 'created_at': ach.created_at,

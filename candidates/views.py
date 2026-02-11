@@ -837,6 +837,43 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         projects = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
         return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
 
+    def _format_category(self, category):
+        """Convert category slug to human-readable format"""
+        category_mapping = {
+            'business_office': 'Business & Office',
+            'finance_accounting': 'Finance & Accounting',
+            'marketing_sales_communication': 'Marketing, Sales & Communication',
+            'technology': 'Technology',
+            'education_training': 'Education and Training',
+            'healthcare_wellness': 'Healthcare & Wellness',
+            'skilled_trades_labor': 'Skilled Trades & Labor',
+            'transportation_logistics': 'Transportation & Logistics',
+            'creative_design': 'Creative & Design',
+            'legal_government': 'Legal & Government',
+            'science_engineering_research': 'Science, Engineering & Research',
+            'hospitality_service': 'Hospitality & Service',
+            'retail_consumer_services': 'Retail & Consumer Services',
+            'nonprofit_social_impact': 'Nonprofit & Social Impact',
+            'other': 'Other',
+        }
+        return category_mapping.get(category, category.replace('_', ' ').title())
+    
+    def _format_project_category(self, category):
+        """Convert project category slug to human-readable format"""
+        category_mapping = {
+            'engineering': 'Engineering',
+            'design': 'Design',
+            'marketing': 'Marketing',
+            'development': 'Development',
+            'consulting': 'Consulting',
+            'writing': 'Writing',
+            'research': 'Research',
+            'data_science': 'Data Science',
+            'management': 'Management',
+            'other': 'Other',
+        }
+        return category_mapping.get(category, category.replace('_', ' ').title())
+
     # ====================== LATEST JOBS & PROJECTS (ML version) ======================
 
     @action(detail=False, methods=['get'], url_path='dashboard/latest-jobs')
@@ -847,7 +884,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         cached = cache.get(cache_key)
     
         if cached and cached.get('ml_success'):
-            # Use cached data but update has_applied status from database
+            # Use cached data but update has_applied status from database and format fields
             jobs = cached.get('jobs', [])
             job_ids = [j['id'] for j in jobs if 'id' in j]
             if job_ids:
@@ -859,6 +896,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 )
                 for job in jobs:
                     job['has_applied'] = job['id'] in applied_job_ids
+                    # Format cached data fields
+                    if 'workStyle' in job:
+                        job['workStyle'] = job['workStyle'].replace('-', ' ').title()
+                    if 'category' in job:
+                        job['category'] = self._format_category(job['category'])
+                    if 'experienceLevel' in job:
+                        job['experienceLevel'] = job['experienceLevel'].title()
+                    if 'employmentType' in job:
+                        job['employmentType'] = job['employmentType'].replace('-', ' ').title()
+                    if 'status' in job:
+                        job['status'] = job['status'].title()
             queryset = jobs
         else:
             queryset = []
@@ -884,16 +932,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             'id': job_id,
                             'title': item.get('title', 'No Title'),
                             'description': item.get('description', ''),
-                            'workStyle': item.get('work_style', 'remote'),
-                            'category': item.get('category', 'other'),
-                            'experienceLevel': item.get('experience_level', 'mid'),
-                            'employmentType': item.get('employment_type', 'full-time'),
+                            'workStyle': item.get('work_style', 'remote').replace('-', ' ').title(),
+                            'category': self._format_category(item.get('category', 'other')),
+                            'experienceLevel': item.get('experience_level', 'mid').title(),
+                            'employmentType': item.get('employment_type', 'full-time').replace('-', ' ').title(),
                             'salaryRangeMin': item.get('salary_range', {}).get('min'),
                             'salaryRangeMax': item.get('salary_range', {}).get('max'),
-                            'status': item.get('status', 'active'),
+                            'status': item.get('status', 'active').title(),
                             'created_at': item.get('created_at', timezone.now().isoformat()),
                             'location': item.get('location'),
-                            'skills': item.get('skills', []),
+                            'skills': [skill.title() if isinstance(skill, str) else skill for skill in item.get('skills', [])],
                             'company_name': company.get('company_name', 'Unknown'),
                             'company_id': company.get('id'),
                             'has_applied': False  
@@ -933,7 +981,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:
-            # Use cached data but update has_applied status from database
+            # Use cached data but update has_applied status from database and format fields
             project_ids = [p['id'] for p in cached if 'id' in p]
             if project_ids:
                 applied_project_ids = set(
@@ -944,6 +992,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 )
                 for proj in cached:
                     proj['has_applied'] = proj['id'] in applied_project_ids
+                    # Format cached data fields
+                    if 'status' in proj:
+                        proj['status'] = proj['status'].title()
+                    if 'category' in proj:
+                        proj['category'] = self._format_project_category(proj['category'])
+                    if 'paymentType' in proj:
+                        proj['paymentType'] = proj['paymentType'].replace('-', ' ').title()
+                    if 'work_style' in proj:
+                        proj['work_style'] = proj['work_style'].replace('-', ' ').title()
+                    if 'skills' in proj:
+                        proj['skills'] = [skill.title() if isinstance(skill, str) else skill for skill in proj['skills']]
             queryset = cached
         else:
             queryset = []
@@ -974,14 +1033,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             'id': project.id,
                             'title': project.title,
                             'description': project.description,
-                            'category': project.category,
-                            'status': project.status,
+                            'category': self._format_project_category(project.category),
+                            'status': project.status.title(),
                             'created_at': project.created_at.isoformat(),
-                            'skills': list(project.skills) if hasattr(project, 'skills') else [],
+                            'skills': [skill.title() if isinstance(skill, str) else skill for skill in (list(project.skills) if hasattr(project, 'skills') else [])],
                             'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
-                            'paymentType': project.paymentType,
+                            'paymentType': project.get_paymentType_display(),
                             'paymentAmount': project.paymentAmount,
-                            'work_style': project.work_style,
+                            'work_style': project.get_work_style_display(),
                             'deadline': project.deadline.isoformat() if project.deadline else None,
                             'company_name': company_name,
                             'company_id': company_id,

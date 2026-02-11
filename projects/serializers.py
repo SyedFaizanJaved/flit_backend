@@ -93,8 +93,9 @@ class ProjectListSerializer(serializers.ModelSerializer):
                  'work_style', 'created_at', 'skills', 'is_applied', 'application_details')
     
     def get_skills(self, obj):
-        # Get skills from ProjectSkill model
-        return list(obj.required_skills.values_list('name', flat=True))
+        # Get skills from ProjectSkill model and capitalize first letter
+        skills = list(obj.required_skills.values_list('name', flat=True))
+        return [skill.title() if isinstance(skill, str) else skill for skill in skills]
         
     def get_is_applied(self, obj):
         """
