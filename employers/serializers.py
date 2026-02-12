@@ -186,6 +186,31 @@ class CandidateActionSerializer(serializers.ModelSerializer):
         return data
 
 
+class CandidateFlittedCompanySerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_logo = serializers.SerializerMethodField()
+    industry = serializers.CharField(source='company.industry', read_only=True)
+    location = serializers.CharField(source='company.location', read_only=True)
+    employer_name = serializers.CharField(source='full_name', read_only=True)
+    employer_id = serializers.IntegerField(source='id', read_only=True)
+    company_id = serializers.IntegerField(source='company.id', read_only=True)
+
+    class Meta:
+        model = Employer
+        fields = [
+            'employer_id', 'employer_name', 'company_id', 'company_name', 
+            'company_logo', 'industry', 'location'
+        ]
+
+    def get_company_logo(self, obj):
+        if obj.company and obj.company.logo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.company.logo.url)
+            return obj.company.logo.url
+        return None
+
+
 class CandidateActionDetailSerializer(serializers.ModelSerializer):
     """
     Optimized - No N+1, no invalid prefetch

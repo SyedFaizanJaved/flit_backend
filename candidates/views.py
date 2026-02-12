@@ -41,6 +41,8 @@ from .serializers import (
     DiscoverTalentSerializer,
     AchievementSerializer,
 )
+from employers.models import CandidateAction
+from employers.serializers import CandidateFlittedCompanySerializer
 
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
@@ -1113,6 +1115,30 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         if page is not None:
             return self.get_paginated_response(data)
         return Response({**data, 'count': len(queryset), 'next': None, 'previous': None})
+
+    @action(detail=False, methods=['get'], url_path='flit-list')
+    def flit_list(self, request):
+        """
+        Returns a list of companies/employers that have 'flitted' (action='pass') the candidate.
+        """
+        candidate = self.get_candidate()
+        
+        # Get CandidateAction records where this candidate was 'flitted'
+        actions = CandidateAction.objects.filter(
+            candidate_id=str(candidate.id),
+            action='pass'
+        ).select_related('employer__company').order_by('-created_at')
+        
+        employers = [action.employer for action in actions]
+        
+        # Paginate results
+        page = self.paginate_queryset(employers)
+        if page is not None:
+            serializer = CandidateFlittedCompanySerializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
+        return Response(serializer.data)
 
     # ====================== AI MATCHING ======================
     @action(detail=True, methods=['get'], url_path='ai-matching', permission_classes=[permissions.AllowAny])
