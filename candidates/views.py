@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -283,12 +284,24 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     resume_file.seek(0)
                     files_ml = {'resume_file': (resume_file.name, io.BytesIO(resume_file.read()), resume_file.content_type)}
                     parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
-                    resp = requests.post(parse_url, files=files_ml)
+                    resp = requests.post(parse_url, files=files_ml, timeout=60)
                     if resp.status_code == 200:
                         result = resp.json()
                         if result.get('success'):
                             candidate.resume_data = result.get('data', {})
                             updated_fields.append('resume_data')
+                    elif resp.status_code == 400:
+                        # Propagate the error message from the AI service
+                        try:
+                            error_msg = resp.json().get('error', 'CV parsing failed')
+                        except:
+                            error_msg = "CV parsing failed"
+                        return Response({"error": error_msg}, status=400)
+                    else:
+                        logger.error(f"Resume parsing failed with status {resp.status_code}: {resp.text}")
+                except requests.exceptions.Timeout:
+                    logger.error(f"Resume parsing timeout for candidate {candidate.id}")
+                    return Response({"error": "Resume parsing timeout. Please try again."}, status=504)
                 except Exception as e:
                     logger.error(f"Resume parsing exception: {e}", exc_info=True)
 
@@ -314,7 +327,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     headers = {}
                     if hasattr(settings, 'ML_API_KEY'):
                         headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
-                    resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers)
+                    resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers, timeout=120)
                     if resp.status_code == 200:
                         analysis = resp.json().get('analysis', {})
                         if transcription := analysis.get('video_transcript'):
@@ -323,6 +336,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if analysis:
                             candidate.intro_video_description = analysis
                             updated_fields.append('intro_video_description')
+                    elif resp.status_code == 400:
+                        try:
+                            error_msg = resp.json().get('error', 'Video analysis failed')
+                        except:
+                            error_msg = "Video analysis failed"
+                        return Response({"error": error_msg}, status=400)
+                except requests.exceptions.Timeout:
+                    logger.error(f"Video analysis timeout for candidate {candidate.id}")
+                    return Response({"error": "Video analysis timeout. Please try again."}, status=504)
                 except Exception as e:
                     logger.error(f"Video analysis exception: {e}", exc_info=True)
 

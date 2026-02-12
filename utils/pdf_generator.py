@@ -141,6 +141,16 @@ def generate_pdf_from_cv_data(cv_data):
             fontSize=11,
             spaceAfter=1,
         )
+        # New style for the personal/professional title (e.g. Business Analyst)
+        person_title_style = ParagraphStyle(
+            'PersonTitle',
+            parent=styles['Normal'],
+            fontSize=14,
+            fontName='Times-Italic',
+            textColor=colors.HexColor('#444444'),
+            spaceAfter=4,
+            alignment=TA_CENTER,
+        )
         company_style = ParagraphStyle(
             'Company',
             parent=normal_style,
@@ -157,10 +167,15 @@ def generate_pdf_from_cv_data(cv_data):
             alignment=TA_LEFT,  # bullets stay left-aligned
         )
 
-        # —— Header: Name + Contact line ——
+        # —— Header: Name + Title + Contact line ——
         name = (cv_data.get('name') or '').strip()
         if name:
             story.append(Paragraph(name, title_style))
+        
+        title = (cv_data.get('title') or '').strip()
+        if title:
+            story.append(Paragraph(title, person_title_style))
+
         contact_parts = []
         loc = (cv_data.get('location') or '').strip()
         if loc:
@@ -171,12 +186,17 @@ def generate_pdf_from_cv_data(cv_data):
         email = (cv_data.get('email') or '').strip()
         if email:
             contact_parts.append(email)
+        
         online = cv_data.get('online_profiles') or {}
-        link = (online.get('linkedin') or '').strip()
-        if link:
-            if not link.startswith('http'):
-                link = f"linkedin.com/in/{link}" if 'linkedin.com' not in link else link
-            contact_parts.append(link)
+        for platform, link in online.items():
+            link = str(link).strip()
+            if link:
+                if platform.lower() == 'linkedin' and not link.startswith('http'):
+                    link = f"linkedin.com/in/{link}" if 'linkedin.com' not in link else link
+                elif platform.lower() == 'github' and not link.startswith('http'):
+                    link = f"github.com/{link}" if 'github.com' not in link else link
+                contact_parts.append(link)
+
         if contact_parts:
             story.append(Paragraph(' &bull; '.join(contact_parts), contact_style))
         else:
@@ -207,9 +227,17 @@ def generate_pdf_from_cv_data(cv_data):
                 description = (exp.get('description') or '').strip()
                 achievements = exp.get('achievements') or []
 
-                date_range = _format_date(end_date, 'Present')
+                is_current = exp.get('is_current', False)
+                
+                date_range = ''
+                if is_current:
+                    date_range = 'Present'
+                elif end_date:
+                    date_range = _format_date(end_date)
+                
                 if start_date:
-                    date_str = f"{_format_date(start_date)} – {date_range}" if date_range else _format_date(start_date)
+                    start_fmt = _format_date(start_date)
+                    date_str = f"{start_fmt} – {date_range}" if date_range else start_fmt
                 else:
                     date_str = date_range or ''
 
@@ -239,6 +267,9 @@ def generate_pdf_from_cv_data(cv_data):
                 story.append(tbl)
                 
                 # Company line below
+                emp_type = (exp.get('employment_type') or '').strip()
+                if emp_type:
+                    company_loc = f"{company_loc} ({emp_type})"
                 story.append(Paragraph(company_loc, company_style))
 
                 bullets = []
@@ -274,11 +305,16 @@ def generate_pdf_from_cv_data(cv_data):
                 end_date = edu.get('end_date') or ''
                 gpa = edu.get('gpa')
 
+                is_current = edu.get('is_current', False)
+                
                 date_str = ''
-                if start_date or end_date:
-                    date_str = f"{_format_date(end_date) or 'Present'}"
-                    if start_date:
-                        date_str = f"{_format_date(start_date)} – {date_str}"
+                end_fmt = 'Present' if is_current else (_format_date(end_date) if end_date else '')
+                
+                if start_date:
+                    start_fmt = _format_date(start_date)
+                    date_str = f"{start_fmt} – {end_fmt}" if end_fmt else start_fmt
+                elif end_fmt:
+                    date_str = end_fmt
 
                 inst_line = institution or "—"
                 
@@ -356,12 +392,27 @@ def generate_pdf_from_cv_data(cv_data):
                 if isinstance(proj, dict):
                     title = (proj.get('title') or '').strip()
                     desc = (proj.get('description') or '').strip()
+                    tech_stack = proj.get('tech_stack') or []
+                    impact = (proj.get('impact') or '').strip()
                 else:
-                    title, desc = str(proj).strip(), ''
+                    title, desc, tech_stack, impact = str(proj).strip(), '', [], ''
+                
                 if title:
                     story.append(Paragraph(f'<b>{title}</b>', job_title_style))
+                
+                proj_bullets = []
                 if desc:
-                    story.append(Paragraph(desc.replace('\n', ' '), justified_style))
+                    proj_bullets.append(desc)
+                if tech_stack:
+                    if isinstance(tech_stack, list):
+                        proj_bullets.append(f"<b>Technologies:</b> {', '.join(tech_stack)}")
+                    else:
+                        proj_bullets.append(f"<b>Technologies:</b> {tech_stack}")
+                if impact:
+                    proj_bullets.append(f"<b>Impact:</b> {impact}")
+                
+                for b in proj_bullets:
+                    story.append(Paragraph(f"• {b}", bullet_style))
                 story.append(Spacer(1, 0.08 * inch))
             story.append(Spacer(1, 0.05 * inch))
 
@@ -453,6 +504,34 @@ def generate_pdf_from_cv_data(cv_data):
                     text = grant.strip()
                 if text:
                     story.append(Paragraph(f"• {text}", bullet_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # —— Interests ——
+        interests = cv_data.get('interests') or {}
+        if interests:
+            pref_roles = interests.get('preferred_roles') or []
+            res_interests = interests.get('research_interests') or []
+            domains = interests.get('domains') or []
+            
+            all_int = []
+            if pref_roles: all_int.append(f"<b>Preferred Roles:</b> {', '.join(pref_roles) if isinstance(pref_roles, list) else pref_roles}")
+            if res_interests: all_int.append(f"<b>Research Interests:</b> {', '.join(res_interests) if isinstance(res_interests, list) else res_interests}")
+            if domains: all_int.append(f"<b>Domains:</b> {', '.join(domains) if isinstance(domains, list) else domains}")
+            
+            if all_int:
+                story.append(_section_heading_table('Interests'))
+                story.append(Spacer(1, 0.06 * inch))
+                for item in all_int:
+                    story.append(Paragraph(item, normal_style))
+                story.append(Spacer(1, 0.1 * inch))
+
+        # —— Languages ——
+        languages = cv_data.get('languages') or []
+        if languages:
+            story.append(_section_heading_table('Languages'))
+            story.append(Spacer(1, 0.06 * inch))
+            lang_str = ', '.join(languages) if isinstance(languages, list) else str(languages)
+            story.append(Paragraph(lang_str, normal_style))
             story.append(Spacer(1, 0.1 * inch))
 
         doc.build(story)
