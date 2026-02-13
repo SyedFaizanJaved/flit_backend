@@ -90,6 +90,8 @@ class Project(models.Model):
     paymentType = models.CharField(max_length=20, choices=PROJECT_TYPE_CHOICES)
     paymentAmount = models.PositiveIntegerField()
     estimatedHours = models.CharField(max_length=100)  # As text field as per schema
+    hasTemporaryOption = models.BooleanField(default=False)
+    temporaryDuration = models.CharField(max_length=100, blank=True, null=True)
     
     # Additional Project Details
     complexity = models.CharField(max_length=20, choices=COMPLEXITY_CHOICES, default='moderate')

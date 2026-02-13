@@ -111,7 +111,8 @@ class JobListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'description', 'title', 'company_name', 'company_id', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'status', 'created_at', 'skills', 'is_applied', 'application_details'
+            'status', 'created_at', 'skills', 'is_applied', 'application_details', 
+            'hasTemporaryOption', 'temporaryDuration'
         )
     
     def get_skills(self, obj):
