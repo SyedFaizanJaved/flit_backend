@@ -148,7 +148,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             'project_id', 'id', 'title', 'description', 'category', 'paymentType', 'paymentAmount',
             'estimatedHours', 'deadline', 'status', 'company', 'created_at',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'skills'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'skills',
+            'hasTemporaryOption', 'temporaryDuration'
         ]
 
     def get_skills(self, obj):
@@ -177,7 +178,7 @@ class JobSerializer(serializers.ModelSerializer):
         fields = [
             'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline',
-            'workStyle', 'category', 'experienceLevel'
+            'workStyle', 'category', 'experienceLevel', 'hasTemporaryOption', 'temporaryDuration'
         ]
     
     def get_skills(self, obj):

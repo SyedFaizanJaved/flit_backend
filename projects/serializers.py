@@ -40,7 +40,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'skills', 'deadline', 'required_skills',
-            'status', 'work_style', 'created_at', 'updated_at', 'is_applied'
+            'status', 'work_style', 'created_at', 'updated_at', 'is_applied',
+            'hasTemporaryOption', 'temporaryDuration'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
     
@@ -90,7 +91,8 @@ class ProjectListSerializer(serializers.ModelSerializer):
         model = Project
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
-                 'work_style', 'created_at', 'skills', 'is_applied', 'application_details')
+                 'work_style', 'created_at', 'skills', 'is_applied', 'application_details',
+                 'hasTemporaryOption', 'temporaryDuration')
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model and capitalize first letter
@@ -213,7 +215,8 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         fields = (
             'title', 'description', 'company', 'category', 'skills', 'required_skills',
             'paymentType', 'paymentAmount', 'estimatedHours', 'deadline', 'status',
-            'work_style', 'collaboration', 'application_deadline', 'max_applicants'
+            'work_style', 'collaboration', 'application_deadline', 'max_applicants',
+            'hasTemporaryOption', 'temporaryDuration'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -267,7 +270,7 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         fields = (
             'title', 'description', 'company_name', 'category', 'skills',
             'paymentType', 'paymentAmount', 'estimatedHours', 
-            'deadline', 'status', 'work_style'
+            'deadline', 'status', 'work_style', 'hasTemporaryOption', 'temporaryDuration'
         )
         extra_kwargs = {
             'title': {'required': True},
