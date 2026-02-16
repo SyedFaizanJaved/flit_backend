@@ -782,19 +782,23 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard/applications')
     def applications(self, request):
             candidate = self.get_candidate()
-
-            # Get all applications (job + project)
-            job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
-            project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
+            app_type = request.query_params.get('type')
 
             formatted = []
-            for app in job_apps:
-                formatted.append(self._format_application(app, 'job'))
-            for app in project_apps:
-                formatted.append(self._format_application(app, 'project'))
+            
+            if not app_type or app_type == 'job':
+                job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
+                for app in job_apps:
+                    formatted.append(self._format_application(app, 'job'))
+            
+            if not app_type or app_type == 'project':
+                project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
+                for app in project_apps:
+                    formatted.append(self._format_application(app, 'project'))
 
-            # Sort newest first
-            formatted.sort(key=lambda x: x['applied_at'], reverse=True)
+            # Sort newest first only if both types are present
+            if not app_type:
+                formatted.sort(key=lambda x: x['applied_at'], reverse=True)
 
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
