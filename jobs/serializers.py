@@ -99,6 +99,7 @@ class JobListSerializer(serializers.ModelSerializer):
     company_id = serializers.IntegerField(source='company.id', read_only=True)
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
+    application_count = serializers.SerializerMethodField()
     workStyle = serializers.CharField(source='get_workStyle_display', read_only=True)
     category = serializers.CharField(source='get_category_display', read_only=True)
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
@@ -111,8 +112,8 @@ class JobListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'description', 'title', 'company_name', 'company_id', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'status', 'created_at', 'skills', 'is_applied', 'application_details', 
-            'hasTemporaryOption', 'temporaryDuration'
+            'status', 'created_at', 'skills', 'is_applied', 'application_details',
+            'application_count', 'hasTemporaryOption', 'temporaryDuration'
         )
     
     def get_skills(self, obj):
@@ -140,6 +141,12 @@ class JobListSerializer(serializers.ModelSerializer):
             is_withdrawn=False
         ).exists()
         
+    def get_application_count(self, obj):
+        """
+        Return the total count of non-withdrawn applications for this job.
+        """
+        return obj.applications.filter(is_withdrawn=False).count()
+
     def get_application_details(self, obj):
         """
         Return application details for the job.

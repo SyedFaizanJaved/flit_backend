@@ -82,6 +82,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
+    application_count = serializers.SerializerMethodField()
     category = serializers.CharField(source='get_category_display', read_only=True)
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
@@ -92,7 +93,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
                  'work_style', 'created_at', 'skills', 'is_applied', 'application_details',
-                 'hasTemporaryOption', 'temporaryDuration')
+                 'application_count', 'hasTemporaryOption', 'temporaryDuration')
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model and capitalize first letter
@@ -135,6 +136,12 @@ class ProjectListSerializer(serializers.ModelSerializer):
         print(f"[DEBUG] Application exists for project {obj.id}: {application_exists}")
         return application_exists
         
+    def get_application_count(self, obj):
+        """
+        Return the total count of non-withdrawn applications for this project.
+        """
+        return obj.applications.filter(is_withdrawn=False).count()
+
     def get_application_details(self, obj):
         """
         Return application details for the project.
