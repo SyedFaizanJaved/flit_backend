@@ -168,15 +168,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
              
              verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL')}/auth/verify-email?token={token}"
              
-             subject = 'Verify your email address'
-             message = (
-                 f"Hi {user.first_name},\n\n"
-                 f"Please click the link below to verify your email address:\n"
-                 f"{verification_url}\n\n"
-                 f"If you did not sign up for this account, please ignore this email."
-             )
-             from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
-             send_mail(subject, message, from_email, [user.email], fail_silently=False)
+             from utils.email_service import send_verification_email
+             send_verification_email(user, verification_url)
         except Exception as e:
             # Log error but don't fail registration
              # import logging

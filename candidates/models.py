@@ -334,7 +334,7 @@ class Experience(models.Model):
     end_date = models.DateField(blank=True, null=True)
     is_current = models.BooleanField(default=False)
     location = models.CharField(max_length=200, blank=True, null=True)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     achievements = models.JSONField(default=list)  # List of achievements
     skills_used = models.JSONField(default=list)  # List of skills used
     
@@ -367,7 +367,7 @@ class Achievement(models.Model):
     candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='achievements')
     title = models.CharField(max_length=200)
     achievement_type = models.CharField(max_length=20, choices=ACHIEVEMENT_TYPE_CHOICES)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     date_achieved = models.DateField()
     issuer = models.CharField(max_length=200, blank=True, null=True)
     url = models.URLField(blank=True, null=True)

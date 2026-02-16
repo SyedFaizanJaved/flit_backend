@@ -622,3 +622,94 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
 """
     
     return send_email(recipient_email, subject, text_content, html_content)
+
+
+def send_verification_email(user, verification_url):
+    """
+    Send email verification email with a professional styled template
+    
+    Args:
+        user: User model instance
+        verification_url: The verification URL with token
+    
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    user_name = user.first_name or user.username
+    user_email = user.email
+    logo_url = get_logo_url()
+    styles = get_email_styles()
+    
+    subject = 'Verify your email address'
+    
+    # Plain text fallback
+    text_content = f"""
+Hello {user_name},
+
+Please click the link below to verify your email address:
+{verification_url}
+
+If you did not sign up for this account, please ignore this email.
+
+Best regards,
+The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+"""
+    
+    # HTML version
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Email - Flit</title>
+    <style>
+        {styles}
+        .button {{
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-weight: bold;
+            margin-top: 20px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo" style="justify-content: flex-start;">
+                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+                <span class="logo-text">FLIT</span>
+            </div>
+            <h1 class="header-title">Verify Your Email</h1>
+        </div>
+        
+        <div class="content">
+            <p class="greeting"><strong>Hello {user_name},</strong></p>
+            
+            <p>Thank you for signing up with Flit! Please click the button below to verify your email address and activate your account.</p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{verification_url}" class="button" style="color: white;">Verify Email Address</a>
+            </div>
+            
+            <p style="font-size: 13px; color: #7f8c8d;">
+                If you did not sign up for this account, please ignore this email.
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>Best regards,<br>
+            The <strong>Flit</strong> Team<br>
+            <small>Connecting you to your next opportunity.</small></p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    return send_email(user_email, subject, text_content, html_content)
