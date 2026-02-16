@@ -305,6 +305,7 @@ class ConversationWithUserListView(generics.ListAPIView):
     ordering_fields = ['created_at']
     ordering = ['-created_at'] 
     serializer_class = ChatMessageListSerializer
+    pagination_class = None
 
     def get_queryset(self):
         # Get the other user's ID from URL parameters
