@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from timezone_field.rest_framework import TimeZoneSerializerField
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
@@ -218,12 +219,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     role = serializers.CharField(source='role.name', read_only=True, allow_null=True)
     role_id = serializers.IntegerField(source='role.id', read_only=True, allow_null=True)
+    user_timezone = TimeZoneSerializerField()
 
     class Meta:
         model = User
         fields = (
             'id', 'email', 'username', 'role', 'role_id', 'first_name', 'last_name', 'full_name',
-            'created_at', 'company', 'company_name', 'is_verified'
+            'created_at', 'company', 'company_name', 'is_verified', 'user_timezone'
         )
         read_only_fields = ('id', 'email', 'role', 'role_id', 'created_at')
     
@@ -242,9 +244,11 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating user profile
     """
+    user_timezone = TimeZoneSerializerField(required=False)
+
     class Meta:
         model = User
-        fields = ('first_name', 'last_name', 'username')
+        fields = ('first_name', 'last_name', 'username', 'user_timezone')
 
     def update(self, instance, validated_data):
         # Update fields

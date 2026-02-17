@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import time
 import requests
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -354,7 +355,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         text_fields = [
             'full_name', 'title', 'bio', 'location', 'work_style', 'availability_type', 'is_available',
             'skills', 'superpowers', 'preferred_roles', 'portfolio_links', 'profile_visibility',
-            'min_salary', 'max_salary', 'seniority_level', 'passion_projects'
+            'min_salary', 'max_salary', 'salary_currency', 'seniority_level', 'passion_projects'
         ]
         for field in text_fields:
             if field in data:
@@ -394,6 +395,18 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             candidate.privacy_completed = True
             updated_fields.append('privacy_completed')
 
+        # Handle user_timezone update on the User model
+        if 'user_timezone' in data:
+            tz_value = data['user_timezone'].strip() if isinstance(data['user_timezone'], str) else data['user_timezone']
+            try:
+                import zoneinfo
+                zoneinfo.ZoneInfo(tz_value)  # Validate timezone
+                request.user.user_timezone = tz_value
+                request.user.save(update_fields=['user_timezone'])
+                logger.info(f"Updated user timezone to {tz_value}")
+            except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+                logger.warning(f"Invalid timezone value: {tz_value}")
+
         def _payload_for_model(item, exclude=('id', 'pk', 'created_at', 'updated_at', 'candidate')):
             """Build kwargs for create/update from payload, excluding meta keys."""
             return {k: v for k, v in item.items() if k not in exclude}
@@ -403,7 +416,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
             # Handle Education – upsert by id to avoid duplicate key after dump/restore
             if 'education' in data:
-                import time
                 edu_sync_start = time.time()
                 education_data = data['education']
                 if isinstance(education_data, str):

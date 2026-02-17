@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import ChatMessage, ChatRoom, ChatRoomMessage
 from candidates.models import Candidate
+from utils.timezone_helpers import format_datetime_for_user
 
 class EmployerConversationSummarySerializer(serializers.ModelSerializer):
     """
@@ -314,7 +315,16 @@ class ChatMessageListSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and request.user.id == obj.sender.id:
             return 'outgoing' 
-        return 'incoming'   
+        return 'incoming'
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            user = request.user
+            if instance.created_at:
+                data['created_at'] = format_datetime_for_user(instance.created_at, user)
+        return data
 
 
 class ChatRoomSerializer(serializers.ModelSerializer):

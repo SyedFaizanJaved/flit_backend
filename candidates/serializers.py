@@ -5,6 +5,7 @@ from .models import Candidate, ReferenceRequest, WorkDNAQuestion, Education, Exp
 from companies.models import Company
 from jobs.serializers import JobListSerializer
 from projects.serializers import ProjectListSerializer
+from utils.timezone_helpers import convert_to_user_timezone, format_datetime_for_user
 
 
 class DiscoverTalentSerializer(serializers.ModelSerializer):
@@ -94,6 +95,9 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     def get_lastSeen(self, obj):
         # Return last login time if user exists and has last_login
         if hasattr(obj, 'user') and hasattr(obj.user, 'last_login') and obj.user.last_login:
+            request = self.context.get('request')
+            if request and hasattr(request, 'user') and request.user.is_authenticated:
+                return format_datetime_for_user(obj.user.last_login, request.user)
             return obj.user.last_login.isoformat()
         return None
 
@@ -160,6 +164,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     education = serializers.SerializerMethodField()
     experience = serializers.SerializerMethodField()
     achievements = serializers.SerializerMethodField()
+    user_timezone = serializers.SerializerMethodField()
     
     # Formatted fields
     title = serializers.SerializerMethodField()
@@ -335,16 +340,77 @@ class CandidateSerializer(serializers.ModelSerializer):
         model = Candidate
         fields = [
             "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
-            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "resume_url", "ai_resume_url", "video_intro_url",
+            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "salary_currency",
+            "resume_url", "ai_resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "profile_views", "viewers_count", "profile_views_display",
             "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
-            "resume_data", "education", "experience", "achievements"
+            "resume_data", "education", "experience", "achievements", "user_timezone"
         ]
         read_only_fields = ("user", "created_at", "updated_at")
     
+    def _get_request_user(self):
+        """Get the authenticated user from the request context."""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            return request.user
+        return None
+    
+    def _convert_dt(self, dt):
+        """Convert a datetime to the request user's timezone."""
+        user = self._get_request_user()
+        if user and dt:
+            return format_datetime_for_user(dt, user)
+        return dt.isoformat() if dt else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        user = self._get_request_user()
+        if user:
+            # Convert top-level datetime fields
+            for field_name in ('created_at', 'updated_at'):
+                if data.get(field_name):
+                    raw_dt = getattr(instance, field_name, None)
+                    if raw_dt:
+                        data[field_name] = format_datetime_for_user(raw_dt, user)
+            
+            # Convert education datetime fields
+            if data.get('education'):
+                for edu in data['education']:
+                    for dt_field in ('created_at', 'updated_at'):
+                        if edu.get(dt_field):
+                            edu_obj_dt = edu[dt_field]
+                            if hasattr(edu_obj_dt, 'isoformat'):
+                                edu[dt_field] = format_datetime_for_user(edu_obj_dt, user)
+            
+            # Convert experience datetime fields
+            if data.get('experience'):
+                for exp in data['experience']:
+                    for dt_field in ('created_at', 'updated_at'):
+                        if exp.get(dt_field):
+                            exp_obj_dt = exp[dt_field]
+                            if hasattr(exp_obj_dt, 'isoformat'):
+                                exp[dt_field] = format_datetime_for_user(exp_obj_dt, user)
+            
+            # Convert achievement datetime fields
+            if data.get('achievements'):
+                for ach in data['achievements']:
+                    for dt_field in ('created_at', 'updated_at'):
+                        if ach.get(dt_field):
+                            ach_obj_dt = ach[dt_field]
+                            if hasattr(ach_obj_dt, 'isoformat'):
+                                ach[dt_field] = format_datetime_for_user(ach_obj_dt, user)
+        
+        return data
+    
     def get_passion_projects(self, obj):
         return obj.passion_projects
+    
+    def get_user_timezone(self, obj):
+        """Get timezone from related User model."""
+        if obj.user and hasattr(obj.user, 'user_timezone') and obj.user.user_timezone:
+            return str(obj.user.user_timezone)
+        return 'America/New_York'
     
     def get_reference_responses(self, obj):
         # Get all accepted reference requests with reply messages

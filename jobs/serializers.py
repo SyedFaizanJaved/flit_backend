@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from timezone_field.rest_framework import TimeZoneSerializerField
 from .models import Job, JobSkill, JobLanguage
 
 
@@ -36,14 +37,15 @@ class JobSerializer(serializers.ModelSerializer):
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
     skills = serializers.SerializerMethodField()
+    timezone = TimeZoneSerializerField()
     
     class Meta:
         model = Job
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'workStyle', 'category',
             'experienceLevel', 'employmentType', 'skills', 'salaryRangeMin',
-            'salaryRangeMax', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
-            'status', 'created_at', 'updated_at', 'is_applied'
+            'salaryRangeMax', 'salary_currency', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
+            'status', 'created_at', 'updated_at', 'is_applied', 'timezone'
         )
     
     def get_skills(self, obj):
@@ -106,14 +108,15 @@ class JobListSerializer(serializers.ModelSerializer):
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
     skills = serializers.SerializerMethodField()
+    timezone = TimeZoneSerializerField(read_only=True)
     
     class Meta:
         model = Job
         fields = (
             'id', 'description', 'title', 'company_name', 'company_id', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'status', 'created_at', 'skills', 'is_applied', 'application_details',
-            'application_count', 'hasTemporaryOption', 'temporaryDuration'
+            'salary_currency', 'status', 'created_at', 'skills', 'is_applied', 'application_details',
+            'application_count', 'hasTemporaryOption', 'temporaryDuration', 'timezone'
         )
     
     def get_skills(self, obj):
@@ -209,6 +212,7 @@ class JobCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating jobs
     """
+    timezone = TimeZoneSerializerField(required=False)
     skills = serializers.ListField(
         child=serializers.CharField(), 
         write_only=True, 
@@ -228,7 +232,7 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'title', 'description', 'company', 'workStyle', 'category', 'status',
             'skills', 'required_skills', 'experienceLevel', 'employmentType',
             'hasTemporaryOption','temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
-            'benefits', 'applicationDeadline'
+            'salary_currency', 'benefits', 'applicationDeadline', 'timezone'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -275,13 +279,13 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating jobs
     """
-
+    timezone = TimeZoneSerializerField(required=False)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
 
     class Meta:
         model = Job
         fields = ('title', 'description', 'location', 'workStyle', 'category',
                  'experienceLevel', 'employmentType', 'hasTemporaryOption',
-                 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 
-                 'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name')
+                 'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 'salary_currency',
+                 'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name', 'timezone')
                  
