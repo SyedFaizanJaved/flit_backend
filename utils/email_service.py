@@ -70,6 +70,7 @@ def get_email_styles():
             font-size: 24px;
             margin: 0;
             font-weight: 600;
+            color: #ffffff;
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         }
         .content {
@@ -112,13 +113,14 @@ def get_email_styles():
         }
         .footer {
             background-color: #34495e;
-            color: white;
+            color: #ffffff;
             padding: 25px;
             text-align: center;
             font-size: 14px;
             border-top: 2px solid #e0e6ed;
         }
-        .footer p {
+        .footer p, .footer small, .footer strong {
+            color: #ffffff !important;
             margin: 0;
         }
         @media only screen and (max-width: 600px) {
