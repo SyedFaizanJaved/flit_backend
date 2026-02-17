@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from timezone_field import TimeZoneField
+from utils.currency_choices import CURRENCY_CHOICES
 
 
 class Job(models.Model):
@@ -72,6 +74,7 @@ class Job(models.Model):
     
     # Job Details (matching JobPostingFields)
     location = models.CharField(max_length=200, blank=True, null=True)
+    timezone = TimeZoneField(default='America/New_York', help_text="Timezone for this job posting")
     workStyle = models.CharField(max_length=20, choices=WORK_STYLE_CHOICES, default='remote')
     category = models.CharField(max_length=100, choices=[
         ('business_office', 'Business & Office'),
@@ -99,7 +102,7 @@ class Job(models.Model):
     # Salary Information
     salaryRangeMin = models.PositiveIntegerField(blank=True, null=True)
     salaryRangeMax = models.PositiveIntegerField(blank=True, null=True)
-    salary_currency = models.CharField(max_length=3, default='USD')
+    salary_currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='USD')
     salary_period = models.CharField(max_length=20, choices=SALARY_PERIOD_CHOICES, default='yearly')
     is_salary_negotiable = models.BooleanField(default=True)
     

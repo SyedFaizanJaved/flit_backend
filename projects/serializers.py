@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from timezone_field.rest_framework import TimeZoneSerializerField
 from .models import Project, ProjectSkill, ProjectMilestone
 
 
@@ -34,14 +35,15 @@ class ProjectSerializer(serializers.ModelSerializer):
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    project_timezone = TimeZoneSerializerField()
     
     class Meta:
         model = Project
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
-            'paymentType', 'paymentAmount', 'skills', 'deadline', 'required_skills',
+            'paymentType', 'paymentAmount', 'payment_currency', 'skills', 'deadline', 'required_skills',
             'status', 'work_style', 'created_at', 'updated_at', 'is_applied',
-            'hasTemporaryOption', 'temporaryDuration'
+            'hasTemporaryOption', 'temporaryDuration', 'project_timezone'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
     
@@ -87,13 +89,14 @@ class ProjectListSerializer(serializers.ModelSerializer):
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    project_timezone = TimeZoneSerializerField(read_only=True)
     
     class Meta:
         model = Project
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
-                 'estimatedHours', 'paymentType', 'paymentAmount', 'deadline', 'status', 
+                 'estimatedHours', 'paymentType', 'paymentAmount', 'payment_currency', 'deadline', 'status', 
                  'work_style', 'created_at', 'skills', 'is_applied', 'application_details',
-                 'application_count', 'hasTemporaryOption', 'temporaryDuration')
+                 'application_count', 'hasTemporaryOption', 'temporaryDuration', 'project_timezone')
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model and capitalize first letter
@@ -204,6 +207,7 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating projects
     """
+    project_timezone = TimeZoneSerializerField(required=False)
     skills = serializers.ListField(
         child=serializers.CharField(), 
         write_only=True, 
@@ -221,9 +225,9 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         model = Project
         fields = (
             'title', 'description', 'company', 'category', 'skills', 'required_skills',
-            'paymentType', 'paymentAmount', 'estimatedHours', 'deadline', 'status',
+            'paymentType', 'paymentAmount', 'payment_currency', 'estimatedHours', 'deadline', 'status',
             'work_style', 'collaboration', 'application_deadline', 'max_applicants',
-            'hasTemporaryOption', 'temporaryDuration'
+            'hasTemporaryOption', 'temporaryDuration', 'project_timezone'
         )
         extra_kwargs = {
             'title': {'required': True},
@@ -270,14 +274,16 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating projects
     """
+    project_timezone = TimeZoneSerializerField(required=False)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
 
     class Meta:
         model = Project
         fields = (
             'title', 'description', 'company_name', 'category', 'skills',
-            'paymentType', 'paymentAmount', 'estimatedHours', 
-            'deadline', 'status', 'work_style', 'hasTemporaryOption', 'temporaryDuration'
+            'paymentType', 'paymentAmount', 'payment_currency', 'estimatedHours', 
+            'deadline', 'status', 'work_style', 'hasTemporaryOption', 'temporaryDuration',
+            'project_timezone'
         )
         extra_kwargs = {
             'title': {'required': True},

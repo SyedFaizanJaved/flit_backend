@@ -2,6 +2,7 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator, FileExtensionValidator
+from utils.currency_choices import CURRENCY_CHOICES
 from utils.file_validators import (
     image_upload_path,
     resume_upload_path,
@@ -67,7 +68,7 @@ class Candidate(models.Model):
     # Compensation
     min_salary = models.PositiveIntegerField(blank=True, null=True)
     max_salary = models.PositiveIntegerField(blank=True, null=True)
-    salary_currency = models.CharField(max_length=3, default='USD')
+    salary_currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='USD')
     
     # Portfolio & Media
     portfolio_links = models.JSONField(default=list)  # List of dicts: {name, url}

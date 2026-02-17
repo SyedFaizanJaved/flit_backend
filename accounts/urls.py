@@ -23,6 +23,7 @@ urlpatterns = [
     
     # Dashboard
     path('roles/', views.roles_list, name='roles-list'),
+    path('currencies/', views.currency_list, name='currency-list'),
     
     # Admin
     path('list/', views.UserListView.as_view(), name='user-list'),

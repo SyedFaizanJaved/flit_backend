@@ -17,6 +17,7 @@ Django==5.2.8
 django-cors-headers==4.7.0
 django-filter==25.1
 django-storages==1.14.6
+django-timezone-field==7.2.1
 djangorestframework==3.16.1
 djangorestframework-simplejwt==5.3.1
 google-api-core==2.28.1

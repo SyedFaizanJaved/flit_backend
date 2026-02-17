@@ -3,6 +3,7 @@ from django.db import models
 from django.utils import timezone
 from django.conf import settings
 from django.utils.crypto import get_random_string
+from timezone_field import TimeZoneField
 
 
 class Role(models.Model):
@@ -32,6 +33,7 @@ class User(AbstractUser):
     is_verified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     profile_completed = models.BooleanField(default=False)
+    user_timezone = TimeZoneField(default='America/New_York', db_column='timezone', help_text="User's preferred timezone")
     last_login = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

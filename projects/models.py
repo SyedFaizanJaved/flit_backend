@@ -3,6 +3,8 @@ from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from datetime import timedelta
+from timezone_field import TimeZoneField
+from utils.currency_choices import CURRENCY_CHOICES
 
 
 def get_default_deadline():
@@ -67,6 +69,7 @@ class Project(models.Model):
     description = models.TextField(max_length=2000, default='')
     company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='projects')
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_projects')
+    project_timezone = TimeZoneField(default='America/New_York', help_text="Timezone for this project posting")
     
     # Project Details (matching ProjectFields)
     category = models.CharField(max_length=100, choices=[
@@ -89,6 +92,7 @@ class Project(models.Model):
     skills = models.JSONField(default=list)  # List of required skills
     paymentType = models.CharField(max_length=20, choices=PROJECT_TYPE_CHOICES)
     paymentAmount = models.PositiveIntegerField()
+    payment_currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='USD')
     estimatedHours = models.CharField(max_length=100)  # As text field as per schema
     hasTemporaryOption = models.BooleanField(default=False)
     temporaryDuration = models.CharField(max_length=100, blank=True, null=True)

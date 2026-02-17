@@ -648,3 +648,19 @@ def verify_email(request):
     user.save(update_fields=['is_verified'])
 
     return Response({'message': 'Email verified successfully.'}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def currency_list(request):
+    """Return the list of supported currencies with code, label, and symbol."""
+    from utils.currency_choices import CURRENCY_CHOICES, CURRENCY_SYMBOLS
+    currencies = [
+        {
+            'value': code,
+            'label': label,
+            'symbol': CURRENCY_SYMBOLS.get(code, code),
+        }
+        for code, label in CURRENCY_CHOICES
+    ]
+    return Response(currencies, status=status.HTTP_200_OK)
