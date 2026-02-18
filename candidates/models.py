@@ -104,7 +104,7 @@ class Candidate(models.Model):
     # Ml Endpoints
     candidate_tags = models.JSONField(default=list,blank=True, null=True)  # List of tags for categorization
     candidate_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate profile
-    search_query = models.TextField(blank=True, null=True)
+    search_query = models.JSONField(default=list, blank=True, null=True)
     resume_data = models.JSONField(blank=True, null=True,default=dict)  # Store parsed resume data from ML API
     professional_title = models.CharField(max_length=255, blank=True, null=True)
 

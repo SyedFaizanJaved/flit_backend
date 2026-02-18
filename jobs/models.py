@@ -141,7 +141,7 @@ class Job(models.Model):
     # Ml Endpoints
     job_tags = models.JSONField(default=list, blank=True, null=True)  # List of tags for categorization
     job_profile_summary = models.TextField(blank=True, null=True)  # AI-generated summary of candidate prjob
-    search_query=models.TextField(blank=True,null=True)
+    search_query = models.JSONField(default=list, blank=True, null=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
