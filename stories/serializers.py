@@ -146,7 +146,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = [
-            'project_id', 'id', 'title', 'description', 'category', 'paymentType', 'paymentAmount',
+            'project_id', 'id', 'title', 'description', 'category', 'paymentType', 'paymentAmount', 'payment_currency',
             'estimatedHours', 'deadline', 'status', 'company', 'created_at',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'skills',
             'hasTemporaryOption', 'temporaryDuration'
@@ -176,7 +176,7 @@ class JobSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
         fields = [
-            'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax',
+            'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax', 'salary_currency',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline',
             'workStyle', 'category', 'experienceLevel', 'hasTemporaryOption', 'temporaryDuration'
         ]
