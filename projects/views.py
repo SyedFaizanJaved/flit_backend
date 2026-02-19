@@ -13,6 +13,7 @@ from rest_framework.viewsets import GenericViewSet
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
 from utils.email_service import send_shortlist_notification, send_rejection_notification
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer, ProjectUpdateSerializer,
@@ -26,12 +27,11 @@ class PublicAuthentication(BaseAuthentication):
     def authenticate(self, request):
         return None
 
-@authentication_classes([PublicAuthentication])
 class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectListSerializer
-    permission_classes = [permissions.AllowAny]
-    authentication_classes = [PublicAuthentication]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'paymentType', 'company']
     search_fields = ['title']

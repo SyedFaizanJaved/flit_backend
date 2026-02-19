@@ -16,6 +16,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
 from utils.email_service import send_shortlist_notification, send_rejection_notification
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Job, JobSkill, JobLanguage
 from .serializers import (
     JobSerializer, JobListSerializer, JobCreateSerializer, JobUpdateSerializer,
@@ -31,12 +32,12 @@ class PublicAuthentication(BaseAuthentication):
         return None
 
 
-@authentication_classes([PublicAuthentication])
-@permission_classes([permissions.AllowAny])
+@permission_classes([permissions.IsAuthenticatedOrReadOnly])
 class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
     """
     Public endpoints: List and retrieve active jobs (no auth required)
     """
+    authentication_classes = [JWTAuthentication]
     queryset = Job.objects.filter(status='active').select_related('company')
     serializer_class = JobListSerializer
     pagination_class = CustomPagination
