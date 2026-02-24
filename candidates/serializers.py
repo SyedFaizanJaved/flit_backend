@@ -89,8 +89,8 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         return []
 
     def get_availability(self, obj):
-        # Return only the availability type
-        return getattr(obj, 'availability_type', None)
+        # Return only the availability type display (capitalized)
+        return obj.get_availability_type_display() if hasattr(obj, 'get_availability_type_display') else getattr(obj, 'availability_type', None)
 
     def get_lastSeen(self, obj):
         # Return last login time if user exists and has last_login
@@ -208,7 +208,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             data.append({
                 'id': edu.id,
                 'institution': edu.institution,
-                'degree': edu.degree,
+                'degree': edu.get_degree_display(),
                 'field_of_study': edu.field_of_study,
                 'start_date': edu.start_date,
                 'end_date': edu.end_date,
@@ -232,7 +232,7 @@ class CandidateSerializer(serializers.ModelSerializer):
                 'id': exp.id,
                 'company_name': exp.company_name,
                 'position': exp.position,
-                'employment_type': exp.employment_type,
+                'employment_type': exp.get_employment_type_display(),
                 'start_date': exp.start_date,
                 'end_date': exp.end_date,
                 'is_current': exp.is_current,
