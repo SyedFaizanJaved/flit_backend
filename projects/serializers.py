@@ -35,6 +35,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    education_level = serializers.CharField(source='get_education_level_display', read_only=True)
     project_timezone = TimeZoneSerializerField()
     
     class Meta:
@@ -42,7 +43,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'payment_currency', 'skills', 'deadline', 'required_skills',
-            'status', 'work_style', 'created_at', 'updated_at', 'is_applied',
+            'status', 'work_style', 'education_level', 'created_at', 'updated_at', 'is_applied',
             'hasTemporaryOption', 'temporaryDuration', 'project_timezone'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
@@ -88,14 +89,14 @@ class ProjectListSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source='get_category_display', read_only=True)
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
-    status = serializers.CharField(source='get_status_display', read_only=True)
     project_timezone = TimeZoneSerializerField(read_only=True)
+    education_level = serializers.CharField(source='get_education_level_display', read_only=True)
     
     class Meta:
         model = Project
         fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'payment_currency', 'deadline', 'status', 
-                 'work_style', 'created_at', 'skills', 'is_applied', 'application_details',
+                 'work_style', 'education_level', 'created_at', 'skills', 'is_applied', 'application_details',
                  'application_count', 'hasTemporaryOption', 'temporaryDuration', 'project_timezone')
     
     def get_skills(self, obj):
