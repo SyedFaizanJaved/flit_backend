@@ -415,3 +415,175 @@ def google_callback(request):
     except Exception as e:
         logger.exception("Exception in google_callback")
         return HttpResponse("failed to connect google", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# -----------------------------------------------
+#  OFFER VIEWS (Hire / Reject Functionality)
+# -----------------------------------------------
+from .models import Offer
+from .serializers import OfferSerializer, RejectCandidateSerializer
+
+
+class OfferCreateView(generics.CreateAPIView):
+    """
+    POST /api/vr-meet/offers/
+    Create an offer and automatically hire the candidate.
+    Status is set to 'hired' upon creation — no separate update needed.
+    Only the employer who hosted the meeting can create an offer.
+    """
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        # Enforce employer role
+        if not hasattr(user, 'role') or user.role.name != settings.USER_ROLE_EMPLOYER:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only employers can create offers.")
+
+        meeting = serializer.validated_data['meeting']
+        logger.info(
+            f"Employer {user.email} hiring candidate for meeting #{meeting.id}"
+        )
+        # Auto-set status to 'hired' when creating an offer
+        serializer.save(employer=user, status='hired')
+
+
+class OfferListView(generics.ListAPIView):
+    """
+    GET /api/vr-meet/offers/list/
+    List offers for the authenticated user.
+    - Employers see offers they sent.
+    - Candidates see offers they received.
+    """
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        role_name = getattr(getattr(user, 'role', None), 'name', None)
+
+        if role_name == settings.USER_ROLE_EMPLOYER:
+            return Offer.objects.filter(employer=user).select_related(
+                'meeting', 'candidate', 'employer'
+            )
+        else:
+            # Candidates or any other role see received offers
+            return Offer.objects.filter(candidate=user).select_related(
+                'meeting', 'candidate', 'employer'
+            )
+
+
+class OfferDetailView(generics.RetrieveUpdateAPIView):
+    """
+    GET  /api/vr-meet/offers/<id>/ — Retrieve offer detail
+    PATCH /api/vr-meet/offers/<id>/ — Update offer fields (title, salary, etc.)
+    Only the employer who created the offer can update it.
+    """
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'patch']  # No PUT, only PATCH
+
+    def get_queryset(self):
+        user = self.request.user
+        return Offer.objects.filter(
+            Q(employer=user) | Q(candidate=user)
+        ).select_related('meeting', 'candidate', 'employer')
+
+    def perform_update(self, serializer):
+        """Only the employer who created the offer can update it."""
+        offer = serializer.instance
+        if offer.employer != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the employer who created this offer can update it.")
+        logger.info(
+            f"Employer {self.request.user.email} updating offer #{offer.id}"
+        )
+        serializer.save()
+
+
+class RejectCandidateView(APIView):
+    """
+    POST /api/vr-meet/offers/reject/
+    Reject a candidate by meeting_id.
+    If an offer already exists for this meeting, update its status to 'rejected'.
+    If no offer exists, create one with status='rejected'.
+    Only the employer who hosted the meeting can reject.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = RejectCandidateSerializer(
+            data=request.data, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        meeting_id = serializer.validated_data['meeting_id']
+        user = request.user
+
+        # Enforce employer role
+        if not hasattr(user, 'role') or user.role.name != settings.USER_ROLE_EMPLOYER:
+            return Response(
+                {"detail": "Only employers can reject candidates."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get the meeting
+        try:
+            meeting = MeetingRoom.objects.get(pk=meeting_id, is_deleted=False)
+        except MeetingRoom.DoesNotExist:
+            return Response(
+                {"detail": "Meeting not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Only the meeting's employer can reject
+        if meeting.employer != user:
+            return Response(
+                {"detail": "Only the employer who hosted this meeting can reject."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Candidate must exist on the meeting
+        if not meeting.candidate:
+            return Response(
+                {"detail": "No candidate linked to this meeting."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if an offer already exists for this meeting
+        offer = Offer.objects.filter(
+            meeting=meeting, candidate=meeting.candidate
+        ).first()
+
+        if offer:
+            if offer.status == 'rejected':
+                return Response(
+                    {"detail": "Candidate is already rejected for this meeting."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Update existing offer to rejected
+            offer.status = 'rejected'
+            offer.save(update_fields=['status', 'updated_at'])
+            logger.info(
+                f"Employer {user.email} rejected candidate "
+                f"{meeting.candidate.email} for meeting #{meeting.id} "
+                f"(updated existing offer #{offer.id})"
+            )
+        else:
+            # Create a new offer with rejected status
+            offer = Offer.objects.create(
+                meeting=meeting,
+                candidate=meeting.candidate,
+                employer=user,
+                title=f"Rejected — {meeting.meeting_title}",
+                status='rejected',
+            )
+            logger.info(
+                f"Employer {user.email} rejected candidate "
+                f"{meeting.candidate.email} for meeting #{meeting.id} "
+                f"(created offer #{offer.id})"
+            )
+
+        # Return the offer data
+        response_serializer = OfferSerializer(offer, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
