@@ -429,6 +429,7 @@ class OfferCreateView(generics.CreateAPIView):
     Create an offer and automatically hire the candidate.
     Status is set to 'hired' upon creation — no separate update needed.
     Only the employer who hosted the meeting can create an offer.
+    Generates a PDF offer letter and emails it to the candidate.
     """
     serializer_class = OfferSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -446,6 +447,130 @@ class OfferCreateView(generics.CreateAPIView):
         )
         # Auto-set status to 'hired' when creating an offer
         serializer.save(employer=user, status='hired')
+
+        # Generate offer letter PDF and send email to candidate
+        offer = serializer.instance
+        _send_offer_letter_for_hire(offer, user)
+
+
+def _send_offer_letter_for_hire(offer, employer_user):
+    """
+    Generate a PDF offer letter and email it to the hired candidate.
+    Called after an offer with status='hired' is created.
+    Failures are logged but do not prevent the hire from succeeding.
+    """
+    try:
+        from utils.offer_letter_pdf import generate_offer_letter_pdf
+        from utils.email_service import send_offer_letter_email
+
+        meeting = offer.meeting
+        candidate_user = offer.candidate
+
+        # ── Get candidate profile ──────────────────────────
+        candidate_profile = None
+        candidate_name = candidate_user.get_full_name() or candidate_user.email
+        try:
+            candidate_profile = candidate_user.candidate_profile
+            candidate_name = candidate_profile.full_name or candidate_name
+        except Exception:
+            pass
+
+        # ── Get employer profile & company ─────────────────
+        employer_name = employer_user.get_full_name() or employer_user.email
+        employer_position = 'Hiring Manager'
+        company_name = 'The Company'
+        company_location = ''
+
+        try:
+            employer_profile = employer_user.employer_profile
+            employer_name = employer_profile.full_name or employer_name
+            employer_position = employer_profile.position or 'Hiring Manager'
+
+            if employer_profile.company:
+                company_name = employer_profile.company.company_name
+                company_location = employer_profile.company.location or ''
+        except Exception:
+            pass
+
+        # ── Determine compensation display ─────────────────
+        if offer.is_hourly:
+            salary_amount = int(offer.hourly_rate or 0)
+            salary_label = f"USD {salary_amount:,}/hr"
+        else:
+            salary_amount = int(offer.salary or 0)
+            salary_label = f"USD {salary_amount:,}"
+
+        # ── Determine position title from meeting's job/project
+        position_title = offer.title
+        employment_type = 'full-time'
+
+        if meeting.job:
+            position_title = position_title or meeting.job.title
+        elif meeting.project:
+            position_title = position_title or meeting.project.title
+            employment_type = 'contract'
+
+        location = company_location or 'To be determined'
+        start_date = offer.date_of_joining or ''
+        offer_terms = offer.description or ''
+
+        # ── Generate PDF ───────────────────────────────────
+        pdf_bytes = generate_offer_letter_pdf({
+            'candidate_name': candidate_name,
+            'position_title': position_title,
+            'company_name': company_name,
+            'company_location': company_location,
+            'employer_name': employer_name,
+            'employer_position': employer_position,
+            'offer_salary': salary_amount,
+            'salary_currency': 'USD',
+            'start_date': start_date,
+            'employment_type': employment_type,
+            'location': location,
+            'offer_terms': offer_terms,
+            'is_hourly': offer.is_hourly,
+            'employer_email': employer_user.email,
+        })
+
+        # ── Send email with PDF ────────────────────────────
+        # We need a candidate-like object with .full_name and .user.email
+        class CandidateProxy:
+            """Proxy object to match email_service expected interface."""
+            def __init__(self, name, user):
+                self.full_name = name
+                self.user = user
+
+        candidate_proxy = CandidateProxy(candidate_name, candidate_user)
+
+        email_sent = send_offer_letter_email(
+            candidate=candidate_proxy,
+            company_name=company_name,
+            position_title=position_title,
+            offer_salary=salary_amount,
+            salary_currency='USD',
+            start_date=start_date,
+            employment_type=employment_type,
+            location=location,
+            offer_terms=offer_terms,
+            pdf_bytes=pdf_bytes,
+        )
+
+        if email_sent:
+            logger.info(
+                f"Offer letter email sent to {candidate_user.email} "
+                f"for offer #{offer.id} ({position_title})"
+            )
+        else:
+            logger.warning(
+                f"Offer letter email FAILED for {candidate_user.email} "
+                f"for offer #{offer.id}"
+            )
+
+    except Exception as e:
+        logger.error(
+            f"Error in _send_offer_letter_for_hire for offer #{offer.id}: {str(e)}",
+            exc_info=True
+        )
 
 
 class OfferListView(generics.ListAPIView):
