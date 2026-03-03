@@ -140,6 +140,8 @@ class Offer(models.Model):
         ('pending', 'Pending'),
         ('hired', 'Hired'),
         ('rejected', 'Rejected'),
+        ('accepted', 'Accepted'),
+        ('declined', 'Declined'),
     ]
 
     meeting = models.ForeignKey(
