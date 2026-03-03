@@ -715,3 +715,237 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
 """
     
     return send_email(user_email, subject, text_content, html_content)
+
+
+def send_offer_letter_email(candidate, company_name, position_title, offer_salary,
+                            salary_currency, start_date, employment_type,
+                            location, offer_terms, pdf_bytes):
+    """
+    Send offer letter email with PDF attachment to the hired candidate.
+
+    Args:
+        candidate: Candidate model instance
+        company_name: Name of the hiring company
+        position_title: The offered position title
+        offer_salary: Salary amount (int)
+        salary_currency: Currency code (str)
+        start_date: Start date (str)
+        employment_type: Type of employment (str)
+        location: Work location (str)
+        offer_terms: Additional offer terms (str, optional)
+        pdf_bytes: Generated PDF file content (bytes)
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    candidate_name = candidate.full_name
+    candidate_email = candidate.user.email
+    logo_url = get_logo_url()
+    styles = get_email_styles()
+    base_url = get_base_url()
+
+    formatted_salary = f"{salary_currency} {offer_salary:,}"
+    emp_type_display = employment_type.replace('-', ' ').title()
+
+    # Format start_date for display
+    if hasattr(start_date, 'strftime'):
+        start_date_display = start_date.strftime('%B %d, %Y')
+    else:
+        start_date_display = str(start_date)
+
+    subject = f"🎉 Congratulations! Offer Letter from {company_name} — {position_title}"
+
+    # Plain text version
+    text_content = f"""
+Hello {candidate_name},
+
+Congratulations! We are thrilled to inform you that you have been selected for the position of {position_title} at {company_name}.
+
+Offer Details:
+- Position: {position_title}
+- Employment Type: {emp_type_display}
+- Compensation: {formatted_salary}
+- Start Date: {start_date_display}
+- Location: {location or 'To be determined'}
+
+{f'Additional Terms: {offer_terms}' if offer_terms else ''}
+
+Please find your official offer letter attached as a PDF document.
+
+We are excited about the possibility of you joining our team and look forward to working with you!
+
+Best regards,
+The {company_name} Team
+(Powered by {getattr(settings, 'SITE_NAME', 'Flit')})
+"""
+
+    # HTML version
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offer Letter - {company_name}</title>
+    <style>
+        {styles}
+        .offer-box {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 25px;
+            border-radius: 8px;
+            margin: 20px 0;
+            color: white;
+            text-align: center;
+        }}
+        .offer-box h2 {{
+            margin: 0 0 10px 0;
+            color: white;
+            font-size: 24px;
+        }}
+        .offer-box p {{
+            margin: 0;
+            font-size: 16px;
+            color: rgba(255,255,255,0.9);
+        }}
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }}
+        .detail-table td {{
+            padding: 12px 15px;
+            border-bottom: 1px solid #ecf0f1;
+            font-size: 14px;
+        }}
+        .detail-table td:first-child {{
+            color: #7f8c8d;
+            font-weight: bold;
+            width: 40%;
+        }}
+        .detail-table td:last-child {{
+            color: #2c3e50;
+            font-weight: 600;
+        }}
+        .detail-table tr:last-child td {{
+            border-bottom: 2px solid #667eea;
+        }}
+        .attachment-notice {{
+            background-color: #e8f8f5;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #1abc9c;
+        }}
+        .cta-box {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+            border: 1px solid #e0e6ed;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+                <span class="logo-text">FLIT</span>
+            </div>
+            <h1 class="header-title">Offer Letter</h1>
+        </div>
+
+        <div class="content">
+            <p class="greeting">Hello {candidate_name},</p>
+
+            <div class="offer-box">
+                <h2>🎉 Congratulations!</h2>
+                <p>You've been offered a position!</p>
+            </div>
+
+            <p>We are thrilled to inform you that you have been selected for the following position at <strong>{company_name}</strong>:</p>
+
+            <table class="detail-table">
+                <tr>
+                    <td>📋 Position</td>
+                    <td>{position_title}</td>
+                </tr>
+                <tr>
+                    <td>💼 Employment Type</td>
+                    <td>{emp_type_display}</td>
+                </tr>
+                <tr>
+                    <td>💰 Compensation</td>
+                    <td>{formatted_salary}</td>
+                </tr>
+                <tr>
+                    <td>📅 Start Date</td>
+                    <td>{start_date_display}</td>
+                </tr>
+                <tr>
+                    <td>📍 Location</td>
+                    <td>{location or 'To be determined'}</td>
+                </tr>
+            </table>
+
+            {f'<div class="info-box"><h3>📝 Additional Terms</h3><p>{offer_terms}</p></div>' if offer_terms else ''}
+
+            <div class="attachment-notice">
+                <p><strong>📎 Attachment:</strong> Your official offer letter is attached to this email as a PDF document. Please review it carefully.</p>
+            </div>
+
+            <div class="cta-box">
+                <p><strong>Next Steps</strong></p>
+                <p>Please review the attached offer letter and respond at your earliest convenience. If you have any questions, feel free to reach out to us.</p>
+            </div>
+
+            <p>We are excited about the possibility of you joining the <strong>{company_name}</strong> team and look forward to working with you!</p>
+        </div>
+
+        <div class="footer">
+            <p>Best regards,<br>
+            The <strong>{company_name}</strong> Team<br>
+            <small>Powered by Flit — Empowering careers, one opportunity at a time.</small></p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+    try:
+        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@flit.com')
+
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=text_content.strip(),
+            from_email=from_email,
+            to=[candidate_email]
+        )
+
+        # Attach the HTML version
+        msg.attach_alternative(html_content, "text/html")
+
+        # Attach the PDF offer letter
+        if pdf_bytes:
+            safe_filename = f"Offer_Letter_{position_title.replace(' ', '_')}_{company_name.replace(' ', '_')}.pdf"
+            msg.attach(safe_filename, pdf_bytes, 'application/pdf')
+            logger.info(
+                f"PDF attachment added: {safe_filename} ({len(pdf_bytes)} bytes)"
+            )
+        else:
+            logger.warning("No PDF bytes provided — email sent without attachment")
+
+        # Send the email
+        msg.send()
+
+        logger.info(
+            f"Offer letter email sent to {candidate_email} "
+            f"for position: {position_title} at {company_name}"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"Error sending offer letter email to {candidate_email}: {str(e)}")
+        return False
+
