@@ -712,3 +712,107 @@ class RejectCandidateView(APIView):
         # Return the offer data
         response_serializer = OfferSerializer(offer, context={'request': request})
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+# -----------------------------------------------
+#  CANDIDATE OFFER VIEWS (List + Accept/Decline)
+# -----------------------------------------------
+
+class CandidateOfferListView(generics.ListAPIView):
+    """
+    GET /api/vr-meet/offers/received/
+    List all offer letters received by the candidate.
+    Shows hired, accepted, and declined offers.
+    """
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Offer.objects.filter(
+            candidate=self.request.user,
+            status__in=['hired', 'accepted', 'declined']
+        ).select_related('meeting', 'candidate', 'employer')
+
+
+class CandidateOfferRespondView(APIView):
+    """
+    POST /api/vr-meet/offers/<id>/respond/
+    Candidate accepts or declines an offer.
+    Body: {"action": "accept"} or {"action": "decline"}
+    Sends email notification to the employer.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        # Validate action
+        action = request.data.get('action', '').lower()
+        if action not in ('accept', 'decline'):
+            return Response(
+                {'detail': 'Invalid action. Must be "accept" or "decline".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get the offer
+        try:
+            offer = Offer.objects.select_related(
+                'meeting', 'candidate', 'employer'
+            ).get(pk=pk, candidate=request.user)
+        except Offer.DoesNotExist:
+            return Response(
+                {'detail': 'Offer not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Only hired offers can be responded to
+        if offer.status != 'hired':
+            return Response(
+                {'detail': f'Cannot respond to an offer with status "{offer.status}". '
+                           f'Only offers with status "hired" can be accepted or declined.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Update status
+        new_status = 'accepted' if action == 'accept' else 'declined'
+        offer.status = new_status
+        offer.save(update_fields=['status', 'updated_at'])
+
+        # Get names for email
+        candidate_name = request.user.get_full_name() or request.user.email
+        try:
+            candidate_name = request.user.candidate_profile.full_name or candidate_name
+        except Exception:
+            pass
+
+        position_title = offer.title
+        company_name = 'The Company'
+        try:
+            employer_profile = offer.employer.employer_profile
+            if employer_profile.company:
+                company_name = employer_profile.company.company_name
+        except Exception:
+            pass
+
+        # Send email notification to employer
+        try:
+            from utils.email_service import send_offer_response_email
+            send_offer_response_email(
+                employer_user=offer.employer,
+                candidate_name=candidate_name,
+                position_title=position_title,
+                company_name=company_name,
+                action=action,
+            )
+        except Exception as e:
+            logger.error(f'Failed to send offer response email: {str(e)}')
+
+        logger.info(
+            f'Candidate {request.user.email} {new_status} offer #{offer.id} '
+            f'({position_title})'
+        )
+
+        response_serializer = OfferSerializer(offer, context={'request': request})
+        return Response({
+            'status': 'success',
+            'message': f'Offer {new_status} successfully.',
+            'offer': response_serializer.data,
+        }, status=status.HTTP_200_OK)

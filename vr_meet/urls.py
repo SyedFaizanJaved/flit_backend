@@ -4,6 +4,7 @@ from .views import (
     MeetingRoomDeleteView, connect_google, google_callback,
     CandidateMeetingsView, check_google_connection,
     OfferCreateView, OfferListView, OfferDetailView, RejectCandidateView,
+    CandidateOfferListView, CandidateOfferRespondView,
 )
 
 urlpatterns = [
@@ -22,6 +23,8 @@ urlpatterns = [
     path("offers/list/", OfferListView.as_view(), name="offer-list"),
     path("offers/<int:pk>/", OfferDetailView.as_view(), name="offer-detail"),
     path("offers/reject/", RejectCandidateView.as_view(), name="offer-reject"),
+    path("offers/received/", CandidateOfferListView.as_view(), name="candidate-offer-list"),
+    path("offers/<int:pk>/respond/", CandidateOfferRespondView.as_view(), name="candidate-offer-respond"),
 ]
 
 

@@ -949,3 +949,152 @@ The {company_name} Team
         logger.error(f"Error sending offer letter email to {candidate_email}: {str(e)}")
         return False
 
+
+def send_offer_response_email(employer_user, candidate_name, position_title,
+                              company_name, action):
+    """
+    Send email to employer when a candidate accepts or declines their offer.
+
+    Args:
+        employer_user: The employer User instance
+        candidate_name: Name of the candidate
+        position_title: The position/offer title
+        company_name: Company name
+        action: 'accept' or 'decline'
+
+    Returns:
+        bool: True if email sent successfully
+    """
+    employer_email = employer_user.email
+    employer_name = employer_user.get_full_name() or employer_user.email
+    styles = get_email_styles()
+    logo_url = get_logo_url()
+
+    is_accepted = action == 'accept'
+
+    if is_accepted:
+        subject = f"🎉 Great News! {candidate_name} has accepted your offer — {position_title}"
+        emoji = "🎉"
+        heading = "Offer Accepted!"
+        banner_color = "linear-gradient(135deg, #00b894 0%, #00cec9 100%)"
+        status_text = "accepted"
+        message_body = (
+            f"<b>{candidate_name}</b> has <b style='color: #00b894;'>accepted</b> "
+            f"your offer for the position of <b>{position_title}</b> at <b>{company_name}</b>."
+        )
+        next_steps = (
+            "You can now proceed with the onboarding process. "
+            "Please coordinate with the candidate to finalize the joining details."
+        )
+    else:
+        subject = f"{candidate_name} has declined your offer — {position_title}"
+        emoji = "📋"
+        heading = "Offer Declined"
+        banner_color = "linear-gradient(135deg, #636e72 0%, #b2bec3 100%)"
+        status_text = "declined"
+        message_body = (
+            f"<b>{candidate_name}</b> has <b style='color: #d63031;'>declined</b> "
+            f"your offer for the position of <b>{position_title}</b> at <b>{company_name}</b>."
+        )
+        next_steps = (
+            "You may want to reach out to the candidate for feedback, "
+            "or consider other candidates for this position."
+        )
+
+    text_content = f"""
+Hello {employer_name},
+
+{candidate_name} has {status_text} your offer for the position of {position_title} at {company_name}.
+
+{'You can now proceed with the onboarding process.' if is_accepted else 'You may want to consider other candidates for this position.'}
+
+Best regards,
+Flit Platform
+"""
+
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        {styles}
+        .status-banner {{
+            background: {banner_color};
+            padding: 25px;
+            border-radius: 8px;
+            margin: 20px 0;
+            color: white;
+            text-align: center;
+        }}
+        .status-banner h2 {{
+            margin: 0 0 8px 0;
+            color: white;
+            font-size: 22px;
+        }}
+        .status-banner p {{
+            margin: 0;
+            font-size: 15px;
+            color: rgba(255,255,255,0.9);
+        }}
+        .detail-card {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #e0e6ed;
+        }}
+        .next-steps {{
+            background-color: #e8f8f5;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #00b894;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+                <span class="logo-text">FLIT</span>
+            </div>
+            <h1 class="header-title">Offer Response</h1>
+        </div>
+
+        <div class="content">
+            <p class="greeting">Hello {employer_name},</p>
+
+            <div class="status-banner">
+                <h2>{emoji} {heading}</h2>
+                <p>{candidate_name} has responded to your offer</p>
+            </div>
+
+            <p>{message_body}</p>
+
+            <div class="detail-card">
+                <p><strong>Position:</strong> {position_title}</p>
+                <p><strong>Candidate:</strong> {candidate_name}</p>
+                <p><strong>Status:</strong> {status_text.capitalize()}</p>
+            </div>
+
+            <div class="next-steps">
+                <p><strong>Next Steps:</strong> {next_steps}</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Best regards,<br>
+            <strong>Flit Platform</strong><br>
+            <small>Empowering careers, one opportunity at a time.</small></p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+    return send_email(employer_email, subject, text_content, html_content)
+
+
