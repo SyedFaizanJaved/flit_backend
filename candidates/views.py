@@ -31,6 +31,8 @@ from projects.serializers import ProjectListSerializer
 from jobs.models import Job
 from jobs.serializers import JobListSerializer
 from applications.models import JobApplication as Application, ProjectApplication
+from django.db.models import Q, Value, IntegerField, Case, When, F
+
 from accounts.views import BaseRoleRegistrationView
 
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
@@ -1230,246 +1232,246 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
 
 class DiscoverTalentView(generics.ListAPIView):
+    """
+    Discover Talent — employer-facing search for public candidate profiles.
+    Supports search by name, job title, or both with sophisticated relevance scoring.
+    
+    Query params:
+        search       – free-text search term
+        search_type  – 'name' | 'title' | 'both' (default: 'both')
+        skills       – repeatable list; filters candidates whose skills overlap
+    """
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPagination
     serializer_class = DiscoverTalentSerializer
-    def get_queryset(self):
-        qs = Candidate.objects.select_related('user').filter(
+
+    # ── helpers ───────────────────────────────────────────────────────
+    def _base_qs(self):
+        """Base queryset: active, public, completed-profile candidates."""
+        return Candidate.objects.select_related('user').filter(
             user__is_active=True,
-            profile_visibility="public",
-            basic_info_completed=True,  
+            profile_visibility='public',
+            basic_info_completed=True,
         )
 
+    @staticmethod
+    def _build_field_query(field, phrase, words):
+        """
+        Build a Q filter for a single field:
+          • full phrase icontains  OR
+          • all individual words icontains (AND-ed together)
+        Works for any query length — no word-boundary regex so short
+        prefixes like 'Awa' correctly match 'Awais'.
+        """
+        q = Q(**{f'{field}__icontains': phrase})
+        if len(words) > 1:
+            word_q = Q()
+            for w in words:
+                word_q &= Q(**{f'{field}__icontains': w})
+            q |= word_q
+        return q
+
+    # ── main queryset ─────────────────────────────────────────────────
+    def get_queryset(self):
+        qs = self._base_qs()
+
         q = self.request.query_params.get('search', '').strip().lower()
-        search_type = self.request.query_params.get('search_type', 'both').lower()  
+        search_type = self.request.query_params.get('search_type', 'both').lower()
 
         if q:
-            words = [word.strip() for word in q.split() if word.strip()]
+            words = [w.strip() for w in q.split() if w.strip()]
             if not words:
                 return qs
 
-            # Initialize queries
-            name_query = Q()
-            title_query = Q()
-            
-            # Build name query if searching by name or both
-            if search_type in ['name', 'both']:
-                # Search strictly in full_name (Candidate model) as that's what's visible on cards
-                # For short names (<= 3 chars), strictly match word boundaries to avoid false positives (e.g., "Al" matching "Khalid")
-                if len(q) <= 3:
-                    safe_q = re.escape(q)
-                    name_query = Q(full_name__iregex=fr'\y{safe_q}')
-                else:
-                    name_query = Q(full_name__icontains=q)
-                
-                # For multiple words, also try matching them individually in the full_name
+            # ── 1. FILTERING — narrow down candidates ─────────────
+            name_q = Q()
+            title_q = Q()
+
+            if search_type in ('name', 'both'):
+                # Phase 1: prefix match — first/last name STARTS with query (most precise)
+                name_prefix_q = (
+                    Q(user__first_name__istartswith=q)
+                    | Q(user__last_name__istartswith=q)
+                )
+                # For multi-word, also try: first word starts first_name AND second starts last_name
                 if len(words) > 1:
-                    word_name_query = Q()
-                    for word in words:
-                        if len(word) <= 3:
-                            safe_word = re.escape(word)
-                            word_name_query &= Q(full_name__iregex=fr'\y{safe_word}')
-                        else:
-                            word_name_query &= Q(full_name__icontains=word)
-                    name_query |= word_name_query
-            
-            # Build title query if searching by title or both
-            if search_type in ['title', 'both']:
-                # For short titles (<= 3 chars), strictly match word boundaries to avoid false positives (e.g., "AI" matching "Blockchain")
-                if len(q) <= 3:
-                    safe_q = re.escape(q)
-                    title_query = Q(title__iregex=fr'\y{safe_q}')
-                else:
-                    title_query = Q(title__icontains=q)
-                
-                # For multi-word queries, also try matching each word
-                if len(words) > 1:
-                    word_query = Q()
-                    for word in words:
-                        if len(word) <= 3:
-                            safe_word = re.escape(word)
-                            word_query &= Q(title__iregex=fr'\y{safe_word}')
-                        else:
-                            word_query &= Q(title__icontains=word)
-                    title_query |= word_query
-            
-            # Combine queries based on search type
-            if search_type == 'name':
-                qs = qs.filter(name_query)
-            elif search_type == 'title':
-                qs = qs.filter(title_query)
-            else:  # both
-                qs = qs.filter(name_query | title_query)
-            
-            # If no results and searching both, try partial matches on name from the base queryset
-            if not qs.exists() and search_type in ['both', 'name']:
-                # Re-fetch the base queryset to avoid previous filters
-                base_qs = Candidate.objects.select_related('user').filter(
-                    user__is_active=True,
-                    profile_visibility="public",
-                    basic_info_completed=True,  
-                )
-                partial_name_query = Q()
-                for word in words:
-                    if len(word) <= 3:
-                        safe_word = re.escape(word)
-                        partial_name_query |= Q(full_name__iregex=fr'\y{safe_word}')
-                    else:
-                        partial_name_query |= Q(full_name__icontains=word)
-                qs = base_qs.filter(partial_name_query)
-            
-            # Create a base score of 0
-            qs = qs.annotate(relevance=Value(0, output_field=IntegerField()))
-            
-            # Exact title match (highest priority)
-            exact_title_query = Q(title__iexact=q)
-            qs = qs.annotate(
-                title_exact_match=Case(
-                    When(exact_title_query, then=Value(1000)),  # Very high score for exact title match
-                    default=Value(0),
-                    output_field=IntegerField()
-                )
-            )
-            
-            # Full name exact or contains match (high priority)
-            full_name_val = ' '.join(words).strip()
-            qs = qs.annotate(
-                full_name_match=Case(
-                    When(
-                        Q(full_name__iexact=full_name_val) |
-                        Q(user__first_name__iexact=full_name_val) | 
-                        Q(user__last_name__iexact=full_name_val),
-                        then=Value(800)
-                    ),
-                    When(
-                        Q(full_name__icontains=full_name_val),
-                        then=Value(400)
-                    ),
-                    default=Value(0),
-                    output_field=IntegerField()
-                )
-            )
-            
-            # Title contains all search words (medium-high priority)
-            title_contains_all = Q()
-            for word in words:
-                title_contains_all &= Q(title__icontains=word)
-            
-            qs = qs.annotate(
-                title_contains_all=Case(
-                    When(title_contains_all, then=Value(500)),
-                    default=Value(0),
-                    output_field=IntegerField()
-                )
-            )
-            
-            # Add individual word matches with different weights
-            for i, word in enumerate(words):
-                # Higher weight for first word matches
-                weight = 3 if i == 0 else 2
-                
-                # Title matches
-                qs = qs.annotate(**{
-                    f'title_exact_{i}': Case(
-                        When(title__iexact=word, then=Value(weight * 4)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'title_start_{i}': Case(
-                        When(title__istartswith=word, then=Value(weight * 3)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'title_contains_{i}': Case(
-                        When(title__icontains=word, then=Value(weight * 2)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    # Name matches (Full Name)
-                    f'full_name_exact_{i}': Case(
-                        When(full_name__iexact=word, then=Value(weight * 4)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'full_name_start_{i}': Case(
-                        When(full_name__istartswith=word, then=Value(weight * 3)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'full_name_contains_{i}': Case(
-                        When(full_name__icontains=word, then=Value(weight * 2)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    # Name matches (User parts)
-                    f'first_name_exact_{i}': Case(
-                        When(user__first_name__iexact=word, then=Value(weight * 3)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'first_name_start_{i}': Case(
-                        When(user__first_name__istartswith=word, then=Value(weight * 2)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'first_name_contains_{i}': Case(
-                        When(user__first_name__icontains=word, then=Value(weight)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'last_name_exact_{i}': Case(
-                        When(user__last_name__iexact=word, then=Value(weight * 3)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'last_name_start_{i}': Case(
-                        When(user__last_name__istartswith=word, then=Value(weight * 2)),
-                        default=Value(0),
-                        output_field=IntegerField()
-                    ),
-                    f'last_name_contains_{i}': Case(
-                        When(user__last_name__icontains=word, then=Value(weight)),
-                        default=Value(0),
-                        output_field=IntegerField()
+                    name_prefix_q |= (
+                        Q(user__first_name__istartswith=words[0])
+                        & Q(user__last_name__istartswith=words[-1])
                     )
-                })
-            
-            relevance_fields = [
-                'title_exact_match',
-                'full_name_match',
-                'title_contains_all',
-                *[f'title_exact_{i}' for i in range(len(words))],
-                *[f'title_start_{i}' for i in range(len(words))],
-                *[f'title_contains_{i}' for i in range(len(words))],
-                *[f'full_name_exact_{i}' for i in range(len(words))],
-                *[f'full_name_start_{i}' for i in range(len(words))],
-                *[f'full_name_contains_{i}' for i in range(len(words))],
-                *[f'first_name_exact_{i}' for i in range(len(words))],
-                *[f'first_name_start_{i}' for i in range(len(words))],
-                *[f'first_name_contains_{i}' for i in range(len(words))],
-                *[f'last_name_exact_{i}' for i in range(len(words))],
-                *[f'last_name_start_{i}' for i in range(len(words))],
-                *[f'last_name_contains_{i}' for i in range(len(words))],
-            ]
-            
-            # Calculate total relevance score by summing all relevance fields
-            # Start with a base score of 0
-            score_expression = Value(0, output_field=IntegerField())
-            
-            # Add up all relevance fields
-            for field in relevance_fields:
-                score_expression = score_expression + F(field)
-            
-            # Add a small boost for profile views (1 point per 1000 views)
+
+                # Phase 2: substring match — full_name contains query anywhere (broader)
+                name_contains_q = self._build_field_query('full_name', q, words)
+
+                # Try prefix first; if results exist, use only those (cleaner results)
+                prefix_exists = self._base_qs().filter(name_prefix_q).exists()
+                name_q = name_prefix_q if prefix_exists else name_contains_q
+
+            if search_type in ('title', 'both'):
+                title_q = self._build_field_query('title', q, words)
+
+            if search_type == 'name':
+                qs = qs.filter(name_q)
+            elif search_type == 'title':
+                qs = qs.filter(title_q)
+            else:  # both
+                qs = qs.filter(name_q | title_q)
+
+            # Fallback: only for 'both' search — relax to OR individual words
+            # Skip words < 3 chars to avoid false positives (e.g. "ai" matching "Aisha")
+            # No fallback for name-only: if no name matched, return empty (correct UX)
+            if not qs.exists() and search_type == 'both':
+                fallback_q = Q()
+                for w in words:
+                    if len(w) >= 3:
+                        fallback_q |= Q(full_name__icontains=w) | Q(title__icontains=w)
+                if fallback_q:
+                    qs = self._base_qs().filter(fallback_q)
+
+            # ── 2. RELEVANCE SCORING — rank the filtered set ──────
+            full_phrase = ' '.join(words)
+
+            # 2a. High-level match signals (annotated once)
             qs = qs.annotate(
-                total_score=score_expression + (F('profile_views') / 1000)
+                # Name prefix match — first/last name STARTS with query → +700
+                _name_prefix=Case(
+                    When(
+                        Q(user__first_name__istartswith=q)
+                        | Q(user__last_name__istartswith=q),
+                        then=Value(700),
+                    ),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                ),
+                # Exact title match → highest priority (+1000)
+                _title_exact=Case(
+                    When(title__iexact=q, then=Value(1000)),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                ),
+                # Full name exact / first-name / last-name exact → +800
+                # Full name contains phrase → +400
+                _name_match=Case(
+                    When(
+                        Q(full_name__iexact=full_phrase)
+                        | Q(user__first_name__iexact=full_phrase)
+                        | Q(user__last_name__iexact=full_phrase),
+                        then=Value(800),
+                    ),
+                    When(
+                        Q(full_name__icontains=full_phrase),
+                        then=Value(400),
+                    ),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                ),
+                # Title contains ALL individual words → +500
+                _title_all_words=Case(
+                    When(
+                        self._all_words_q('title', words),
+                        then=Value(500),
+                    ),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                ),
+            )
+
+            # 2b. Per-word granular signals (first word weighted 3×, rest 2×)
+            for i, word in enumerate(words):
+                wt = 3 if i == 0 else 2  # first word gets higher weight
+                qs = qs.annotate(**{
+                    # ─ title ─
+                    f'_tw_exact_{i}': Case(
+                        When(title__iexact=word, then=Value(wt * 4)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_tw_start_{i}': Case(
+                        When(title__istartswith=word, then=Value(wt * 3)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_tw_has_{i}': Case(
+                        When(title__icontains=word, then=Value(wt * 2)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    # ─ full_name ─
+                    f'_fn_exact_{i}': Case(
+                        When(full_name__iexact=word, then=Value(wt * 4)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_fn_start_{i}': Case(
+                        When(full_name__istartswith=word, then=Value(wt * 3)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_fn_has_{i}': Case(
+                        When(full_name__icontains=word, then=Value(wt * 2)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    # ─ user.first_name (slightly lower: ×3 / ×2 / ×1) ─
+                    f'_ufn_exact_{i}': Case(
+                        When(user__first_name__iexact=word, then=Value(wt * 3)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_ufn_start_{i}': Case(
+                        When(user__first_name__istartswith=word, then=Value(wt * 2)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_ufn_has_{i}': Case(
+                        When(user__first_name__icontains=word, then=Value(wt)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    # ─ user.last_name ─
+                    f'_uln_exact_{i}': Case(
+                        When(user__last_name__iexact=word, then=Value(wt * 3)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_uln_start_{i}': Case(
+                        When(user__last_name__istartswith=word, then=Value(wt * 2)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                    f'_uln_has_{i}': Case(
+                        When(user__last_name__icontains=word, then=Value(wt)),
+                        default=Value(0), output_field=IntegerField(),
+                    ),
+                })
+
+            # 2c. Sum all signals into total_score
+            score = Value(0, output_field=IntegerField())
+
+            # High-level signals
+            for fld in ('_name_prefix', '_title_exact', '_name_match', '_title_all_words'):
+                score = score + F(fld)
+
+            # Per-word signals (12 annotations per word)
+            per_word_prefixes = (
+                '_tw_exact_', '_tw_start_', '_tw_has_',
+                '_fn_exact_', '_fn_start_', '_fn_has_',
+                '_ufn_exact_', '_ufn_start_', '_ufn_has_',
+                '_uln_exact_', '_uln_start_', '_uln_has_',
+            )
+            for i in range(len(words)):
+                for prefix in per_word_prefixes:
+                    score = score + F(f'{prefix}{i}')
+
+            # Small popularity boost: +1 per 1000 profile views
+            qs = qs.annotate(
+                total_score=score + (F('profile_views') / 1000)
             ).order_by('-total_score')
 
-        # Skills filter (if any)
-        if skills := self.request.query_params.getlist('skills'):
+        # ── 3. SKILLS FILTER (independent of search) ──────────────
+        skills = self.request.query_params.getlist('skills')
+        if skills:
             qs = qs.filter(skills__overlap=skills)
 
         return qs
+
+    # ── tiny utility ──────────────────────────────────────────────────
+    @staticmethod
+    def _all_words_q(field, words):
+        """Return Q that requires *field* to icontains every word."""
+        combined = Q()
+        for w in words:
+            combined &= Q(**{f'{field}__icontains': w})
+        return combined
 
 
 class AchievementViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
