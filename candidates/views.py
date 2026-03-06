@@ -1257,28 +1257,21 @@ class DiscoverTalentView(generics.ListAPIView):
     @staticmethod
     def _build_field_query(field, phrase, words):
         """
-        Build a Q filter for a single field:
-          • full phrase match  OR
-          • all individual words matched (AND-ed together)
-        For short queries (≤ 3 chars), uses PostgreSQL word-start regex (\m)
-        to avoid mid-word false positives (e.g. "ai" matching "Chain").
-        For longer queries, uses icontains for broader matching.
+        Build a Q filter for a single field using word-start matching.
+        Uses PostgreSQL \\m (word-start boundary) to ensure queries only
+        match at the beginning of words — prevents mid-word false positives
+        like 'alik' matching 'Malik' or 'evel' matching 'Developer'.
+          • full phrase word-start match  OR
+          • all individual words word-start matched (AND-ed together)
         """
-        if len(phrase) <= 3:
-            # Word-start match: "ai" matches "Ai Engineer" but NOT "Chain"
-            safe = re.escape(phrase)
-            q = Q(**{f'{field}__iregex': rf'\m{safe}'})
-        else:
-            q = Q(**{f'{field}__icontains': phrase})
+        safe = re.escape(phrase)
+        q = Q(**{f'{field}__iregex': rf'\m{safe}'})
 
         if len(words) > 1:
             word_q = Q()
             for w in words:
-                if len(w) <= 3:
-                    safe_w = re.escape(w)
-                    word_q &= Q(**{f'{field}__iregex': rf'\m{safe_w}'})
-                else:
-                    word_q &= Q(**{f'{field}__icontains': w})
+                safe_w = re.escape(w)
+                word_q &= Q(**{f'{field}__iregex': rf'\m{safe_w}'})
             q |= word_q
         return q
 
@@ -1329,19 +1322,16 @@ class DiscoverTalentView(generics.ListAPIView):
                 qs = qs.filter(name_q | title_q)
 
             # Fallback: only for 'both' search — relax to OR individual words
-            # Uses word-start regex for short words to avoid mid-word false positives
+            # Uses word-start regex to avoid mid-word false positives
             # No fallback for name-only: if no name matched, return empty (correct UX)
             if not qs.exists() and search_type == 'both':
                 fallback_q = Q()
                 for w in words:
-                    if len(w) <= 3:
-                        safe_w = re.escape(w)
-                        fallback_q |= (
-                            Q(full_name__iregex=rf'\m{safe_w}')
-                            | Q(title__iregex=rf'\m{safe_w}')
-                        )
-                    else:
-                        fallback_q |= Q(full_name__icontains=w) | Q(title__icontains=w)
+                    safe_w = re.escape(w)
+                    fallback_q |= (
+                        Q(full_name__iregex=rf'\m{safe_w}')
+                        | Q(title__iregex=rf'\m{safe_w}')
+                    )
                 if fallback_q:
                     qs = self._base_qs().filter(fallback_q)
 
