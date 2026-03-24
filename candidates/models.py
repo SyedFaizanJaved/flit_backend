@@ -191,7 +191,8 @@ class WorkDNAQuestion(models.Model):
 
 class ReferenceRequest(models.Model):
     """
-    Reference requests sent by candidates
+    Reference requests sent by candidates.
+    Includes idempotent email sending and automatic 7-day expiry.
     """
     RELATIONSHIP_TYPE_CHOICES = [
         ('colleague', 'Colleague'),
@@ -200,14 +201,15 @@ class ReferenceRequest(models.Model):
         ('mentor', 'Mentor'),
         ('friend', 'Friend'),
     ]
-    
+
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
         ('declined', 'Declined'),
         ('completed', 'Completed'),
+        ('expired', 'Expired'),          # auto-set when request passes 7-day expiry
     ]
-    
+
     candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='reference_requests')
     reference_email = models.EmailField()
     reference_name = models.CharField(max_length=200)
@@ -217,42 +219,69 @@ class ReferenceRequest(models.Model):
     reply_message = models.TextField(blank=True, null=True, verbose_name='Reference Response')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     token = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        editable=False,
-        db_index=True,
-    ) 
+        default=uuid.uuid4, unique=True, editable=False, db_index=True
+    )
     expires_at = models.DateTimeField(blank=True, null=True)
-    
+
+    # Duplicate-email prevention: set once the first email is successfully
+    # sent; checked before every subsequent send attempt.
+    email_sent_at = models.DateTimeField(
+        blank=True, null=True,
+        help_text='Timestamp when the reference email was successfully sent.'
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     def save(self, *args, **kwargs):
         # Ensure token is set and unique
         if not self.token:
             self.token = uuid.uuid4()
             while ReferenceRequest.objects.filter(token=self.token).exists():
                 self.token = uuid.uuid4()
-        
-        # Set expiry to 30 days from creation if not set
+
+        # Set expiry to 7 days from creation if not already set
         if not self.expires_at and not self.pk:
             from django.utils import timezone
             from datetime import timedelta
-            self.expires_at = timezone.now() + timedelta(days=30)
-            
+            self.expires_at = timezone.now() + timedelta(days=7)
+
         super().save(*args, **kwargs)
-    
+
+    @property
+    def is_expired(self):
+        """Check if this request has passed its expiry date."""
+        from django.utils import timezone
+        if self.expires_at and timezone.now() > self.expires_at:
+            return True
+        return False
+
+    def mark_expired(self):
+        """
+        Transition status to 'expired' if still pending and past expiry.
+        Returns True if status was changed.
+        """
+        if self.status == 'pending' and self.is_expired:
+            self.status = 'expired'
+            self.save(update_fields=['status', 'updated_at'])
+            return True
+        return False
+
+    def mark_email_sent(self):
+        """Record that the notification email was successfully delivered."""
+        from django.utils import timezone
+        if not self.email_sent_at:
+            self.email_sent_at = timezone.now()
+            self.save(update_fields=['email_sent_at', 'updated_at'])
+
     class Meta:
         db_table = 'candidate_reference_requests'
         verbose_name = 'Reference Request'
         verbose_name_plural = 'Reference Requests'
-    
+
     def __str__(self):
-        return f"Reference request to {self.reference_name} from {self.candidate.full_name}"
-        
-    def __str__(self):
-        return f"Ref Request - {self.token}"
+        return f"Ref Request #{self.pk} → {self.reference_name} ({self.status})"
 
 class Education(models.Model):
     """
