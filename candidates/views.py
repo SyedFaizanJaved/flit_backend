@@ -107,9 +107,15 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        if self.action in ['retrieve']:
-            return ReferenceRequest.objects.all()
-        return ReferenceRequest.objects.filter(candidate=self.get_candidate()).order_by('-created_at')
+        queryset = ReferenceRequest.objects.all() if self.action == 'retrieve' else ReferenceRequest.objects.filter(candidate=self.get_candidate())
+        
+        # Real-time check: list fetch karte waqt expiry update kar dein
+        from django.utils import timezone
+        pending_expired = queryset.filter(status='pending', expires_at__lt=timezone.now())
+        for ref in pending_expired:
+            ref.mark_expired()
+            
+        return queryset.order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save(candidate=self.get_candidate())

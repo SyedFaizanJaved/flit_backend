@@ -599,105 +599,109 @@ class WorkDNAQuestionSerializer(serializers.ModelSerializer):
     
 class ReferenceRequestSerializer(serializers.ModelSerializer):
     """
-    Serializer for reference requests
+    Serializer for reference requests.
+    Prevents duplicate requests and ensures emails are sent exactly once.
     """
     token = serializers.UUIDField(read_only=True)
     user_id = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = ReferenceRequest
         fields = [
-            'id', 'token', 'reference_email', 'reference_name', 'suggested_relationship',
-            'suggested_company', 'request_message', 'reply_message', 'status',
-            'expires_at', 'created_at', 'updated_at', 'candidate', 'user_id'
+            'id', 'token', 'reference_email', 'reference_name',
+            'suggested_relationship', 'suggested_company', 'request_message',
+            'reply_message', 'status', 'expires_at', 'created_at',
+            'updated_at', 'candidate', 'user_id',
         ]
-        read_only_fields = ('candidate', 'created_at', 'updated_at', 'token', 'user_id')
-    
+        read_only_fields = (
+            'candidate', 'created_at', 'updated_at', 'token', 'user_id',
+        )
+
     def get_user_id(self, obj):
-        """Return the user ID associated with the candidate"""
-        return obj.candidate.user.id if obj.candidate and hasattr(obj.candidate, 'user') else None
-    
-    def validate_reference_email(self, value):
+        """Return the user ID associated with the candidate."""
+        if obj.candidate and hasattr(obj.candidate, 'user'):
+            return obj.candidate.user.id
+        return None
+
+    def validate(self, attrs):
         """
-        Validate that the reference email doesn't belong to an employer
+        Prevent duplicate reference requests.
+        If there's already a request for the same candidate + email with status:
+        - pending
+        - accepted
+        - declined
+        Reject the new request. This ensures only one active/recent cycle per email.
         """
-        from django.contrib.auth import get_user_model
-        
-        User = get_user_model()
-        
-        # Check if user with this email exists
-        try:
-            user = User.objects.get(email=value)
-            
-            # Check if the user is an employer
-            if hasattr(user, 'employer_profile'):
-                raise serializers.ValidationError("Reference requests cannot be sent to employers.")
-                
-        except User.DoesNotExist:
-            # Allow sending to emails not in the system
-            pass
-            
-        return value
-    
-    def create(self, validated_data):
         request = self.context.get('request')
         if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
-            validated_data['candidate'] = request.user.candidate_profile
-        
-        ref_request = super().create(validated_data)
-        
-        # Send reference request email
-        from .views_reference import send_reference_request_email
-        send_reference_request_email(ref_request, request)
-        
-        ref_request.status = 'pending'
-        ref_request.save()
-        return ref_request
-    """
-    Serializer for reference requests
-    """
-    token = serializers.UUIDField(read_only=True)
-    
-    class Meta:
-        model = ReferenceRequest
-        fields = '__all__'
-        read_only_fields = ('candidate', 'created_at', 'updated_at', 'status', 'token')
-    
-    def validate_reference_email(self, value):
-        """
-        Validate that the reference email doesn't belong to an employer
-        """
-        from django.contrib.auth import get_user_model
-        
-        User = get_user_model()
-        
-        # Check if user with this email exists
-        try:
-            user = User.objects.get(email=value)
-            
-            # Check if the user is an employer
-            if hasattr(user, 'employer_profile'):
-                raise serializers.ValidationError("Reference requests cannot be sent to employers.")
-                
-        except User.DoesNotExist:
-            # Allow sending to emails not in the system
-            pass
-            
-        return value
-    
+            candidate = request.user.candidate_profile
+            email = attrs.get('reference_email')
+
+            existing = ReferenceRequest.objects.filter(
+                candidate=candidate,
+                reference_email=email,
+                status__in=['pending', 'accepted', 'declined'],
+            ).exists()
+
+            if existing:
+                raise serializers.ValidationError(
+                    "An active or recent reference request already exists for this email. "
+                    "You cannot send another one while it is pending, accepted, or declined."
+                )
+
+        return attrs
+
     def create(self, validated_data):
+        """
+        Create a ReferenceRequest and send the notification email exactly once.
+        Uses select_for_update() as a safety net against race conditions.
+        """
+        import logging
+        from django.db import transaction
+
+        logger = logging.getLogger(__name__)
         request = self.context.get('request')
+
+        # Attach candidate profile
         if request and hasattr(request, 'user') and hasattr(request.user, 'candidate_profile'):
             validated_data['candidate'] = request.user.candidate_profile
-        
+
+        # Create the record (status defaults to 'pending')
         ref_request = super().create(validated_data)
-        
-        # Send reference request email
-        from .views_reference import send_reference_request_email
-        send_reference_request_email(ref_request, request)
-        
-        ref_request.status = 'pending'
-        ref_request.save()
+
+        # Idempotent email dispatch with row-level lock
+        try:
+            with transaction.atomic():
+                locked_ref = (
+                    ReferenceRequest.objects
+                    .select_for_update()
+                    .get(pk=ref_request.pk)
+                )
+
+                if locked_ref.email_sent_at is not None:
+                    logger.info(
+                        f"Skipping duplicate email for ReferenceRequest "
+                        f"#{locked_ref.pk} — already sent at {locked_ref.email_sent_at}"
+                    )
+                else:
+                    from .views_reference import send_reference_request_email
+                    email_sent = send_reference_request_email(locked_ref, request)
+
+                    if email_sent:
+                        locked_ref.mark_email_sent()
+                        logger.info(
+                            f"Reference email sent for ReferenceRequest #{locked_ref.pk}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Email sending failed for ReferenceRequest #{locked_ref.pk}"
+                        )
+        except Exception:
+            logger.exception(
+                f"Error in email dispatch for ReferenceRequest #{ref_request.pk}"
+            )
+
+        ref_request.refresh_from_db()
         return ref_request
 
 class CandidateActionDetailSerializer(serializers.ModelSerializer):
