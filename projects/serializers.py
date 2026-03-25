@@ -82,6 +82,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     """
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_logo = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
@@ -95,7 +96,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Project
-        fields = ('id', 'title', 'description', 'company_name', 'company_id', 'category', 
+        fields = ('id', 'title', 'description', 'company_name', 'company_id','company_logo', 'category', 
                  'estimatedHours', 'paymentType', 'paymentAmount', 'payment_currency', 'deadline', 'status', 
                  'work_style', 'education_level', 'created_at', 'skills', 'is_applied', 'application_details',
                  'application_count', 'hasTemporaryOption', 'temporaryDuration', 'project_timezone')
@@ -104,7 +105,13 @@ class ProjectListSerializer(serializers.ModelSerializer):
         # Get skills from ProjectSkill model and capitalize first letter
         skills = list(obj.required_skills.values_list('name', flat=True))
         return [skill.title() if isinstance(skill, str) else skill for skill in skills]
-        
+    
+    def get_company_logo(self, obj):
+        """
+        Get the company logo URL.
+        """
+        return obj.company.logo.url if obj.company.logo else None    
+
     def get_is_applied(self, obj):
         """
         Check if the current user (must be a candidate) has applied to this project.
@@ -118,27 +125,19 @@ class ProjectListSerializer(serializers.ModelSerializer):
             return False
             
         if not hasattr(request.user, 'candidate_profile'):
-            print("[DEBUG] User is not a candidate")
+
             return False
             
-        print("[DEBUG] User is a candidate, checking applications...")
-        
-        # Debug: Print all applications for this candidate
         from applications.models import ProjectApplication
         all_apps = ProjectApplication.objects.filter(
             candidate=request.user.candidate_profile
         )
-        print(f"[DEBUG] Candidate has {all_apps.count()} total applications")
-        for app in all_apps:
-            print(f"[DEBUG] App ID: {app.id}, Project: {app.project_id}, Status: {app.status}, Withdrawn: {app.is_withdrawn}")
-            
         # Check if candidate has an active application for this project
         application_exists = obj.applications.filter(
             candidate=request.user.candidate_profile,
             is_withdrawn=False
         ).exists()
         
-        print(f"[DEBUG] Application exists for project {obj.id}: {application_exists}")
         return application_exists
         
     def get_application_count(self, obj):

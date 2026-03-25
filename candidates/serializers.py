@@ -23,6 +23,7 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     maxSalary = serializers.SerializerMethodField()
     profileImage = serializers.SerializerMethodField()
     userId = serializers.SerializerMethodField()
+    seniorityLevel = serializers.SerializerMethodField()
     
     def get_userId(self, obj):
         return obj.user.id if obj.user else None
@@ -66,7 +67,7 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'fullName', 'title', 'bio', 'skills', 'location',
             'availability', 'lastSeen', 'profile_views_display',
-            'minSalary', 'maxSalary', 'profileImage', 'userId'
+            'minSalary', 'maxSalary', 'profileImage', 'userId', 'seniorityLevel'
         ]
 
     def get_skills(self, obj):
@@ -130,6 +131,10 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
     def get_user(self, obj):
         # Return user ID in the same format as the detailed view
         return obj.user.id if hasattr(obj, 'user') and obj.user else None
+    
+    def get_seniorityLevel(self, obj):
+        # Return seniority level in the same format as the detailed view
+        return obj.seniority_level if hasattr(obj, 'seniority_level') else None
 
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
     """

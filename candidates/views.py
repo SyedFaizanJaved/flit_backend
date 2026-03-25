@@ -991,6 +991,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             'location': item.get('location'),
                             'skills': [skill.title() if isinstance(skill, str) else skill for skill in item.get('skills', [])],
                             'company_name': company.get('company_name', 'Unknown'),
+                            'company_logo': company.get('company_logo'),
                             'company_id': company.get('id'),
                             'has_applied': False  
                         }
@@ -1092,6 +1093,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             'deadline': project.deadline.isoformat() if project.deadline else None,
                             'company_name': company_name,
                             'company_id': company_id,
+                            'company_logo': project.company.logo.url if project.company.logo else None,
                             'has_applied': False  
                         }
                         formatted.append(project_data)
@@ -1127,6 +1129,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             work_style = serializers.CharField()
             company_name = serializers.CharField()
             company_id = serializers.IntegerField(allow_null=True)
+            company_logo = serializers.CharField(allow_null=True)
             deadline = serializers.CharField(allow_null=True)
             has_applied = serializers.BooleanField()  
 

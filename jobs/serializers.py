@@ -99,6 +99,7 @@ class JobListSerializer(serializers.ModelSerializer):
     """
     company_name = serializers.CharField(source='company.company_name', read_only=True)
     company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_logo = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
     application_count = serializers.SerializerMethodField()
@@ -113,7 +114,7 @@ class JobListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
         fields = (
-            'id', 'description', 'title', 'company_name', 'company_id', 'location', 'workStyle',
+            'id', 'description', 'title', 'company_name', 'company_id','company_logo', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
             'salary_currency', 'status', 'created_at', 'skills', 'is_applied', 'application_details',
             'application_count', 'hasTemporaryOption', 'temporaryDuration', 'timezone'
@@ -149,6 +150,12 @@ class JobListSerializer(serializers.ModelSerializer):
         Return the total count of non-withdrawn applications for this job.
         """
         return obj.applications.filter(is_withdrawn=False).count()
+    
+    def get_company_logo(self, obj):
+        """
+        Get the company logo URL.
+        """
+        return obj.company.logo.url if obj.company.logo else None
 
     def get_application_details(self, obj):
         """
