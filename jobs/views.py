@@ -5,6 +5,7 @@ import re
 from rest_framework import permissions
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status, permissions, mixins
 from rest_framework.authentication import BaseAuthentication
@@ -49,7 +50,17 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
     ordering = ['-created_at']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Auto-close expired jobs
+        Job.objects.filter(
+            status='active',
+            applicationDeadline__lt=timezone.now()
+        ).update(status='closed')
+
+        # Base queryset with active status and deadline >= today (or no deadline)
+        queryset = super().get_queryset().filter(
+            models.Q(applicationDeadline__gte=timezone.now()) | 
+            models.Q(applicationDeadline__isnull=True)
+        )
     
         search = self.request.query_params.get('search', None)
         if search:
@@ -94,6 +105,12 @@ class JobViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
+        # Auto-close expired jobs
+        Job.objects.filter(
+            status='active',
+            applicationDeadline__lt=timezone.now()
+        ).update(status='closed')
+
         qs = super().get_queryset()
 
         if hasattr(self.request.user, 'employer_profile'):

@@ -257,7 +257,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             data.append({
                 'id': ach.id,
                 'title': ach.title,
-                'achievement_type': ach.achievement_type,
+                'achievement_type': ach.get_achievement_type_display(),
                 'description': ach.description,
                 'date_achieved': ach.date_achieved,
                 'issuer': ach.issuer,
@@ -821,6 +821,15 @@ class AchievementSerializer(serializers.ModelSerializer):
         model = Achievement
         fields = '__all__'
         read_only_fields = ('candidate', 'created_at', 'updated_at')
+
+    def to_representation(self, instance):
+        """
+        Keep `achievement_type` writable as-is, but return the humanized label
+        in API responses (e.g. "award" -> "Award").
+        """
+        representation = super().to_representation(instance)
+        representation['achievement_type'] = instance.get_achievement_type_display()
+        return representation
 
 
 class CompanyWithOpeningsSerializer(serializers.ModelSerializer):

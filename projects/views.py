@@ -3,6 +3,7 @@ import requests
 import time
 import re  
 from django.conf import settings
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, permissions, mixins
 from rest_framework.authentication import BaseAuthentication
@@ -40,8 +41,17 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        # Base queryset with active status
-        queryset = super().get_queryset().filter(status='active')
+        # Auto-close expired projects
+        Project.objects.filter(
+            status='active',
+            deadline__lt=timezone.now().date()
+        ).update(status='closed')
+
+        # Base queryset with active status and deadline >= today
+        queryset = super().get_queryset().filter(
+            status='active',
+            deadline__gte=timezone.now().date()
+        )
 
         # Apply search with partial word matching
         search = self.request.query_params.get('search', None)
@@ -82,6 +92,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
     pagination_class = CustomPagination
 
     def get_queryset(self):
+        # Auto-close expired projects
+        Project.objects.filter(
+            status='active',
+            deadline__lt=timezone.now().date()
+        ).update(status='closed')
+        
         queryset = super().get_queryset()
 
         if hasattr(self.request.user, 'employer_profile'):
