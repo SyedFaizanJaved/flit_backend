@@ -1176,9 +1176,82 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         try:
             resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params)
             resp.raise_for_status()
-            return Response(resp.json())
+            data = resp.json()
+
+            # Data enrichment with company_image
+            # The AI service typically returns a dict with 'matches' or 'ranked_opportunities'
+            # or a list directly. We handle common patterns.
+            if isinstance(data, dict):
+                matches = data.get('matches', []) or data.get('ranked_opportunities', []) or data.get('opportunities', [])
+            elif isinstance(data, list):
+                matches = data
+            else:
+                matches = []
+
+            if matches and isinstance(matches, list):
+                # 1. Collect all job and project IDs to perform bulk lookups
+                job_ids = []
+                project_ids = []
+                for item in matches:
+                    if not isinstance(item, dict): continue
+                    
+                    # Try to determine if it's a job or project
+                    # ML service usually provides 'type' or use specific ID keys
+                    item_type = item.get('type', 'job').lower()
+                    jid = item.get('job_id')
+                    pid = item.get('project_id')
+                    oid = item.get('id')
+
+                    if jid:
+                        job_ids.append(jid)
+                    elif pid:
+                        project_ids.append(pid)
+                    elif oid:
+                        if item_type == 'project':
+                            project_ids.append(oid)
+                        else:
+                            job_ids.append(oid)
+
+                # 2. Bulk fetch logos from database
+                logo_map = {} # Map ID -> Logo URL
+                
+                if job_ids:
+                    jobs = Job.objects.filter(id__in=job_ids).select_related('company')
+                    for job in jobs:
+                        if job.company and job.company.logo:
+                            logo_map[f"job_{job.id}"] = request.build_absolute_uri(job.company.logo.url)
+                
+                if project_ids:
+                    projects = Project.objects.filter(id__in=project_ids).select_related('company')
+                    for project in projects:
+                        if project.company and project.company.logo:
+                            logo_map[f"project_{project.id}"] = request.build_absolute_uri(project.company.logo.url)
+
+                # 3. Inject company_image into the response items
+                for item in matches:
+                    if not isinstance(item, dict): continue
+                    
+                    item_type = item.get('type', 'job').lower()
+                    jid = item.get('job_id')
+                    pid = item.get('project_id')
+                    oid = item.get('id')
+                    
+                    logo_url = None
+                    if jid and f"job_{jid}" in logo_map:
+                        logo_url = logo_map[f"job_{jid}"]
+                    elif pid and f"project_{pid}" in logo_map:
+                        logo_url = logo_map[f"project_{pid}"]
+                    elif oid:
+                        key = f"{item_type}_{oid}"
+                        logo_url = logo_map.get(key)
+                    
+                    # Add the field as requested by Team Lead
+                    item['company_image'] = logo_url
+
+            return Response(data)
         except requests.RequestException:
             return Response({'error': 'AI service unavailable'}, status=503)
+
 
     # ====================== WORK DNA ======================
     @action(detail=False, methods=['get', 'post'], url_path='work-dna/questions')
