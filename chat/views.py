@@ -119,7 +119,16 @@ class EmployerConversationListView(generics.ListAPIView):
         ).select_related('user').annotate(
             last_message_time=Subquery(latest_msg_subq, output_field=models.DateTimeField()),
             unread_count=Coalesce(Subquery(unread_count_subq, output_field=models.IntegerField()), 0)
-        ).order_by('-last_message_time')
+        )
+
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            candidates = candidates.filter(
+                Q(full_name__istartswith=search_query) |
+                Q(full_name__icontains=' ' + search_query)
+            )
+
+        return candidates.order_by('-last_message_time')
         
         # Debug: Print all candidates with their message info
         print(f"Found {candidates.count()} candidate profiles")
@@ -229,6 +238,19 @@ class CandidateEmployerConversationListView(generics.ListAPIView):
             last_message_time=Subquery(latest_msg_subq, output_field=models.DateTimeField()),
             unread_count=Coalesce(Subquery(unread_count_subq, output_field=models.IntegerField()), 0)
         )
+
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            participants = participants.filter(
+                Q(employer_profile__company__company_name__istartswith=search_query) |
+                Q(employer_profile__company__company_name__icontains=' ' + search_query) |
+                Q(first_name__istartswith=search_query) |
+                Q(first_name__icontains=' ' + search_query) |
+                Q(last_name__istartswith=search_query) |
+                Q(last_name__icontains=' ' + search_query) |
+                Q(candidate_profile__full_name__istartswith=search_query) |
+                Q(candidate_profile__full_name__icontains=' ' + search_query)
+            )
         
         # Debug: Print detailed participant data
         if settings.DEBUG:  # Only print in debug mode

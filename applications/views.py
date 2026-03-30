@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, permissions
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.db.models import Q
 from .models import JobApplication, ProjectApplication
 from .serializers import (
     JobApplicationSerializer,
@@ -40,6 +41,23 @@ class CombinedApplicationsView(generics.ListAPIView):
         if company_id:
             job_apps = job_apps.filter(job__company_id=company_id)
             project_apps = project_apps.filter(project__company_id=company_id)
+        
+        # Apply search filter if search is provided
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            # Match if it starts the title/name OR if it's the start of a word (preceded by space)
+            job_apps = job_apps.filter(
+                Q(job__title__istartswith=search_query) | 
+                Q(job__title__icontains=' ' + search_query) |
+                Q(candidate__full_name__istartswith=search_query) |
+                Q(candidate__full_name__icontains=' ' + search_query)
+            )
+            project_apps = project_apps.filter(
+                Q(project__title__istartswith=search_query) | 
+                Q(project__title__icontains=' ' + search_query) |
+                Q(candidate__full_name__istartswith=search_query) |
+                Q(candidate__full_name__icontains=' ' + search_query)
+            )
         
         # Filter by user role
         user_role = getattr(getattr(self.request.user, 'role', None), 'name', None)

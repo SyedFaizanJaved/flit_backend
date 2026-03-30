@@ -636,6 +636,10 @@ class CompanyListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        
+        # Restriction: Only candidates can view companies list in storyline
+        if hasattr(user, 'employer_profile') and not user.is_staff:
+            return Company.objects.none()
 
         like_count_sq = Like.objects.filter(
             company_id=OuterRef('pk')
@@ -649,7 +653,15 @@ class CompanyListView(generics.ListAPIView):
             story__company_id=OuterRef('pk')
         ).values('story__company_id').annotate(count=Count('id')).values('count')
 
-        return Company.objects.all().annotate(
+        search_query = self.request.query_params.get('search')
+        queryset = Company.objects.all()
+        if search_query:
+            queryset = queryset.filter(
+                Q(company_name__istartswith=search_query) |
+                Q(company_name__icontains=' ' + search_query)
+            )
+
+        return queryset.annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(company_id=OuterRef('pk'), user=user)),
@@ -664,6 +676,10 @@ class ProjectListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        
+        # Restriction: Only candidates can view projects list in storyline
+        if hasattr(user, 'employer_profile') and not user.is_staff:
+            return Project.objects.none()
 
         like_count_sq = Like.objects.filter(
             project_id=OuterRef('pk')
@@ -677,8 +693,16 @@ class ProjectListView(generics.ListAPIView):
             story__project_id=OuterRef('pk')
         ).values('story__project_id').annotate(count=Count('id')).values('count')
 
+        search_query = self.request.query_params.get('search')
         # Only show active projects in storyline
-        return Project.objects.select_related('company').filter(status='active').annotate(
+        queryset = Project.objects.select_related('company').filter(status='active')
+        if search_query:
+            queryset = queryset.filter(
+                Q(title__istartswith=search_query) |
+                Q(title__icontains=' ' + search_query)
+            )
+
+        return queryset.annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(project_id=OuterRef('pk'), user=user)),
@@ -693,6 +717,10 @@ class JobListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        
+        # Restriction: Only candidates can view jobs list in storyline
+        if hasattr(user, 'employer_profile') and not user.is_staff:
+            return Job.objects.none()
 
         like_count_sq = Like.objects.filter(
             job_id=OuterRef('pk')
@@ -706,8 +734,16 @@ class JobListView(generics.ListAPIView):
             story__job_id=OuterRef('pk')
         ).values('story__job_id').annotate(count=Count('id')).values('count')
 
+        search_query = self.request.query_params.get('search')
         # Only show active jobs in storyline
-        return Job.objects.select_related('company').filter(status='active').annotate(
+        queryset = Job.objects.select_related('company').filter(status='active')
+        if search_query:
+            queryset = queryset.filter(
+                Q(title__istartswith=search_query) |
+                Q(title__icontains=' ' + search_query)
+            )
+
+        return queryset.annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),
             comment_count=Coalesce(Subquery(direct_comment_sq), 0) + Coalesce(Subquery(story_comment_sq), 0),
             is_liked=Exists(Like.objects.filter(job_id=OuterRef('pk'), user=user)),
@@ -745,6 +781,13 @@ class CandidateListView(generics.ListAPIView):
         story_comment_sq = Comment.objects.filter(
             story__candidate_id=OuterRef('pk')
         ).values('story__candidate_id').annotate(count=Count('id')).values('count')
+
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                Q(full_name__istartswith=search_query) |
+                Q(full_name__icontains=' ' + search_query)
+            )
 
         return queryset.annotate(
             like_count=Coalesce(Subquery(like_count_sq), 0),

@@ -803,16 +803,31 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def applications(self, request):
             candidate = self.get_candidate()
             app_type = request.query_params.get('type')
+            search_query = request.query_params.get('search')
 
             formatted = []
             
             if not app_type or app_type == 'job':
                 job_apps = Application.objects.filter(candidate=candidate).select_related('job__company').order_by('-applied_at')
+                if search_query:
+                    job_apps = job_apps.filter(
+                        Q(job__title__istartswith=search_query) | 
+                        Q(job__title__icontains=' ' + search_query) |
+                        Q(job__company__company_name__istartswith=search_query) |
+                        Q(job__company__company_name__icontains=' ' + search_query)
+                    )
                 for app in job_apps:
                     formatted.append(self._format_application(app, 'job'))
             
             if not app_type or app_type == 'project':
                 project_apps = ProjectApplication.objects.filter(candidate=candidate).select_related('project__company').order_by('-applied_at')
+                if search_query:
+                    project_apps = project_apps.filter(
+                        Q(project__title__istartswith=search_query) | 
+                        Q(project__title__icontains=' ' + search_query) |
+                        Q(project__company__company_name__istartswith=search_query) |
+                        Q(project__company__company_name__icontains=' ' + search_query)
+                    )
                 for app in project_apps:
                     formatted.append(self._format_application(app, 'project'))
 
