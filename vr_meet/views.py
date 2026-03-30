@@ -323,23 +323,54 @@ class CandidateMeetingsView(generics.ListAPIView):
 
     def get_queryset(self):
         # Get all non-deleted meetings where the current user is the candidate
-        return MeetingRoom.objects.filter(
+        user = self.request.user
+        queryset = MeetingRoom.objects.filter(
             is_deleted=False,
-            candidate=self.request.user
-        ).order_by('-start_time')
-    
-    def get_queryset(self):
-        # Get all non-deleted upcoming meetings where the current user is the candidate
-        return MeetingRoom.objects.filter(
-            is_deleted=False,
-            candidate=self.request.user,
-            start_time__gt=timezone.now()
-        ).order_by('start_time')  # Order by start_time in ascending order
+            candidate=user
+        )
+        
+        tab = self.request.query_params.get('tab', 'all')
+        now = timezone.now()
+        
+        if tab == 'scheduled':
+            queryset = queryset.filter(status='active', start_time__gt=now)
+        elif tab == 'invited':
+            queryset = queryset.filter(status='pending')
+        elif tab == 'expired':
+            queryset = queryset.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled'])
+        
+        # Default order: scheduled items first, then by latest created
+        if tab == 'scheduled':
+            return queryset.order_by('start_time')
+        return queryset.order_by('-start_time')
     
     def list(self, request, *args, **kwargs):
+        user = request.user
+        now = timezone.now()
+        
+        # Base queryset for calculating all statistics accurately
+        base_qs = MeetingRoom.objects.filter(is_deleted=False, candidate=user)
+        
+        # Determine current tab/category filtering
+        tab = self.request.query_params.get('tab', 'all')
+        
+        stats = {
+            "total_requests": base_qs.count(),
+            "scheduled": base_qs.filter(status='active', start_time__gt=now).count(),
+            "invited": base_qs.filter(status='pending').count(),
+            "expired": base_qs.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
+        }
+        
+        # Note: I'm using a slightly safer way to count expired to avoid bugs
+        stats["expired"] = base_qs.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count()
+
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        
+        return Response({
+            "stats": stats,
+            "meetings": serializer.data
+        })
 
 #--------------------------
 #  GOOGLE OAUTH CALLBACK
@@ -596,6 +627,43 @@ class OfferListView(generics.ListAPIView):
             return Offer.objects.filter(candidate=user).select_related(
                 'meeting', 'candidate', 'employer'
             )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        # Calculate stats for all offers of this user (not just this page)
+        stats = {
+            "total_sent": queryset.count(),
+            "hired": queryset.filter(status='hired').count(),
+            "accepted": queryset.filter(status='accepted').count(),
+            "rejected": queryset.filter(status='rejected').count(),
+            "declined": queryset.filter(status='declined').count(),
+        }
+
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response = self.get_paginated_response(serializer.data)
+            # Create a new dictionary with stats at the top
+            paginated_data = response.data
+            response.data = {
+                "stats": stats,
+                "count": paginated_data.get('count'),
+                "total_pages": paginated_data.get('total_pages'),
+                "current_page": paginated_data.get('current_page'),
+                "next": paginated_data.get('next'),
+                "previous": paginated_data.get('previous'),
+                "results": paginated_data.get('results')
+            }
+            return response
+
+        # Non-paginated fallback
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            "stats": stats,
+            "results": serializer.data
+        })
 
 
 class OfferDetailView(generics.RetrieveUpdateAPIView):
