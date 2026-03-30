@@ -25,7 +25,7 @@ class CommentUserSerializer(serializers.ModelSerializer):
 
 
 class StorySerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
+    user = serializers.SerializerMethodField()
     
     like_count = serializers.IntegerField(read_only=True)
     comment_count = serializers.IntegerField(read_only=True)
@@ -39,6 +39,27 @@ class StorySerializer(serializers.ModelSerializer):
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'company', 'candidate'
         ]
         read_only_fields = ['user', 'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at']
+
+    def get_user(self, obj):
+        """
+        Custom user representation that includes role-specific profile image
+        """
+        from accounts.serializers import UserListSerializer
+        user_data = UserListSerializer(obj.user).data
+        request = self.context.get('request')
+        
+        profile_image = None
+        if obj.user_type == 'employer' and obj.company:
+            if obj.company.logo:
+                url = obj.company.logo.url
+                profile_image = request.build_absolute_uri(url) if request else url
+        elif obj.user_type == 'candidate' and obj.candidate:
+            if obj.candidate.profile_image:
+                url = obj.candidate.profile_image.url
+                profile_image = request.build_absolute_uri(url) if request else url
+        
+        user_data['profile_image'] = profile_image
+        return user_data
 
 
 class CommentSerializer(serializers.ModelSerializer):
