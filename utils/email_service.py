@@ -8,6 +8,24 @@ from django.core.mail import EmailMultiAlternatives
 logger = logging.getLogger(__name__)
 
 
+# Common No-Reply Notice
+NO_REPLY_TEXT = """
+
+---
+PLEASE DO NOT REPLY TO THIS EMAIL. 
+This is an automated message sent from an unmonitored mailbox. 
+Replies to this email will not be received or reviewed.
+"""
+
+NO_REPLY_HTML = """
+            <div class="no-reply-box">
+                <strong>🚫 PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                This is an automated message sent from an unmonitored mailbox. 
+                Replies to this email will not be received or reviewed.
+            </div>
+"""
+
+
 def get_base_url():
     """Get the base frontend URL from settings"""
     return getattr(settings, 'FLIT_REQUEST_URL')
@@ -119,9 +137,22 @@ def get_email_styles():
             font-size: 14px;
             border-top: 2px solid #e0e6ed;
         }
-        .footer p, .footer small, .footer strong {
-            color: #ffffff !important;
-            margin: 0;
+        .no-reply-box {
+            background-color: #fff3f3;
+            border: 1px solid #ffcccc;
+            color: #d63031;
+            padding: 15px;
+            margin: 25px 0 0 0;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .no-reply-box strong {
+            color: #c0392b;
+            display: block;
+            margin-bottom: 5px;
+            font-size: 15px;
         }
         @media only screen and (max-width: 600px) {
             .container { border-radius: 0; }
@@ -150,7 +181,8 @@ def send_email(to_email, subject, text_content, html_content):
             subject=subject,
             body=text_content.strip(),
             from_email=from_email,
-            to=[to_email]
+            to=[to_email],
+            reply_to=[from_email]
         )
         
         # Attach the HTML version
@@ -269,6 +301,12 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
             </div>
             
             <p>We're rooting for you! Best of luck with the next steps.</p>
+            
+            <div class="no-reply-box">
+                <strong>🚫 PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                This is an automated message sent from an unmonitored mailbox. 
+                Replies to this email will not be received or reviewed.
+            </div>
         </div>
         
         <div class="footer">
@@ -381,6 +419,7 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
             </div>
             
             <p>We wish you the best in your job search and future endeavors.</p>
+            {NO_REPLY_HTML}
         </div>
         
         <div class="footer">
@@ -499,6 +538,7 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
             </div>
             
             <p>Stay positive and keep applying. Your next opportunity might be just around the corner!</p>
+            {NO_REPLY_HTML}
         </div>
         
         <div class="footer">
@@ -611,6 +651,7 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
                 If the button doesn't work, copy and paste this link into your browser:<br>
                 <a href="{chat_url}" style="color: #667eea;">{chat_url}</a>
             </p>
+            {NO_REPLY_HTML}
         </div>
         
         <div class="footer">
@@ -702,6 +743,7 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
             <p style="font-size: 13px; color: #7f8c8d;">
                 If you did not sign up for this account, please ignore this email.
             </p>
+            {NO_REPLY_HTML}
         </div>
         
         <div class="footer">
