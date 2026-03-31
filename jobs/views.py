@@ -113,8 +113,17 @@ class JobViewSet(viewsets.ModelViewSet):
 
         qs = super().get_queryset()
 
+        # Restriction: Employers can only manage/see their own items, 
+        # but dual-role users (who are also candidates) should be able to browse all active ones.
         if hasattr(self.request.user, 'employer_profile'):
-            qs = qs.filter(company=self.request.user.employer_profile.company)
+            from django.db.models import Q
+            if not hasattr(self.request.user, 'candidate_profile'):
+                qs = qs.filter(company=self.request.user.employer_profile.company)
+            else:
+                # Dual role: allow viewing any active job or their own company's jobs
+                qs = qs.filter(
+                    Q(company=self.request.user.employer_profile.company) | Q(status='active')
+                )
 
         if self.action == 'list':
             qs = qs.filter(status='active')
