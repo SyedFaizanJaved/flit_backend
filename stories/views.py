@@ -637,10 +637,6 @@ class CompanyListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         
-        # Restriction: Only candidates can view companies list in storyline
-        if hasattr(user, 'employer_profile') and not user.is_staff:
-            return Company.objects.none()
-
         like_count_sq = Like.objects.filter(
             company_id=OuterRef('pk')
         ).values('company_id').annotate(count=Count('id')).values('count')
@@ -677,10 +673,6 @@ class ProjectListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         
-        # Restriction: Only candidates can view projects list in storyline
-        if hasattr(user, 'employer_profile') and not user.is_staff:
-            return Project.objects.none()
-
         like_count_sq = Like.objects.filter(
             project_id=OuterRef('pk')
         ).values('project_id').annotate(count=Count('id')).values('count')
@@ -694,8 +686,18 @@ class ProjectListView(generics.ListAPIView):
         ).values('story__project_id').annotate(count=Count('id')).values('count')
 
         search_query = self.request.query_params.get('search')
-        # Only show active projects in storyline
-        queryset = Project.objects.select_related('company').filter(status='active')
+        
+        # Auto-close expired projects
+        Project.objects.filter(
+            status='active',
+            deadline__lt=timezone.now().date()
+        ).update(status='closed')
+
+        # Only show active and non-expired projects in storyline
+        queryset = Project.objects.select_related('company').filter(
+            status='active',
+            deadline__gte=timezone.now().date()
+        )
         if search_query:
             queryset = queryset.filter(
                 Q(title__istartswith=search_query) |
@@ -718,10 +720,6 @@ class JobListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         
-        # Restriction: Only candidates can view jobs list in storyline
-        if hasattr(user, 'employer_profile') and not user.is_staff:
-            return Job.objects.none()
-
         like_count_sq = Like.objects.filter(
             job_id=OuterRef('pk')
         ).values('job_id').annotate(count=Count('id')).values('count')
@@ -735,8 +733,18 @@ class JobListView(generics.ListAPIView):
         ).values('story__job_id').annotate(count=Count('id')).values('count')
 
         search_query = self.request.query_params.get('search')
-        # Only show active jobs in storyline
-        queryset = Job.objects.select_related('company').filter(status='active')
+        
+        # Auto-close expired jobs
+        Job.objects.filter(
+            status='active',
+            applicationDeadline__lt=timezone.now()
+        ).update(status='closed')
+
+        # Only show active and non-expired jobs in storyline
+        queryset = Job.objects.select_related('company').filter(
+            Q(status='active') &
+            (Q(applicationDeadline__gte=timezone.now()) | Q(applicationDeadline__isnull=True))
+        )
         if search_query:
             queryset = queryset.filter(
                 Q(title__istartswith=search_query) |
