@@ -4,6 +4,7 @@ import time
 import re  
 from django.conf import settings
 from django.utils import timezone
+from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, permissions, mixins
 from rest_framework.authentication import BaseAuthentication
@@ -100,8 +101,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
         queryset = super().get_queryset()
 
+        # Restriction: Employers can only manage/see their own items, 
+        # but dual-role users (who are also candidates) should be able to browse all active ones.
         if hasattr(self.request.user, 'employer_profile'):
-            queryset = queryset.filter(company=self.request.user.employer_profile.company)
+            if not hasattr(self.request.user, 'candidate_profile'):
+                queryset = queryset.filter(company=self.request.user.employer_profile.company)
+            else:
+                # Dual role: allow viewing any active project or their own company's projects
+                queryset = queryset.filter(
+                    Q(company=self.request.user.employer_profile.company) | Q(status='active')
+                )
 
         search = self.request.query_params.get('search', None)
         if search:
