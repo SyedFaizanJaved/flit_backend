@@ -126,13 +126,23 @@ class SavedItemSerializer(serializers.ModelSerializer):
 
 
 class CompanyBasicSerializer(serializers.ModelSerializer):
+    logo = serializers.SerializerMethodField()
+
     class Meta:
         model = Company
-        fields = ['id', 'company_name']
+        fields = ['id', 'company_name', 'logo']
+
+    def get_logo(self, obj):
+        if obj.logo:
+            request = self.context.get('request')
+            url = obj.logo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
 
 
 class CompanySerializer(serializers.ModelSerializer):
     company_id = serializers.IntegerField(source='id', read_only=True)
+    logo = serializers.SerializerMethodField()
     
     like_count = serializers.IntegerField(read_only=True)
     comment_count = serializers.IntegerField(read_only=True)
@@ -147,6 +157,13 @@ class CompanySerializer(serializers.ModelSerializer):
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at'
         ]
 
+    def get_logo(self, obj):
+        if obj.logo:
+            request = self.context.get('request')
+            url = obj.logo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
 
 class ProjectSerializer(serializers.ModelSerializer):
     project_id = serializers.IntegerField(source='id', read_only=True)
@@ -157,6 +174,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     is_saved = serializers.BooleanField(read_only=True)
     
     company = CompanyBasicSerializer(read_only=True)
+
     skills = serializers.SerializerMethodField()
     
     # Formatted fields
@@ -193,13 +211,14 @@ class JobSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source='get_category_display', read_only=True)
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
     skills = serializers.SerializerMethodField()
+    company = CompanyBasicSerializer(read_only=True)
 
     class Meta:
         model = Job
         fields = [
             'job_id', 'id', 'title', 'description', 'employmentType', 'location', 'salaryRangeMin', 'salaryRangeMax', 'salary_currency',
             'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at','status', 'skills', 'applicationDeadline',
-            'workStyle', 'category', 'experienceLevel', 'hasTemporaryOption', 'temporaryDuration'
+            'workStyle', 'category', 'experienceLevel', 'hasTemporaryOption', 'temporaryDuration', 'company'
         ]
     
     def get_skills(self, obj):
