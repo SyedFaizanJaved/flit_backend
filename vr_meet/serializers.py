@@ -66,7 +66,7 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MeetingRoom
-        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code', 'job', 'project']
+        exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code']
         read_only_fields = (
             'created_at', 'id', 'meet_link', 'employer',
             'meeting_date', 'employer_company', 'opportunity_type', 'offer_status',
@@ -176,6 +176,8 @@ class OfferSerializer(serializers.ModelSerializer):
     employer_name = serializers.SerializerMethodField()
     meeting_title = serializers.CharField(source='meeting.meeting_title', read_only=True)
     opportunity_type = serializers.CharField(source='meeting.opportunity_type', read_only=True)
+    job = serializers.ReadOnlyField(default=None)
+    project = serializers.ReadOnlyField(default=None)
 
     class Meta:
         model = Offer
@@ -185,6 +187,7 @@ class OfferSerializer(serializers.ModelSerializer):
             'salary', 'hourly_rate', 'is_hourly',
             'offer_date', 'date_of_joining',
             'candidate_name', 'employer_name', 'meeting_title', 'opportunity_type',
+            'job', 'project',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -192,6 +195,33 @@ class OfferSerializer(serializers.ModelSerializer):
             'candidate_name', 'employer_name', 'meeting_title', 'opportunity_type',
             'created_at', 'updated_at',
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        meeting = getattr(instance, 'meeting', None)
+        
+        # Include job/project info if available through the meeting
+        data['job'] = None
+        data['project'] = None
+        
+        if meeting:
+            if meeting.job_id:
+                data['job'] = {
+                    'id': meeting.job.id, 
+                    'title': meeting.job.title,
+                    'type': 'job'
+                }
+            if meeting.project_id:
+                data['project'] = {
+                    'id': meeting.project.id, 
+                    'title': meeting.project.title,
+                    'type': 'project'
+                }
+        
+        # Add a clear 'type' tag at the root level as well
+        data['opportunity_type'] = instance.meeting.opportunity_type if instance.meeting else 'unknown'
+                
+        return data
 
     def get_candidate_name(self, obj):
         return obj.candidate.get_full_name() or obj.candidate.email
