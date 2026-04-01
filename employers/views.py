@@ -469,8 +469,62 @@ def get_flitpass_data(request, company_id):
         response = requests.get(ml_api_url)
         response.raise_for_status()
         
-        # Return the successful response
-        return Response(response.json())
+        data = response.json()
+        
+        # Collect candidate items to update (item_dict, candidate_id)
+        items_to_update = []
+        
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    cid = item.get('candidate_id') or item.get('id')
+                    if cid:
+                        items_to_update.append((item, cid))
+        elif isinstance(data, dict):
+            # Check if 'candidates' is a dictionary {candidate_id: candidate_data}
+            candidates_val = data.get('candidates')
+            if isinstance(candidates_val, dict):
+                for cid, c_data in candidates_val.items():
+                    if isinstance(c_data, dict):
+                        items_to_update.append((c_data, cid))
+            else:
+                # Fallback to lists in 'candidates', 'results', or 'data'
+                for key in ['candidates', 'results', 'data']:
+                    target = data.get(key)
+                    if isinstance(target, list):
+                        for item in target:
+                            if isinstance(item, dict):
+                                cid = item.get('candidate_id') or item.get('id')
+                                if cid:
+                                    items_to_update.append((item, cid))
+                        break
+        
+        if items_to_update:
+            # Collect unique IDs (convert to string for mapping)
+            unique_ids = list(set([str(it[1]) for it in items_to_update]))
+            
+            # Fetch candidates to get their actual S3 URLs
+            candidates_qs = Candidate.objects.filter(id__in=unique_ids)
+            image_url_map = {}
+            for candidate in candidates_qs:
+                if candidate.profile_image:
+                    try:
+                        image_url_map[str(candidate.id)] = candidate.profile_image.url
+                    except Exception:
+                        pass
+            
+            s3_base = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/"
+            
+            # Update each item with the actual URL from DB or fallback construction
+            for item, cid in items_to_update:
+                cid_str = str(cid)
+                if cid_str in image_url_map:
+                    item['profile_image'] = image_url_map[cid_str]
+                elif 'profile_image' in item and item['profile_image'] and not str(item['profile_image']).startswith('http'):
+                    item['profile_image'] = s3_base + str(item['profile_image']).lstrip('/')
+        
+        # Return the processed response
+        return Response(data)
         
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
