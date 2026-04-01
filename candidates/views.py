@@ -123,103 +123,232 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
 
 # ==================== MAIN CANDIDATE VIEWSET ====================
-# ========================= BACKGROUND ML TASKS =========================
+# ========================= BACKGROUND FILE + ML PROCESSOR =========================
 
-def _parse_resume_in_background(candidate_id, file_bytes, file_name, content_type):
+def _process_files_and_ml_in_background(
+    candidate_id,
+    resume_info=None,     # dict: {bytes, name, content_type, upload_path}
+    video_info=None,      # dict: {bytes, name, content_type, upload_path, user_id}
+    profile_image_info=None,  # dict: {bytes, name, content_type}
+    old_resume_path=None,
+    old_video_path=None,
+    old_profile_image_path=None,
+    ml_payload=None,
+    build_absolute_uri_base=None,
+):
     """
-    Called in a background thread to parse resume PDF via ML API.
-    Updates candidate.resume_data once parsing is complete.
-    """
-    from .models import Candidate
-    try:
-        files_ml = {'resume_file': (file_name, io.BytesIO(file_bytes), content_type)}
-        parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
-        resp = requests.post(parse_url, files=files_ml, timeout=120)
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get('success'):
-                Candidate.objects.filter(id=candidate_id).update(
-                    resume_data=result.get('data', {})
-                )
-                logger.info(f"[BG] Resume parsed successfully for candidate {candidate_id}")
-            else:
-                logger.warning(f"[BG] Resume parse returned success=False for candidate {candidate_id}")
-        else:
-            logger.error(f"[BG] Resume parsing failed with status {resp.status_code} for candidate {candidate_id}")
-    except Exception as e:
-        logger.error(f"[BG] Resume parsing exception for candidate {candidate_id}: {e}", exc_info=True)
-
-
-def _analyze_video_in_background(candidate_id, file_bytes, file_name, content_type, user_id, video_url):
-    """
-    Called in a background thread to analyze intro video via ML API.
-    Updates candidate.video_transcription and intro_video_description once done.
-    """
-    from .models import Candidate
-    try:
-        analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
-        files_video = {'video_file': (file_name, io.BytesIO(file_bytes), content_type)}
-        video_payload = {
-            'user_id': str(user_id),
-            'candidate_id': str(candidate_id),
-            'video_url': video_url,
-        }
-        headers = {}
-        if hasattr(settings, 'ML_API_KEY'):
-            headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
-        resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers, timeout=180)
-        if resp.status_code == 200:
-            analysis = resp.json().get('analysis', {})
-            update_fields = {}
-            if transcription := analysis.get('video_transcript'):
-                update_fields['video_transcription'] = transcription
-            if analysis:
-                update_fields['intro_video_description'] = analysis
-            if update_fields:
-                Candidate.objects.filter(id=candidate_id).update(**update_fields)
-                logger.info(f"[BG] Video analyzed successfully for candidate {candidate_id}")
-        else:
-            logger.error(f"[BG] Video analysis failed with status {resp.status_code} for candidate {candidate_id}")
-    except Exception as e:
-        logger.error(f"[BG] Video analysis exception for candidate {candidate_id}: {e}", exc_info=True)
-
-
-def _sync_candidate_to_ml_in_background(candidate_id, ml_payload):
-    """
-    Called in a background thread to sync candidate profile data to the ML service.
-    Updates candidate_profile_summary and candidate_tags if returned by ML.
+    Single background thread that handles ALL heavy I/O:
+      1. Upload files to S3
+      2. Parse resume via ML
+      3. Analyze video via ML
+      4. Sync candidate data to ML
+    Updates candidate fields as each step completes.
     """
     from .models import Candidate
     from django.utils import timezone as tz
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+    from django.core.cache import cache
+
+    errors = []
+    candidate_updates = {}
+    cache_key = f"candidate_processing_{candidate_id}"
+
+    def _delete_old_file(file_path):
+        """Delete old file from S3 if it exists."""
+        if file_path:
+            try:
+                name = file_path.name if hasattr(file_path, 'name') else str(file_path)
+                if name and default_storage.exists(name):
+                    default_storage.delete(name)
+                    logger.info(f"[BG] Deleted old file from S3: {name}")
+            except Exception as e:
+                logger.error(f"[BG] Failed to delete old file {file_path}: {e}")
+
     try:
-        headers = {"Content-Type": "application/json"}
-        if hasattr(settings, 'ML_API_KEY'):
-            headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+        # Mark as processing in cache (10 min TTL)
+        cache.set(cache_key, {'status': 'processing', 'error': None}, timeout=600)
 
-        update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate_id}"
-        create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate_id}"
+        # ---------- STEP 1: S3 File Uploads ----------
 
-        resp = requests.patch(update_url, json=ml_payload, headers=headers)
+        # 1a. Profile image upload
+        if profile_image_info:
+            try:
+                _delete_old_file(old_profile_image_path)
+                from utils.file_validators import image_upload_path
+                path = image_upload_path(None, profile_image_info['name'])
+                default_storage.save(path, ContentFile(profile_image_info['bytes']))
+                candidate_updates['profile_image'] = path
+                logger.info(f"[BG] Profile image uploaded to S3 for candidate {candidate_id}")
+            except Exception as e:
+                errors.append(f"Profile image upload: {e}")
+                logger.error(f"[BG] Profile image upload failed for candidate {candidate_id}: {e}", exc_info=True)
 
-        if resp.status_code == 404:
-            logger.info(f"[BG] Candidate {candidate_id} not in ML, creating new")
-            resp = requests.post(create_url, json=ml_payload, headers=headers)
+        # 1b. Resume upload
+        resume_s3_path = None
+        if resume_info:
+            try:
+                _delete_old_file(old_resume_path)
+                path = resume_info['upload_path']
+                default_storage.save(path, ContentFile(resume_info['bytes']))
+                candidate_updates['resume_url'] = path
+                candidate_updates['portfolio_completed'] = True
+                resume_s3_path = path
+                logger.info(f"[BG] Resume uploaded to S3 for candidate {candidate_id}")
+            except Exception as e:
+                errors.append(f"Resume upload: {e}")
+                logger.error(f"[BG] Resume upload failed for candidate {candidate_id}: {e}", exc_info=True)
 
-        if resp.status_code not in (200, 201):
-            logger.error(f"[BG] ML sync failed: {resp.status_code} - {resp.text[:500]}")
+        # 1c. Video upload
+        video_s3_path = None
+        if video_info:
+            try:
+                _delete_old_file(old_video_path)
+                path = video_info['upload_path']
+                default_storage.save(path, ContentFile(video_info['bytes']))
+                candidate_updates['video_intro_url'] = path
+                candidate_updates['portfolio_completed'] = True
+                video_s3_path = path
+                logger.info(f"[BG] Video uploaded to S3 for candidate {candidate_id}")
+            except Exception as e:
+                errors.append(f"Video upload: {e}")
+                logger.error(f"[BG] Video upload failed for candidate {candidate_id}: {e}", exc_info=True)
+
+        # Flush S3 paths to DB so they're visible immediately
+        if candidate_updates:
+            candidate_updates['updated_at'] = tz.now()
+            Candidate.objects.filter(id=candidate_id).update(**candidate_updates)
+            logger.info(f"[BG] S3 paths saved to DB for candidate {candidate_id}")
+
+        # ---------- STEP 2: ML Resume Parse ----------
+        if resume_info:
+            try:
+                files_ml = {
+                    'resume_file': (
+                        resume_info['name'],
+                        io.BytesIO(resume_info['bytes']),
+                        resume_info['content_type'],
+                    )
+                }
+                parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
+                resp = requests.post(parse_url, files=files_ml, timeout=120)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get('success'):
+                        Candidate.objects.filter(id=candidate_id).update(
+                            resume_data=result.get('data', {})
+                        )
+                        logger.info(f"[BG] Resume parsed successfully for candidate {candidate_id}")
+                    else:
+                        logger.warning(f"[BG] Resume parse returned success=False for candidate {candidate_id}")
+                else:
+                    logger.error(f"[BG] Resume parsing failed with status {resp.status_code} for candidate {candidate_id}")
+            except Exception as e:
+                errors.append(f"Resume parse: {e}")
+                logger.error(f"[BG] Resume parsing exception for candidate {candidate_id}: {e}", exc_info=True)
+
+        # ---------- STEP 3: ML Video Analysis ----------
+        if video_info:
+            try:
+                analyze_url = f"{settings.FLIT_AI_URL}/analyze_intro_video"
+                files_video = {
+                    'video_file': (
+                        video_info['name'],
+                        io.BytesIO(video_info['bytes']),
+                        video_info['content_type'],
+                    )
+                }
+                video_url = ''
+                if build_absolute_uri_base and video_s3_path:
+                    try:
+                        video_url = f"{build_absolute_uri_base}{default_storage.url(video_s3_path)}"
+                    except Exception:
+                        video_url = video_s3_path or ''
+
+                video_payload = {
+                    'user_id': str(video_info['user_id']),
+                    'candidate_id': str(candidate_id),
+                    'video_url': video_url,
+                }
+                headers = {}
+                if hasattr(settings, 'ML_API_KEY'):
+                    headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+                resp = requests.post(analyze_url, files=files_video, data=video_payload, headers=headers, timeout=180)
+                if resp.status_code == 200:
+                    analysis = resp.json().get('analysis', {})
+                    update_fields = {}
+                    if transcription := analysis.get('video_transcript'):
+                        update_fields['video_transcription'] = transcription
+                    if analysis:
+                        update_fields['intro_video_description'] = analysis
+                    if update_fields:
+                        Candidate.objects.filter(id=candidate_id).update(**update_fields)
+                        logger.info(f"[BG] Video analyzed successfully for candidate {candidate_id}")
+                else:
+                    logger.error(f"[BG] Video analysis failed with status {resp.status_code} for candidate {candidate_id}")
+            except Exception as e:
+                errors.append(f"Video analysis: {e}")
+                logger.error(f"[BG] Video analysis exception for candidate {candidate_id}: {e}", exc_info=True)
+
+        # ---------- STEP 4: ML Sync ----------
+        if ml_payload:
+            try:
+                # Refresh URLs in payload if we just uploaded new files
+                if resume_s3_path:
+                    try:
+                        ml_payload['resume_url'] = f"{build_absolute_uri_base}{default_storage.url(resume_s3_path)}" if build_absolute_uri_base else resume_s3_path
+                    except Exception:
+                        ml_payload['resume_url'] = resume_s3_path or ''
+                if video_s3_path:
+                    try:
+                        ml_payload['video_intro_url'] = f"{build_absolute_uri_base}{default_storage.url(video_s3_path)}" if build_absolute_uri_base else video_s3_path
+                    except Exception:
+                        ml_payload['video_intro_url'] = video_s3_path or ''
+
+                headers = {"Content-Type": "application/json"}
+                if hasattr(settings, 'ML_API_KEY'):
+                    headers["Authorization"] = f"Bearer {settings.ML_API_KEY}"
+
+                update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate_id}"
+                create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate_id}"
+
+                resp = requests.patch(update_url, json=ml_payload, headers=headers)
+
+                if resp.status_code == 404:
+                    logger.info(f"[BG] Candidate {candidate_id} not in ML, creating new")
+                    resp = requests.post(create_url, json=ml_payload, headers=headers)
+
+                if resp.status_code not in (200, 201):
+                    logger.error(f"[BG] ML sync failed: {resp.status_code} - {resp.text[:500]}")
+                else:
+                    logger.info(f"[BG] ML sync successful ({resp.status_code}) for candidate {candidate_id}")
+                    ml_data = resp.json()
+                    ml_updates = {}
+                    if ml_data.get('candidate_profile_summary'):
+                        ml_updates['candidate_profile_summary'] = ml_data['candidate_profile_summary']
+                    if ml_data.get('candidate_tags'):
+                        ml_updates['candidate_tags'] = ml_data['candidate_tags']
+                    if ml_updates:
+                        ml_updates['updated_at'] = tz.now()
+                        Candidate.objects.filter(id=candidate_id).update(**ml_updates)
+            except Exception as e:
+                errors.append(f"ML sync: {e}")
+                logger.error(f"[BG] ML sync exception for candidate {candidate_id}: {e}", exc_info=True)
+
+        # ---------- DONE — mark status in cache ----------
+        if errors:
+            cache.set(cache_key, {'status': 'failed', 'error': '; '.join(errors)}, timeout=600)
+            logger.warning(f"[BG] Processing completed with errors for candidate {candidate_id}: {errors}")
         else:
-            logger.info(f"[BG] ML sync successful ({resp.status_code}) for candidate {candidate_id}")
-            ml_data = resp.json()
-            update_fields = {}
-            if ml_data.get('candidate_profile_summary'):
-                update_fields['candidate_profile_summary'] = ml_data['candidate_profile_summary']
-            if ml_data.get('candidate_tags'):
-                update_fields['candidate_tags'] = ml_data['candidate_tags']
-            if update_fields:
-                update_fields['updated_at'] = tz.now()
-                Candidate.objects.filter(id=candidate_id).update(**update_fields)
+            cache.set(cache_key, {'status': 'completed', 'error': None}, timeout=600)
+            logger.info(f"[BG] All processing completed successfully for candidate {candidate_id}")
+
     except Exception as e:
-        logger.error(f"[BG] ML sync exception for candidate {candidate_id}: {e}", exc_info=True)
+        logger.error(f"[BG] Fatal processing error for candidate {candidate_id}: {e}", exc_info=True)
+        try:
+            cache.set(cache_key, {'status': 'failed', 'error': str(e)}, timeout=600)
+        except Exception:
+            pass
 
 
 # =======================================================================
@@ -367,7 +496,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         list_fields = ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']
         boolean_fields = ['is_available']
 
-        # Video deletion
+        # Video deletion (keep synchronous — it's just a DB field clear + S3 delete)
         if data.get('remove_old_video') == 'true':
             if candidate.video_intro_url:
                 delete_old_file(candidate.video_intro_url)
@@ -376,66 +505,60 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 candidate.intro_video_description = {}
                 updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
 
-        # File uploads
+        # ---- Capture file bytes into memory (instant) — actual S3 upload deferred to background ----
+        bg_resume_info = None
+        bg_video_info = None
+        bg_profile_image_info = None
+        old_resume_path = None
+        old_video_path = None
+        old_profile_image_path = None
+        has_file_uploads = False
+
         if 'profile_image' in files:
-            if candidate.profile_image:
-                delete_old_file(candidate.profile_image)
-            candidate.profile_image = files['profile_image']
-            updated_fields.append('profile_image')
+            profile_img = files['profile_image']
+            old_profile_image_path = candidate.profile_image.name if candidate.profile_image and hasattr(candidate.profile_image, 'name') else None
+            bg_profile_image_info = {
+                'bytes': profile_img.read(),
+                'name': profile_img.name,
+                'content_type': profile_img.content_type,
+            }
+            has_file_uploads = True
+            logger.info(f"Profile image bytes captured ({len(bg_profile_image_info['bytes'])} bytes) for background upload")
 
         if 'resume_file' in files or 'resume' in files:
             resume_file = files.get('resume_file') or files.get('resume')
-            if candidate.resume_url:
-                delete_old_file(candidate.resume_url)
-            path = self._save_file(resume_file, resume_upload_path)
-            if path:
-                candidate.resume_url = path
-                candidate.portfolio_completed = True
-                updated_fields.extend(['resume_url', 'portfolio_completed'])
-                # ML parse — run in background so profile create returns instantly
-                try:
-                    resume_file.seek(0)
-                    file_bytes = resume_file.read()
-                    t = threading.Thread(
-                        target=_parse_resume_in_background,
-                        args=(candidate.id, file_bytes, resume_file.name, resume_file.content_type),
-                        daemon=True,
-                    )
-                    t.start()
-                    logger.info(f"[BG] Resume parsing started in background for candidate {candidate.id}")
-                except Exception as e:
-                    logger.error(f"Failed to start resume background thread: {e}", exc_info=True)
+            old_resume_path = candidate.resume_url.name if candidate.resume_url and hasattr(candidate.resume_url, 'name') else None
+            upload_path = resume_upload_path(None, resume_file.name)
+            resume_file.seek(0)
+            bg_resume_info = {
+                'bytes': resume_file.read(),
+                'name': resume_file.name,
+                'content_type': resume_file.content_type,
+                'upload_path': upload_path,
+            }
+            # Set completion flag now (S3 upload happens in background)
+            candidate.portfolio_completed = True
+            updated_fields.append('portfolio_completed')
+            has_file_uploads = True
+            logger.info(f"Resume bytes captured ({len(bg_resume_info['bytes'])} bytes) for background upload")
 
         if 'video_file' in files:
             video_file = files['video_file']
-            if candidate.video_intro_url:
-                delete_old_file(candidate.video_intro_url)
-            path = self._save_file(video_file, video_upload_path)
-            if path:
-                candidate.video_intro_url = path
-                candidate.portfolio_completed = True
-                updated_fields.extend(['video_intro_url', 'portfolio_completed'])
-                # ML video analysis — run in background so profile create returns instantly
-                try:
-                    video_file.seek(0)
-                    file_bytes = video_file.read()
-                    video_url = request.build_absolute_uri(path)
-                    t = threading.Thread(
-                        target=_analyze_video_in_background,
-                        args=(
-                            candidate.id,
-                            file_bytes,
-                            video_file.name,
-                            video_file.content_type,
-                            request.user.id,
-                            video_url,
-                        ),
-                        daemon=True,
-                    )
-                    t.start()
-                    logger.info(f"[BG] Video analysis started in background for candidate {candidate.id}")
-                except Exception as e:
-                    logger.error(f"Failed to start video background thread: {e}", exc_info=True)
+            old_video_path = candidate.video_intro_url.name if candidate.video_intro_url and hasattr(candidate.video_intro_url, 'name') else None
+            upload_path = video_upload_path(None, video_file.name)
+            video_file.seek(0)
+            bg_video_info = {
+                'bytes': video_file.read(),
+                'name': video_file.name,
+                'content_type': video_file.content_type,
+                'upload_path': upload_path,
+                'user_id': request.user.id,
+            }
+            # Set completion flag now (S3 upload happens in background)
+            candidate.portfolio_completed = True
+            updated_fields.append('portfolio_completed')
+            has_file_uploads = True
+            logger.info(f"Video bytes captured ({len(bg_video_info['bytes'])} bytes) for background upload")
 
         # Text & list fields
         text_fields = [
@@ -698,7 +821,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             else:
                 logger.info("No achievements data in request")
         
-        # ML sync — run in background so profile update returns instantly
+        # ---- SINGLE BACKGROUND THREAD: S3 uploads + ML calls ----
+        # Build ML payload and spawn one thread for ALL heavy I/O
         try:
             ml_payload = {
                 "full_name": candidate.full_name or "",
@@ -720,19 +844,70 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 "user_id": str(candidate.user.id),
                 "email": candidate.user.email or "",
             }
+
+            # Extract origin base for building absolute URIs in background thread
+            build_absolute_uri_base = request.build_absolute_uri('/').rstrip('/')
+
             t = threading.Thread(
-                target=_sync_candidate_to_ml_in_background,
-                args=(candidate.id, ml_payload),
+                target=_process_files_and_ml_in_background,
+                kwargs={
+                    'candidate_id': candidate.id,
+                    'resume_info': bg_resume_info,
+                    'video_info': bg_video_info,
+                    'profile_image_info': bg_profile_image_info,
+                    'old_resume_path': old_resume_path,
+                    'old_video_path': old_video_path,
+                    'old_profile_image_path': old_profile_image_path,
+                    'ml_payload': ml_payload,
+                    'build_absolute_uri_base': build_absolute_uri_base,
+                },
                 daemon=True,
             )
             t.start()
-            logger.info(f"[BG] ML sync started in background for candidate {candidate.id}")
+            logger.info(f"[BG] Background processing started for candidate {candidate.id} "
+                        f"(files: resume={bg_resume_info is not None}, video={bg_video_info is not None}, "
+                        f"image={bg_profile_image_info is not None})")
         except Exception as e:
-            logger.error(f"Failed to start ML sync background thread: {e}", exc_info=True)
+            logger.error(f"Failed to start background processing thread: {e}", exc_info=True)
 
         response_data = CandidateSerializer(candidate, context={'request': request}).data
-        response_data['ml_sync'] = 'processing'
+        response_data['processing_status'] = 'processing' if has_file_uploads else 'idle'
         return Response(response_data)
+
+    # ====================== PROCESSING STATUS POLLING ======================
+    @action(detail=False, methods=['get'], url_path='processing-status')
+    def processing_status(self, request):
+        """
+        Lightweight polling endpoint for frontend to check if background
+        file processing (S3 upload + ML) is complete.
+        Usage: GET /candidates/processing-status/
+        Returns:
+          - processing_status: 'idle' | 'processing' | 'completed' | 'failed'
+          - processing_error: error string if failed, else null
+          - profile: full profile data when completed (so frontend can refresh)
+        """
+        candidate = self.get_candidate()
+        cache_key = f"candidate_processing_{candidate.id}"
+        cached = cache.get(cache_key)
+
+        if cached:
+            status = cached.get('status', 'idle')
+            error = cached.get('error')
+            response_data = {
+                'processing_status': status,
+                'processing_error': error,
+            }
+            # If completed/failed, include fresh profile and clear cache
+            if status in ('completed', 'failed'):
+                candidate.refresh_from_db()
+                response_data['profile'] = CandidateSerializer(candidate, context={'request': request}).data
+                cache.delete(cache_key)
+            return Response(response_data)
+
+        return Response({
+            'processing_status': 'idle',
+            'processing_error': None,
+        })
 
     # ====================== DOWNLOAD RESUME ACTION ======================
     @action(detail=False, methods=['get'], url_path='download-resume')

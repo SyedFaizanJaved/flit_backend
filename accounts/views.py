@@ -216,7 +216,10 @@ def admin_dashboard(request):
 
     # Initialize pagination
     pagination = CustomPagination()
-    page_size = request.query_params.get('page_size', 20)  # Default page size is 20
+    try:
+        page_size = int(request.query_params.get('page_size', 20) or 20)
+    except (ValueError, TypeError):
+        page_size = 20
     
     # Get recent items with pagination
     recent_candidates = Candidate.objects.order_by('-created_at').values('id', 'full_name', 'title')
@@ -250,7 +253,7 @@ def admin_dashboard(request):
             'count': pagination.page.paginator.count,
             'next': pagination.get_next_link(),
             'previous': pagination.get_previous_link(),
-            'page_size': int(page_size)
+            'page_size': page_size
         }
     }
 
@@ -371,13 +374,17 @@ def admin_candidate_detail(request, pk):
         # Combine and sort all applications by applied_at
         all_applications = sorted(
             job_applications + project_applications,
-            key=lambda x: x['applied_at'] if x['applied_at'] else '',
+            key=lambda x: x['applied_at'].isoformat() if x['applied_at'] and hasattr(x['applied_at'], 'isoformat') else str(x['applied_at'] or ''),
             reverse=True
         )
         
         # Paginate applications
         pagination = CustomPagination()
-        page_size = request.query_params.get('page_size', 20)
+        try:
+            page_size = int(request.query_params.get('page_size', 20) or 20)
+        except (ValueError, TypeError):
+            page_size = 20
+            
         paginated_applications = pagination.paginate_queryset(all_applications, request)
         
         data = {
@@ -401,15 +408,15 @@ def admin_candidate_detail(request, pk):
             'preferred_roles': getattr(candidate, 'preferred_roles', []),
             'min_salary': getattr(candidate, 'min_salary', None),
             'max_salary': getattr(candidate, 'max_salary', None),
-            'resume_url': getattr(candidate, 'resume_url', ''),
-            'video_intro_url': getattr(candidate, 'video_intro_url', ''),
+            'resume_url': candidate.resume_url.url if candidate.resume_url else '',
+            'video_intro_url': candidate.video_intro_url.url if hasattr(candidate, 'video_intro_url') and candidate.video_intro_url else '',
             'video_transcription': getattr(candidate, 'video_transcription', ''),
             'privacy_completed': getattr(candidate, 'privacy_completed', False),
             'location': getattr(candidate, 'location', ''),
             'passion_projects': getattr(candidate, 'passion_projects', ''),
-            'profile_image': candidate.user.profile_image.url if hasattr(candidate, 'user') and hasattr(candidate.user, 'profile_image') and candidate.user.profile_image else None,
+            'profile_image': candidate.profile_image.url if candidate.profile_image else (candidate.user.profile_image.url if hasattr(candidate, 'user') and hasattr(candidate.user, 'profile_image') and candidate.user.profile_image else None),
             'profile_views': getattr(candidate, 'profile_views', 0),
-            'viewers_count': len(getattr(candidate, 'viewers', [])),
+            'viewers_count': len(candidate.viewers or []) if hasattr(candidate, 'viewers') else 0,
             'profile_views_display': str(getattr(candidate, 'profile_views', 0)),
             'created_at': getattr(candidate, 'created_at', None),
             'updated_at': getattr(candidate, 'updated_at', None),
@@ -421,7 +428,7 @@ def admin_candidate_detail(request, pk):
                 'count': len(all_applications),
                 'next': pagination.get_next_link(),
                 'previous': pagination.get_previous_link(),
-                'page_size': int(page_size)
+                'page_size': page_size
             }
         }
         return Response(data, status=status.HTTP_200_OK)
