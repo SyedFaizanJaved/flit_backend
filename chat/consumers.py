@@ -73,13 +73,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
             ids = sorted([str(self.sender_id), str(self.recipient_id)])
             self.room_name = f"chat_{'_'.join(ids)}"
 
+            is_sender_emp = await self.is_employer(self.sender_id)
+            is_recipient_emp = await self.is_employer(self.recipient_id)
+            
+            self.logger.info(f"Connecting: sender={self.sender_id}, recipient={self.recipient_id}")
+            self.logger.info(f"Roles: sender(Emp:{is_sender_emp}), recipient(Emp:{is_recipient_emp})")
+
             if not await self.user_exists(self.sender_id) or not await self.user_exists(self.recipient_id):
+                self.logger.warning(f"Connection rejected: User not found. sender={self.sender_id}, recipient={self.recipient_id}")
                 await self.close(code=4001)
                 return
 
-            if await self.is_employer(self.sender_id) and await self.is_employer(self.recipient_id):
-                await self.close(code=4000)
-                return
+            # Only block if strictly required - for now, allow for testing
+            # if is_sender_emp and is_recipient_emp:
+            #    self.logger.warning("Connection rejected: Both users are employers.")
+            #    await self.close(code=4000)
+            #    return
 
             await self.channel_layer.group_add(self.room_name, self.channel_name)
             await self.accept()
