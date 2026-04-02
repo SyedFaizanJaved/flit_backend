@@ -344,7 +344,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Candidate
         fields = [
-            "id", "full_name", "profile_completed", "title", "bio", "work_style", "availability_type",
+            "id", "full_name", "profile_completed", "title", "bio", "candidate_profile_summary", "work_style", "availability_type",
             "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "salary_currency",
             "resume_url", "ai_resume_url", "video_intro_url",
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
@@ -411,6 +411,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     def get_passion_projects(self, obj):
         return obj.passion_projects
     
+
     def get_user_timezone(self, obj):
         """Get timezone from related User model."""
         if obj.user and hasattr(obj.user, 'user_timezone') and obj.user.user_timezone:
@@ -557,7 +558,14 @@ class CandidateListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Candidate
-        fields = '__all__'
+        fields = [
+            "id", "full_name", "profile_completed", "title", "bio", "candidate_profile_summary", "work_style", "availability_type",
+            "skills", "superpowers", "preferred_roles", "min_salary", "max_salary", "salary_currency",
+            "resume_url", "ai_resume_url", "video_intro_url",
+            "video_transcription", "privacy_completed", "location", "created_at", "updated_at",
+            "profile_image", "profile_views", "profile_views_display",
+            "passion_projects", "portfolio_links", "seniority_level", "is_available"
+        ]
 
     def get_profile_completed(self, obj):
         try:
@@ -739,7 +747,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
                  'salary_currency', 'portfolio_links', 'profile_image', 'resume_url', 
                  'video_intro_url', 'intro_video_description', 'profile_visibility', 
                  'video_transcription', 'seniority_level',
-                 'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed')
+                 'video_visibility', 'contact_visibility', 'salary_visibility', 'privacy_completed', 'candidate_profile_summary')
     
     def to_internal_value(self, data):
     

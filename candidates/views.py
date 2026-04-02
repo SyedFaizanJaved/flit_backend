@@ -564,7 +564,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         text_fields = [
             'full_name', 'title', 'bio', 'location', 'work_style', 'availability_type', 'is_available',
             'skills', 'superpowers', 'preferred_roles', 'portfolio_links', 'profile_visibility',
-            'min_salary', 'max_salary', 'salary_currency', 'seniority_level', 'passion_projects'
+            'min_salary', 'max_salary', 'salary_currency', 'seniority_level', 'passion_projects','candidate_profile_summary'
         ]
         for field in text_fields:
             if field in data:
@@ -843,6 +843,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 "resume_data": candidate.resume_data or {},
                 "user_id": str(candidate.user.id),
                 "email": candidate.user.email or "",
+                "candidate_profile_summary": candidate.candidate_profile_summary or "",
             }
 
             # Extract origin base for building absolute URIs in background thread
