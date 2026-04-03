@@ -126,7 +126,7 @@ class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMi
         # Auto-close expired jobs
         expired_jobs = Job.objects.filter(
             status='active',
-            applicationDeadline__lt=timezone.now()
+            applicationDeadline__date__lt=timezone.now().date()
         )
         for job in expired_jobs:
             job.status = 'closed'
@@ -139,7 +139,7 @@ class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMi
 
         # Base queryset with active status and deadline >= today (or no deadline)
         queryset = super().get_queryset().filter(
-            models.Q(applicationDeadline__gte=timezone.now()) | 
+            models.Q(applicationDeadline__date__gte=timezone.now().date()) | 
             models.Q(applicationDeadline__isnull=True)
         )
     
@@ -189,7 +189,7 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
         # Auto-close expired jobs
         expired_jobs = Job.objects.filter(
             status='active',
-            applicationDeadline__lt=timezone.now()
+            applicationDeadline__date__lt=timezone.now().date()
         )
         for job in expired_jobs:
             job.status = 'closed'
