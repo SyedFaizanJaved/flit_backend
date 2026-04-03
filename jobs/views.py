@@ -33,8 +33,81 @@ class PublicAuthentication(BaseAuthentication):
         return None
 
 
+class JobMLMixin:
+    """
+    Mixin to handle ML API integrations for Jobs
+    """
+    def _call_ml_create_api(self, job):
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/create_jobs/{job.id}", job, is_create=True)
+
+    def _call_ml_update_api(self, job):
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_job_data/{job.id}", job, is_create=False)
+
+    def _call_ml_metadata_api(self, job):
+        """
+        New API for updating job metadata, specifically used when status changes (e.g., auto-closed)
+        """
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_job_metadata/{job.id}", job, is_create=False)
+
+    def _call_ml_api(self, url, job, is_create=True):
+        payload = {
+            "title": job.title,
+            "description": job.description,
+            "company_name": job.company.company_name if job.company else "",
+            "employment_type": job.employmentType,
+            "experience_level": job.experienceLevel,
+            "work_style": job.workStyle,
+            "category": job.category,
+            "salary_range_min": job.salaryRangeMin,
+            "salary_range_max": job.salaryRangeMax,
+            "benefits": job.benefits or [],
+            "application_deadline": job.applicationDeadline.isoformat() if job.applicationDeadline else None,
+            "status": job.status,
+            "location": job.location,
+            "skills": job.skills or [],
+        }
+
+        method = requests.post if is_create else requests.patch
+        max_retries = 2
+
+        for attempt in range(max_retries + 1):
+            try:
+                ml_response = method(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+                break
+            except requests.exceptions.Timeout:
+                if attempt == max_retries:
+                    return False, None, [], "ML API timed out after retries"
+                time.sleep(1)
+            except requests.exceptions.RequestException as e:
+                return False, None, [], f"ML API request failed: {str(e)}"
+
+        if ml_response.status_code in (200, 201):
+            try:
+                data = ml_response.json()
+                summary = data.get('job_profile_summary')
+                tags = data.get('job_tags', [])
+
+                updates = {}
+                if summary is not None:
+                    updates['job_profile_summary'] = summary
+                if tags:
+                    updates['job_tags'] = tags
+                if updates:
+                    for field, value in updates.items():
+                        setattr(job, field, value)
+                    job.save(update_fields=updates.keys())
+
+                return True, summary, tags, None
+            except Exception as e:
+                exception_logger.exception("Error processing ML response")
+                return False, None, [], "Invalid ML response format"
+        else:
+            return False, None, [], f"ML API error: {ml_response.status_code}"
+
+
+
 @permission_classes([permissions.IsAuthenticatedOrReadOnly])
-class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
+class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
     """
     Public endpoints: List and retrieve active jobs (no auth required)
     """
@@ -51,10 +124,18 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
 
     def get_queryset(self):
         # Auto-close expired jobs
-        Job.objects.filter(
+        expired_jobs = Job.objects.filter(
             status='active',
             applicationDeadline__lt=timezone.now()
-        ).update(status='closed')
+        )
+        for job in expired_jobs:
+            job.status = 'closed'
+            job.save(update_fields=['status'])
+            # Notify ML API about the auto-closure
+            try:
+                self._call_ml_metadata_api(job)
+            except Exception as e:
+                logger.error(f"Failed to call ML metadata API for job {job.id}: {str(e)}")
 
         # Base queryset with active status and deadline >= today (or no deadline)
         queryset = super().get_queryset().filter(
@@ -92,7 +173,7 @@ class PublicJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Generic
         })
 
 
-class JobViewSet(viewsets.ModelViewSet):
+class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
     queryset = Job.objects.all().select_related('company')
     serializer_class = JobSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -106,10 +187,18 @@ class JobViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Auto-close expired jobs
-        Job.objects.filter(
+        expired_jobs = Job.objects.filter(
             status='active',
             applicationDeadline__lt=timezone.now()
-        ).update(status='closed')
+        )
+        for job in expired_jobs:
+            job.status = 'closed'
+            job.save(update_fields=['status'])
+            # Notify ML API about the auto-closure
+            try:
+                self._call_ml_metadata_api(job)
+            except Exception as e:
+                logger.error(f"Failed to call ML metadata API for job {job.id}: {str(e)}")
 
         qs = super().get_queryset()
 
@@ -239,44 +328,6 @@ class JobViewSet(viewsets.ModelViewSet):
             response.data['message'] += f' (ML processing failed: {ml_error})'
 
         return response
-
-    def _call_ml_create_api(self, job):
-        return self._call_ml_api(f"{settings.FLIT_AI_URL}/create_jobs/{job.id}", job, is_create=True)
-
-    def _call_ml_update_api(self, job):
-        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_job_data/{job.id}", job, is_create=False)
-
-    def _call_ml_api(self, url, job, is_create=True):
-        payload = {
-            "title": job.title,
-            "description": job.description,
-            "company_name": job.company.company_name if job.company else "",
-            "employment_type": job.employmentType,
-            "experience_level": job.experienceLevel,
-            "work_style": job.workStyle,
-            "category": job.category,
-            "salary_range_min": job.salaryRangeMin,
-            "salary_range_max": job.salaryRangeMax,
-            "benefits": job.benefits or [],
-            "application_deadline": job.applicationDeadline.isoformat() if job.applicationDeadline else None,
-            "status": job.status,
-            "location": job.location,
-            "skills": job.skills or [],
-        }
-
-        method = requests.post if is_create else requests.patch
-        max_retries = 2
-
-        for attempt in range(max_retries + 1):
-            try:
-                ml_response = method(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
-                break
-            except requests.exceptions.Timeout:
-                if attempt == max_retries:
-                    return False, None, [], "ML API timed out after retries"
-                time.sleep(1)
-            except requests.exceptions.RequestException as e:
-                return False, None, [], f"ML API request failed: {str(e)}"
 
         if ml_response.status_code in (200, 201):
             try:

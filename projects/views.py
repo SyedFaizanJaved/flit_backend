@@ -29,7 +29,77 @@ class PublicAuthentication(BaseAuthentication):
     def authenticate(self, request):
         return None
 
-class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
+class ProjectMLMixin:
+    """
+    Mixin to handle ML API integrations for Projects
+    """
+    def _get_ml_payload(self, project):
+        return {
+            "title": project.title,
+            "description": project.description,
+            "company_name": project.company.company_name if project.company else "",
+            "category": project.category,
+            "skills": project.skills if hasattr(project, 'skills') else [],
+            "paymentType": project.paymentType,
+            "paymentAmount": project.paymentAmount,
+            "estimatedHours": project.estimatedHours,
+            "deadline": project.deadline.isoformat() if project.deadline else None,
+            "status": project.status
+        }
+
+    def _call_ml_create_api(self, project):
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/create_projects/{project.id}", project, is_create=True)
+
+    def _call_ml_update_api(self, project):
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_project_data/{project.id}", project, is_create=False)
+
+    def _call_ml_metadata_api(self, project):
+        """
+        New API for updating project metadata, specifically used when status changes (e.g., auto-closed)
+        """
+        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_project_metadata/{project.id}", project, is_create=False)
+
+    def _call_ml_api(self, url, project, is_create=True):
+        payload = self._get_ml_payload(project)
+        method = requests.post if is_create else requests.patch
+        max_retries = 2
+
+        for attempt in range(max_retries + 1):
+            try:
+                ml_response = method(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+                break
+            except requests.exceptions.Timeout:
+                if attempt == max_retries:
+                    return False, None, [], "ML API timed out after retries"
+                time.sleep(1)
+            except requests.exceptions.RequestException as e:
+                return False, None, [], f"ML API request failed: {str(e)}"
+
+        if ml_response.status_code in (200, 201):
+            try:
+                data = ml_response.json()
+                summary = data.get('project_profile_summary')
+                tags = data.get('project_tags', [])
+
+                updates = {}
+                if summary is not None:
+                    updates['project_profile_summary'] = summary
+                if tags:
+                    updates['project_tags'] = tags
+                
+                if updates:
+                    for field, value in updates.items():
+                        setattr(project, field, value)
+                    project.save(update_fields=updates.keys())
+
+                return True, summary, tags, None
+            except Exception as e:
+                exception_logger.exception("Error processing ML response")
+                return False, None, [], "Invalid ML response format"
+        else:
+            return False, None, [], f"ML API error: {ml_response.status_code}"
+
+class PublicProjectViewSet(ProjectMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectListSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -43,10 +113,18 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
 
     def get_queryset(self):
         # Auto-close expired projects
-        Project.objects.filter(
+        expired_projects = Project.objects.filter(
             status='active',
             deadline__lt=timezone.now().date()
-        ).update(status='closed')
+        )
+        for project in expired_projects:
+            project.status = 'closed'
+            project.save(update_fields=['status'])
+            # Notify ML API about the auto-closure
+            try:
+                self._call_ml_metadata_api(project)
+            except Exception as e:
+                logger.error(f"Failed to call ML metadata API for project {project.id}: {str(e)}")
 
         # Base queryset with active status and deadline >= today
         queryset = super().get_queryset().filter(
@@ -82,7 +160,7 @@ class PublicProjectViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gen
             'results': serializer.data
         })
 
-class ProjectViewSet(viewsets.ModelViewSet):
+class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -94,10 +172,18 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Auto-close expired projects
-        Project.objects.filter(
+        expired_projects = Project.objects.filter(
             status='active',
             deadline__lt=timezone.now().date()
-        ).update(status='closed')
+        )
+        for project in expired_projects:
+            project.status = 'closed'
+            project.save(update_fields=['status'])
+            # Notify ML API about the auto-closure
+            try:
+                self._call_ml_metadata_api(project)
+            except Exception as e:
+                logger.error(f"Failed to call ML metadata API for project {project.id}: {str(e)}")
         
         queryset = super().get_queryset()
 
@@ -208,91 +294,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if response.status_code != status.HTTP_201_CREATED:
             return response
 
-        ml_success = False
-        project_profile_summary = None
-        project_tags = []
-        ml_error = None
-
-        project_id = response.data.get('id')
-        project = None
-
-        if not project_id:
-            ml_error = 'Project ID missing in response; cannot trigger ML sync'
-            logger.error(ml_error)
-        else:
-            try:
-                project = Project.objects.get(id=project_id)
-            except Project.DoesNotExist:
-                exception_logger.error(f"Project.DoesNotExist: Project with ID {project_id} not found for ML sync")
-                ml_error = f'Project with ID {project_id} not found for ML sync'
-                logger.error(ml_error)
-
-        if project:
-            ml_api_url = f"{settings.FLIT_AI_URL}/create_projects/{project.id}"
-            ml_payload = {
-                "title": project.title,
-                "description": project.description,
-                "company_name": project.company.company_name if project.company else "",
-                "category": project.category,
-                "skills": project.skills if hasattr(project, 'skills') else [],
-                "paymentType": project.paymentType,
-                "paymentAmount": project.paymentAmount,
-                "estimatedHours": project.estimatedHours,
-                "deadline": project.deadline.isoformat() if project.deadline else None,
-                "status": project.status
-            }
-
-            try:
-                logger.info(f"Calling Project create ML API for project {project.id}")
-                ml_response = requests.post(
-                    ml_api_url,
-                    json=ml_payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30
-                )
-                logger.info(f"Project create ML API response status: {ml_response.status_code}")
-                
-            except requests.exceptions.Timeout:
-                exception_logger.error("Project create ML API timed out")
-                ml_error = "Project create ML API timed out"
-                logger.error(ml_error)
-                raise
-            except requests.exceptions.RequestException as exc:
-                exception_logger.exception("Project create ML API request failed")
-                ml_error = f"Project create ML API request failed: {str(exc)}"
-                logger.error(ml_error, exc_info=True)
-                raise
-
-            if ml_response is not None:
-                if ml_response.status_code in (200, 201):
-                    try:
-                        ml_data = ml_response.json()
-                        project_profile_summary = ml_data.get('project_profile_summary')
-                        project_tags = ml_data.get('project_tags', [])
-
-                        updates = {}
-                        if project_profile_summary is not None:
-                            updates['project_profile_summary'] = project_profile_summary
-                        if project_tags:
-                            updates['project_tags'] = project_tags
-
-                        if updates:
-                            for field, value in updates.items():
-                                setattr(project, field, value)
-                            project.save(update_fields=list(updates.keys()))
-
-                        ml_success = True
-                    except ValueError:
-                        exception_logger.error("Invalid JSON response from Project create ML API")
-                        ml_error = "Invalid JSON response from Project create ML API"
-                        logger.error(ml_error)
-                    except Exception as exc:
-                        exception_logger.exception("Error processing Project create ML API response")
-                        ml_error = f"Error processing Project create ML API response: {str(exc)}"
-                        logger.error(ml_error, exc_info=True)
-                else:
-                    ml_error = f"Project create ML API returned status code {ml_response.status_code}"
-                    logger.error(f"{ml_error}. Response content: {ml_response.text}")
+        project = Project.objects.get(id=response.data['id'])
+        ml_success, project_profile_summary, project_tags, ml_error = self._call_ml_create_api(project)
 
         response.data = {
             'message': 'Project created successfully',
@@ -301,7 +304,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'project_tags': project_tags,
             'data': response.data
         }
-
         if ml_error:
             response.data['ml_error'] = ml_error
 
@@ -309,89 +311,25 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
-        
-        if response.status_code == status.HTTP_200_OK:
-            try:
-                project = self.get_object()
-                
-                ml_api_url = f"{settings.FLIT_AI_URL}/update_project_data/{project.id}"
-                ml_payload = {
-                    "title": project.title,
-                    "description": project.description,
-                    "company_name": project.company.company_name if project.company else "",
-                    "category": project.category,
-                    "skills": project.skills if hasattr(project, 'skills') else [],
-                    "paymentType": project.paymentType,
-                    "paymentAmount": project.paymentAmount,
-                    "estimatedHours": project.estimatedHours,
-                    "deadline": project.deadline.isoformat() if project.deadline else None,
-                    "status": project.status
-                }
-                
-                max_retries = 2
-                timeout_seconds = 30
-                
-                for attempt in range(max_retries + 1):
-                    try:
-                        ml_response = requests.patch(
-                            ml_api_url,
-                            json=ml_payload,
-                            headers={"Content-Type": "application/json"},
-                            timeout=timeout_seconds
-                        )
-                        break
-                    except requests.exceptions.Timeout:
-                        if attempt == max_retries:
-                            exception_logger.error("Project ML API timed out after retries")
-                            raise
-                        time.sleep(1)
-                    except requests.exceptions.RequestException as e:
-                        exception_logger.exception("Project ML API request failed")
-                        raise
-                
-                if ml_response.status_code == 200:
-                    try:
-                        ml_data = ml_response.json()
-                        if 'project_profile_summary' in ml_data:
-                            project.project_profile_summary = ml_data['project_profile_summary']
-                        if 'project_tags' in ml_data:
-                            project.project_tags = ml_data['project_tags']
-                        project.save()
-                        
-                        response.data = {
-                            'message': 'Project updated successfully',
-                            'ml_success': True,
-                            'project_profile_summary': ml_data.get('project_profile_summary', ''),
-                            'project_tags': ml_data.get('project_tags', []),
-                            'data': response.data
-                        }
-                    except Exception as e:
-                        exception_logger.exception("Error processing Project ML API response")
-                        response.data = {
-                            'message': 'Project updated successfully (ML processing failed - invalid response format)',
-                            'ml_success': False,
-                            'project_profile_summary': None,
-                            'project_tags': [],
-                            'data': response.data
-                        }
-                else:
-                    response.data = {
-                        'message': f'Project updated successfully (ML processing failed - HTTP {ml_response.status_code})',
-                        'ml_success': False,
-                        'project_profile_summary': None,
-                        'project_tags': [],
-                        'data': response.data
-                    }
-                    
-            except Exception as e:
-                exception_logger.exception("Error calling Project ML API")
-                response.data = {
-                    'message': f'Project updated successfully (ML processing failed - {str(e)})',
-                    'ml_success': False,
-                    'project_profile_summary': None,
-                    'project_tags': [],
-                    'data': response.data
-                }
+        if response.status_code != status.HTTP_200_OK:
+            return response
+
+        project = self.get_object()
+        ml_success, project_profile_summary, project_tags, ml_error = self._call_ml_update_api(project)
+
+        updated_data = ProjectSerializer(project).data
+        response.data = {
+            'message': 'Project updated successfully',
+            'ml_success': ml_success,
+            'project_profile_summary': project_profile_summary,
+            'project_tags': project_tags,
+            'data': updated_data
+        }
+        if ml_error:
+            response.data['ml_error'] = ml_error
+            response.data['message'] += f' (ML processing failed: {ml_error})'
+
+        return response
         
         return response
         
