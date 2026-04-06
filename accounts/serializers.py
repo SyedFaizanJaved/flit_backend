@@ -337,15 +337,9 @@ class PasswordResetRequestSerializer(serializers.Serializer):
         )
 
         reset_url = f"{settings.PASSWORD_RESET_URL}?token={token_str}"
-        subject = 'Reset your password'
-        message = (
-            f"Click the link to reset your password: {reset_url}\n"
-            f"This link expires in 10 minutes."
-        )
-        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
-    
-         # Remove fail_silently=True and the try-except to expose errors
-        sent_count = send_mail(subject, message, from_email, [user.email], fail_silently=False)
+        
+        from utils.email_service import send_password_reset_email
+        send_password_reset_email(user, reset_url)
 
         return {
             'email': user.email,
