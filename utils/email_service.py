@@ -199,7 +199,7 @@ def send_email(to_email, subject, text_content, html_content):
         return False
 
 
-def send_shortlist_notification(candidate, job_or_project_title, application_type='job'):
+def send_shortlist_notification(candidate, job_or_project_title, application_type='job', company_name=None):
     """
     Send email notification when a candidate is shortlisted
     
@@ -207,6 +207,7 @@ def send_shortlist_notification(candidate, job_or_project_title, application_typ
         candidate: Candidate model instance
         job_or_project_title: Title of the job or project
         application_type: 'job' or 'project'
+        company_name: Name of the company (optional)
     
     Returns:
         bool: True if email sent successfully, False otherwise
@@ -214,105 +215,297 @@ def send_shortlist_notification(candidate, job_or_project_title, application_typ
     candidate_name = candidate.full_name
     candidate_email = candidate.user.email
     logo_url = get_logo_url()
-    styles = get_email_styles()
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+    view_url = f"{base_url}/candidate/applications"
     
     application_type_label = 'Job' if application_type == 'job' else 'Project'
     
     subject = f"Congratulations! You've been shortlisted for {job_or_project_title}"
     
+    frame_icon_url = f"{base_url}/star-green.png"
+    company_display = f"<strong>{company_name}</strong> has" if company_name else "An employer has"
+    
     # Plain text version
     text_content = f"""
 Hello {candidate_name},
 
-Great news! You've been shortlisted for the {application_type_label.lower()} position: {job_or_project_title}
+Congratulations, {candidate_name}! {company_name or 'An employer'} has shortlisted you for the {job_or_project_title} role. This means your profile stood out, here's what's next.
 
-This is an exciting step forward in your application process. The employer has reviewed your profile and is interested in moving forward with you.
+OPPORTUNITY DETAILS:
+Role: {job_or_project_title}
+Company: {company_name or 'N/A'}
+Type: {application_type_label}
+Status: Shortlisted
 
-What's next?
-- Keep an eye on your email for further communication from the employer
-- You may be contacted for an interview or additional information
-- Continue to showcase your skills and enthusiasm
+We recommend reviewing the opportunity details and ensuring your profile is up to date. The employer may reach out for next steps soon.
 
-We're rooting for you!
+View Application: {view_url}
 
-Best regards,
-The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+Need help? Contact Support: {support_url}
+© 2026 FLIT · Where talent meets opportunity
 """
     
     # HTML version
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shortlisted - Flit</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .success-box {{
-            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
-            padding: 20px;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #dce8f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card {{
+            background: #ffffff;
             border-radius: 8px;
-            margin: 20px 0;
-            color: white;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #1e3a7b;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 18px;
+            gap: 10px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #e8faed;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #27ae60;
+            text-transform: uppercase;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 16px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
             text-align: center;
         }}
-        .success-box h2 {{
-            margin: 0 0 10px 0;
-            color: white;
-            font-size: 24px;
+
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 24px;
+        }}
+
+        .detail-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }}
+        .detail-box-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #7a7a99;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .detail-table td {{
+            padding: 14px 0;
+            border-bottom: 1px solid #eef0f5;
+            font-size: 14px;
+            color: #7a7a99;
+        }}
+        .detail-table tr:last-child td {{
+            border-bottom: none;
+            padding-bottom: 0;
+        }}
+        .detail-value {{
+            text-align: right;
+            color: #14181f !important;
+            font-weight: 600;
+        }}
+
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 28px;
+            margin-top: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #1e3a7b;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 40px;
+            border-radius: 50px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        .fallback-text {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }}
+        
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+            background-color: #dce8f5;
+        }}
+        .footer-support {{
+            font-size: 13px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 4px;
+        }}
+        .footer-auto {{
+            font-size: 11px;
+            color: #b0b0c8;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
+    <div class="wrapper">
+        <div class="card">
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
             </div>
-            <h1 class="header-title">Application Update</h1>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{frame_icon_url}" alt="Good News" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; font-size: 20px;">⭐</span>
+                    </div>
+                    <span class="badge-label">GOOD NEWS</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">You've Been Shortlisted</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    Congratulations, <span style="font-weight: 700; color: #1e3a7b;">{candidate_name}!</span> {company_display} shortlisted you for the {job_or_project_title} role. This means your profile stood out, here's what's next.
+                </p>
+
+                <!-- Detail Box -->
+                <div class="detail-box">
+                    <div class="detail-box-title">OPPORTUNITY DETAILS</div>
+                    <table class="detail-table">
+                        <tr>
+                            <td>Role</td>
+                            <td class="detail-value">{job_or_project_title}</td>
+                        </tr>
+                        <tr>
+                            <td>Company</td>
+                            <td class="detail-value">{company_name or 'Not specified'}</td>
+                        </tr>
+                        <tr>
+                            <td>Type</td>
+                            <td class="detail-value">{application_type_label}</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td class="detail-value"><span style="color: #2ecc71;">✅</span> Shortlisted</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <p class="email-text" style="color: #666687;">
+                    We recommend reviewing the opportunity details and ensuring your profile is up to date. The employer may reach out for next steps soon.
+                </p>
+
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{view_url}" class="cta-button">View Application</a>
+                </div>
+
+                <p class="fallback-text">
+                    You're receiving this because you applied to this role on FLIT. Further updates will follow as the process progresses.
+                </p>
+
+            </div><!-- /email-body -->
+
         </div>
         
-        <div class="content">
-            <p class="greeting">Hello {candidate_name},</p>
-            
-            <div class="success-box">
-                <h2>🎉 Congratulations!</h2>
-                <p style="margin: 0; font-size: 16px;">You've been shortlisted!</p>
-            </div>
-            
-            <p>Great news! You've been shortlisted for the <strong>{application_type_label}</strong> position:</p>
-            
-            <div class="info-box">
-                <h3>📋 Application Details</h3>
-                <p><strong>{application_type_label}:</strong> {job_or_project_title}</p>
-            </div>
-            
-            <p>This is an exciting step forward in your application process. The employer has reviewed your profile and is interested in moving forward with you.</p>
-            
-            <div class="message">
-                <p><strong>What's next?</strong></p>
-                <ul style="margin: 10px 0; padding-left: 20px;">
-                    <li>Keep an eye on your email for further communication from the employer</li>
-                    <li>You may be contacted for an interview or additional information</li>
-                    <li>Continue to showcase your skills and enthusiasm</li>
-                </ul>
-            </div>
-            
-            <p>We're rooting for you! Best of luck with the next steps.</p>
-            
-            <div class="no-reply-box">
-                <strong>🚫 PLEASE DO NOT REPLY TO THIS EMAIL</strong>
-                This is an automated message sent from an unmonitored mailbox. 
-                Replies to this email will not be received or reviewed.
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>Flit</strong> Team<br>
-            <small>Empowering careers, one opportunity at a time.</small></p>
+        <!-- Footer explicitly out of card in this Figma design but inside wrapper? Wait, the Figma design shows it below the card -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
+            <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
         </div>
     </div>
 </body>
@@ -1559,6 +1752,24 @@ This is an automated message. Please do not reply directly.
             font-size: 15px;
             flex-shrink: 0;
             margin-top: 1px;
+        }}
+
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 16px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
         }}
 
         /* ── Footer ────────────────────────────────────── */
