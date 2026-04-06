@@ -436,7 +436,8 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
             send_shortlist_notification(
                 candidate=application.candidate,
                 job_or_project_title=project.title,
-                application_type='project'
+                application_type='project',
+                company_name=project.company.company_name if project.company else None
             )
         except Exception as e:
             logger.error(f"Failed to send shortlist email notification: {str(e)}")
