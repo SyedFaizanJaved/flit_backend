@@ -227,8 +227,10 @@ def send_reference_request_email(ref_request, request):
     
     try:
         base_url = getattr(settings, 'FLIT_REQUEST_URL')
-        # The new design has 'Submit Reference' which acts as the main entry point
-        reference_url = f"{base_url}/reference-response?token={ref_request.token}"
+        frontend_url = f"{base_url}/reference-response"
+        
+        accept_url = f"{frontend_url}?&token={ref_request.token}&action=accept"
+        deny_url = f"{frontend_url}?&token={ref_request.token}&action=deny"  
         
         relationship_display = ref_request.get_suggested_relationship_display() if ref_request.suggested_relationship else "Professional Contact"
         company_display = ref_request.suggested_company if ref_request.suggested_company else "None specified"
@@ -239,7 +241,8 @@ def send_reference_request_email(ref_request, request):
             candidate_name=ref_request.candidate.full_name,
             relationship=relationship_display,
             company_name=company_display,
-            reference_url=reference_url
+            accept_url=accept_url,
+            deny_url=deny_url
         )
         return email_sent
         
