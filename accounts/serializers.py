@@ -164,8 +164,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
              # Set a reasonable expiration for verification link (e.g. 24 hours) if possible, 
              # but AccessToken default lifetime is often short. 
              # For verification, we might want a longer lifetime or a separate token type.
-             # Using AccessToken as per plan, but noting it might be short-lived.
-             token.set_exp(lifetime=timedelta(hours=24))
+             token.set_exp(lifetime=timedelta(minutes=15))
              
              verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL')}/auth/verify-email?token={token}"
              
@@ -415,3 +414,30 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save(update_fields=['password'])
         reset.mark_used()
         return user
+
+
+class ResendVerificationEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        try:
+            user = User.objects.get(email=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError('No user found with this email.')
+        
+        if user.is_verified:
+            raise serializers.ValidationError('This email is already verified.')
+            
+        self.context['user'] = user
+        return value
+
+    def save(self):
+        user = self.context['user']
+        token = AccessToken.for_user(user)
+        token['purpose'] = 'email_verification'
+        token.set_exp(lifetime=timedelta(minutes=15))
+        
+        verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL')}/auth/verify-email?token={token}"
+        
+        from utils.email_service import send_verification_email
+        return send_verification_email(user, verification_url)
