@@ -1897,7 +1897,7 @@ This is an automated message. Please do not reply directly.
     return send_email(user_email, subject, text_content, html_content)
 
 
-def send_reference_request_email(reference_email, candidate_name, relationship, company_name, reference_url):
+def send_reference_request_email(reference_email, candidate_name, relationship, company_name, accept_url, deny_url):
     """
     Send an email to a professional reference requesting them to fill out a reference form for a candidate.
     """
@@ -1921,8 +1921,10 @@ REQUEST DETAILS:
 Candidate: {candidate_name}
 Relationship: {relationship}
 Company: {company_name}
+You can respond to this request by clicking one of the links below:
 
-Submit your reference here: {reference_url}
+Accept Reference: {accept_url}
+Decline Reference: {deny_url}
 
 Your response is confidential and will only be shared with the hiring team.
 This link is secure and time-sensitive. If you believe this was sent in error or do not wish to provide a reference, you may disregard this email.
@@ -2063,57 +2065,34 @@ Need help? Contact Support: {support_url}
             font-weight: 600;
         }}
 
-        .form-box {{
-            background-color: #fcfcfd;
-            border: 1px solid #eef0f5;
-            border-radius: 8px;
-            padding: 24px;
-            margin-bottom: 24px;
-            margin-top: 24px;
-        }}
-        .form-title {{
-            font-size: 11px;
-            font-weight: 700;
-            color: #7a7a99;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            margin-bottom: 16px;
-        }}
-        .form-label {{
-            font-size: 13px;
-            color: #3d3d5c;
-            margin-bottom: 8px;
-        }}
-        .fake-textarea {{
-            background-color: #ffffff;
-            border: 1px solid #eef0f5;
-            border-radius: 6px;
-            height: 100px;
-            margin-bottom: 16px;
-        }}
-        
         .form-disclaimer {{
-            font-size: 12px;
-            color: #9494b0;
+            font-size: 13px;
+            color: #7a7a99;
             margin-top: 16px;
             text-align: center;
         }}
 
-        .btn-wrap {{
+        .btn-wrap-double {{
             text-align: center;
-            margin-bottom: 28px;
-            margin-top: 24px;
+            margin-bottom: 24px;
+            margin-top: 36px;
         }}
         .cta-button {{
             display: inline-block;
             background-color: #1e3a7b;
             color: #ffffff !important;
             text-decoration: none;
-            padding: 14px 40px;
+            padding: 14px 28px;
             border-radius: 50px;
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
             letter-spacing: 0.2px;
+            margin: 0 8px;
+        }}
+        .cta-button-danger {{
+            background-color: #ffffff;
+            color: #c81e1e !important;
+            border: 1px solid #c81e1e;
         }}
 
         .notice-box {{
@@ -2224,17 +2203,14 @@ Need help? Contact Support: {support_url}
                     </table>
                 </div>
 
-                <!-- Form Box CTA -->
-                <div class="form-box">
-                    <div class="form-title">SUBMIT YOUR REFERENCE</div>
-                    <div class="form-label">Your reference</div>
-                    <div class="fake-textarea"></div>
-                    <div class="btn-wrap" style="margin-bottom: 0; margin-top: 20px;">
-                        <a href="{reference_url}" class="cta-button">Submit Reference</a>
-                    </div>
-                    <div class="form-disclaimer">
-                        Your response is confidential and will only be shared with the hiring team.
-                    </div>
+                <!-- Action Buttons -->
+                <div class="btn-wrap-double">
+                    <a href="{accept_url}" class="cta-button">Accept Reference</a>
+                    <a href="{deny_url}" class="cta-button cta-button-danger">Decline Reference</a>
+                </div>
+
+                <div class="form-disclaimer">
+                    Your response is confidential and will only be shared with the hiring team.
                 </div>
 
                 <!-- Red Notice Box -->
