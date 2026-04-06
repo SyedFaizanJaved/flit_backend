@@ -1402,7 +1402,7 @@ Click the button below to choose a new password.
 
 {reset_url}
 
-This link expires in 24 hours. If you didn't create an account on FLIT,
+This link expires in 10 minutes. If you didn't create an account on FLIT,
 you can safely ignore this email.
 
 Need help? Contact Support: {support_url}
