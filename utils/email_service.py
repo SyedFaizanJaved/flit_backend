@@ -34,7 +34,7 @@ def get_base_url():
 def get_logo_url():
     """Get the logo URL for email templates"""
     base_url = get_base_url()
-    return f"{base_url}/flit-logo.png"
+    return f"{base_url}/email-logo.png"
 
 
 def get_email_styles():
@@ -629,7 +629,6 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
         <div class="header">
             <div class="logo">
                 <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
             </div>
             <h1 class="header-title">New Message</h1>
         </div>
@@ -646,11 +645,6 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
             <div style="text-align: center;">
                 <a href="{chat_url}" class="button" style="color: white;">Reply Now</a>
             </div>
-            
-            <p style="margin-top: 30px; font-size: 13px; color: #7f8c8d;">
-                If the button doesn't work, copy and paste this link into your browser:<br>
-                <a href="{chat_url}" style="color: #667eea;">{chat_url}</a>
-            </p>
             {NO_REPLY_HTML}
         </div>
         
@@ -669,7 +663,8 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
 
 def send_verification_email(user, verification_url):
     """
-    Send email verification email with a professional styled template
+    Send email verification email with a clean, professional styled template
+    matching the Flit brand design guidelines.
     
     Args:
         user: User model instance
@@ -681,79 +676,313 @@ def send_verification_email(user, verification_url):
     user_name = user.first_name or user.username
     user_email = user.email
     logo_url = get_logo_url()
-    styles = get_email_styles()
-    
-    subject = 'Verify your email address'
-    
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+
+    # Truncate long token URL for display only (keep full URL in href)
+    display_url = verification_url if len(verification_url) <= 55 else verification_url[:52] + "..."
+
+    # Frame icon URL from frontend public folder
+    frame_icon_url = f"{base_url}/verified.png"
+
+    subject = 'Verify your Flit email address'
+
     # Plain text fallback
     text_content = f"""
 Hello {user_name},
 
-Please click the link below to verify your email address:
+Thanks for creating your profile on Flit, {user_name}.
+Click the link below to verify your email and unlock your full profile.
+This link expires in 15 minutes.
+
 {verification_url}
 
-If you did not sign up for this account, please ignore this email.
+This link expires in 15 minutes. If you didn't create an account on FLIT,
+you can safely ignore this email.
 
-Best regards,
-The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+Need help? Contact Support: {support_url}
+
+© 2026 FLIT · Where talent meets opportunity
+This is an automated message. Please do not reply directly.
 """
-    
-    # HTML version
+
+    # HTML version — pixel-perfect match to the new design
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .button {{
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            padding: 12px 25px;
-            border-radius: 25px;
-            font-weight: bold;
-            margin-top: 20px;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #dce8f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        /* ── Outer wrapper ─────────────────────────────── */
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        /* ── Card ──────────────────────────────────────── */
+        .card {{
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #1e3a7b; /* Bold top border only */
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        /* ── Header (logo row) ─────────────────────────── */
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+        .logo-wordmark {{
+            font-size: 22px;
+            font-weight: 700;
+            color: #1e3a7b;
+            letter-spacing: -0.3px;
+        }}
+
+        /* ── Body ──────────────────────────────────────── */
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        /* badge row */
+        .badge-row {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 18px;
+            gap: 10px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #eef2fb;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #1e3a7b;
+            text-transform: uppercase;
+        }}
+
+        /* heading */
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 16px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
             text-align: center;
+        }}
+
+        /* body text */
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 28px;
+        }}
+        .email-text .highlight-name {{
+            color: #1e3a7b;
+            font-weight: 700;
+        }}
+
+        /* CTA button */
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #1e3a7b;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 40px;
+            border-radius: 50px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        /* fallback link */
+        .fallback-text {{
+            font-size: 12.5px;
+            color: #7a7a99;
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }}
+        .fallback-text a {{
+            color: #1e3a7b;
+            word-break: break-all;
+        }}
+
+        /* notice box */
+        .notice-box {{
+            background-color: #f5f6fa;
+            border-radius: 8px;
+            padding: 14px 18px;
+            font-size: 13px;
+            color: #4a4a6a;
+            line-height: 1.6;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }}
+        .notice-icon {{
+            font-size: 15px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }}
+        
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 16px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }}
+
+        /* ── Footer ────────────────────────────────────── */
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+        }}
+        .footer-support {{
+            font-size: 13.5px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 4px;
+        }}
+        .footer-auto {{
+            font-size: 11px;
+            color: #b0b0c8;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
+            .email-heading {{ font-size: 22px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo" style="justify-content: flex-start;">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+    <div class="wrapper">
+        <div class="card">
+
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
             </div>
-            <h1 class="header-title">Verify Your Email</h1>
-        </div>
-        
-        <div class="content">
-            <p class="greeting"><strong>Hello {user_name},</strong></p>
-            
-            <p>Thank you for signing up with Flit! Please click the button below to verify your email address and activate your account.</p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-                <a href="{verification_url}" class="button" style="color: white;">Verify Email Address</a>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{frame_icon_url}" alt="Account Verification" width="24" height="24" style="display:block;" />
+                    </div>
+                    <span class="badge-label">Account Verification</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">Verify Your Email</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    Thanks for creating your profile on Flit,
+                    <span class="highlight-name">{user_name}</span>.
+                    Click below to verify your email and unlock your full profile.
+                    This link expires in 15 minutes.
+                </p>
+
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{verification_url}" class="cta-button">Verify Email Address</a>
+                </div>
+
+                <!-- Notice box -->
+                <div class="notice-box">
+                    <span class="notice-icon">&#128274;</span>
+                    <span>
+                        This link expires in 15 minutes. If you didn't create an account on FLIT,
+                        you can safely ignore this email.
+                    </span>
+                </div>
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed
+                </div>
+
+            </div><!-- /email-body -->
+
+            <!-- Footer -->
+            <div class="email-footer">
+                <p class="footer-support">
+                    Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+                </p>
+                <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
+                <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
             </div>
-            
-            <p style="font-size: 13px; color: #7f8c8d;">
-                If you did not sign up for this account, please ignore this email.
-            </p>
-            {NO_REPLY_HTML}
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>Flit</strong> Team<br>
-            <small>Connecting you to your next opportunity.</small></p>
-        </div>
-    </div>
+
+        </div><!-- /card -->
+    </div><!-- /wrapper -->
 </body>
 </html>
 """
-    
+
     return send_email(user_email, subject, text_content, html_content)
 
 
@@ -1138,3 +1367,291 @@ Flit Platform
     return send_email(employer_email, subject, text_content, html_content)
 
 
+def send_password_reset_email(user, reset_url):
+    """
+    Send password reset email with a clean, professional styled template
+    matching the Flit brand design guidelines.
+    
+    Args:
+        user: User model instance
+        reset_url: The password reset URL with token
+    
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    user_name = user.first_name or user.username
+    user_email = user.email
+    logo_url = get_logo_url()
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+
+    # Truncate long token URL for display only (keep full URL in href)
+    display_url = reset_url if len(reset_url) <= 55 else reset_url[:52] + "..."
+
+    # Frame icon URL from frontend public folder (placeholder)
+    frame_icon_url = f"{base_url}/security.png"
+
+    subject = 'Reset your Flit password'
+
+    # Plain text fallback
+    text_content = f"""
+Hello {user_name},
+
+We received a request to reset the password for your FLIT account.
+Click the button below to choose a new password.
+
+{reset_url}
+
+This link expires in 24 hours. If you didn't create an account on FLIT,
+you can safely ignore this email.
+
+Need help? Contact Support: {support_url}
+
+© 2026 FLIT · Where talent meets opportunity
+This is an automated message. Please do not reply directly.
+"""
+
+    # HTML version — pixel-perfect match to the new design
+    html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #dce8f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        /* ── Outer wrapper ─────────────────────────────── */
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        /* ── Card ──────────────────────────────────────── */
+        .card {{
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #1e3a7b; /* Bold top border only */
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        /* ── Header (logo row) ─────────────────────────── */
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        /* ── Body ──────────────────────────────────────── */
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        /* badge row */
+        .badge-row {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 18px;
+            gap: 10px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #fff4e5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #f39c12;
+            text-transform: uppercase;
+        }}
+
+        /* heading */
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 16px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
+            text-align: center;
+        }}
+
+        /* body text */
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 28px;
+            text-align: center;
+        }}
+
+        /* CTA button */
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #1e3a7b;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 40px;
+            border-radius: 50px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        /* fallback link */
+        .fallback-text {{
+            font-size: 12.5px;
+            color: #7a7a99;
+            margin-bottom: 24px;
+            line-height: 1.6;
+            text-align: center;
+        }}
+        .fallback-text a {{
+            color: #1e3a7b;
+            word-break: break-all;
+        }}
+
+        /* notice box */
+        .notice-box {{
+            background-color: #f5f6fa;
+            border-radius: 8px;
+            padding: 14px 18px;
+            font-size: 13px;
+            color: #4a4a6a;
+            line-height: 1.6;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }}
+        .notice-icon {{
+            font-size: 15px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }}
+
+        /* ── Footer ────────────────────────────────────── */
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+        }}
+        .footer-support {{
+            font-size: 13.5px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 4px;
+        }}
+        .footer-auto {{
+            font-size: 11px;
+            color: #b0b0c8;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
+            .email-heading {{ font-size: 22px; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="card">
+
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+            </div>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{frame_icon_url}" alt="Security" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; font-size: 18px;">🔑</span>
+                    </div>
+                    <span class="badge-label">SECURITY</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">Reset Your Password</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    We received a request to reset the password for your FLIT account.<br/>
+                    Click the button below to choose a new password.
+                </p>
+
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{reset_url}" class="cta-button">Reset Password</a>
+                </div>
+
+                <!-- Notice box -->
+                <div class="notice-box">
+                    <span class="notice-icon">&#128274;</span>
+                    <span>
+                        This link expires in 24 hours. If you didn't create an account on FLIT,
+                        you can safely ignore this email.
+                    </span>
+                </div>
+
+            </div><!-- /email-body -->
+
+            <!-- Footer -->
+            <div class="email-footer">
+                <p class="footer-support">
+                    Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+                </p>
+                <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
+                <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+    return send_email(user_email, subject, text_content, html_content)
