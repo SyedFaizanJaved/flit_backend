@@ -217,7 +217,7 @@ def send_shortlist_notification(candidate, job_or_project_title, application_typ
     logo_url = get_logo_url()
     base_url = get_base_url()
     support_url = f"{base_url}/support"
-    view_url = f"{base_url}/candidate/applications"
+    view_url = f"{base_url}/candidate/dashboard?tab=applications"
     
     application_type_label = 'Job' if application_type == 'job' else 'Project'
     
@@ -300,20 +300,21 @@ Need help? Contact Support: {support_url}
         }}
 
         .badge-row {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            text-align: center;
             margin-bottom: 18px;
-            gap: 10px;
         }}
         .badge-icon {{
             width: 42px;
             height: 42px;
             background-color: #e8faed;
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-icon img {{
+            display: inline-block;
+            vertical-align: middle;
         }}
         .badge-label {{
             font-size: 11px;
@@ -321,6 +322,9 @@ Need help? Contact Support: {support_url}
             letter-spacing: 1.2px;
             color: #27ae60;
             text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
         }}
 
         .email-heading {{
@@ -423,6 +427,25 @@ Need help? Contact Support: {support_url}
             font-size: 11px;
             color: #b0b0c8;
         }}
+        
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 16px;
+            margin-bottom: 24px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }}
 
         @media only screen and (max-width: 600px) {{
             .email-header,
@@ -494,6 +517,12 @@ Need help? Contact Support: {support_url}
                 <p class="fallback-text">
                     You're receiving this because you applied to this role on FLIT. Further updates will follow as the process progresses.
                 </p>
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed
+                </div>
 
             </div><!-- /email-body -->
 
@@ -1866,3 +1895,368 @@ This is an automated message. Please do not reply directly.
 """
 
     return send_email(user_email, subject, text_content, html_content)
+
+
+def send_reference_request_email(reference_email, candidate_name, relationship, company_name, reference_url):
+    """
+    Send an email to a professional reference requesting them to fill out a reference form for a candidate.
+    """
+    subject = f"Reference Request for {candidate_name}"
+    logo_url = get_logo_url()
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+    
+    # Purple icon frame for reference
+    frame_icon_url = f"{base_url}/user-purple.png"
+    
+    candidate_first_name = candidate_name.split()[0] if candidate_name else 'Candidate'
+    
+    # Plain text version
+    text_content = f"""
+Hello,
+
+{candidate_name} has listed you as a professional reference on FLIT, a hiring platform for modern talent. They've invited you to share your perspective on their professional capabilities.
+
+REQUEST DETAILS:
+Candidate: {candidate_name}
+Relationship: {relationship}
+Company: {company_name}
+
+Submit your reference here: {reference_url}
+
+Your response is confidential and will only be shared with the hiring team.
+This link is secure and time-sensitive. If you believe this was sent in error or do not wish to provide a reference, you may disregard this email.
+
+Need help? Contact Support: {support_url}
+© 2026 FLIT · Where talent meets opportunity
+"""
+    
+    # HTML version
+    html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #dce8f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card {{
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #1e3a7b;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
+            text-align: center;
+            margin-bottom: 18px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #f5eeff;
+            border-radius: 50%;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-icon img {{
+            display: inline-block;
+            vertical-align: middle;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #8b5cf6;
+            text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 16px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
+            text-align: center;
+        }}
+
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 24px;
+        }}
+
+        .detail-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 24px;
+        }}
+        .detail-box-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #7a7a99;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .detail-table td {{
+            padding: 14px 0;
+            border-bottom: 1px solid #eef0f5;
+            font-size: 14px;
+            color: #7a7a99;
+        }}
+        .detail-table tr:last-child td {{
+            border-bottom: none;
+            padding-bottom: 0;
+        }}
+        .detail-value {{
+            text-align: right;
+            color: #14181f !important;
+            font-weight: 600;
+        }}
+
+        .form-box {{
+            background-color: #fcfcfd;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+            margin-top: 24px;
+        }}
+        .form-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #7a7a99;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+        .form-label {{
+            font-size: 13px;
+            color: #3d3d5c;
+            margin-bottom: 8px;
+        }}
+        .fake-textarea {{
+            background-color: #ffffff;
+            border: 1px solid #eef0f5;
+            border-radius: 6px;
+            height: 100px;
+            margin-bottom: 16px;
+        }}
+        
+        .form-disclaimer {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-top: 16px;
+            text-align: center;
+        }}
+
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 28px;
+            margin-top: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #1e3a7b;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 40px;
+            border-radius: 50px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        .notice-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 18px;
+            font-size: 12px;
+            color: #7a7a99;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }}
+
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 16px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }}
+        
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+            background-color: #dce8f5;
+        }}
+        .footer-support {{
+            font-size: 13px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 4px;
+        }}
+        .footer-auto {{
+            font-size: 11px;
+            color: #b0b0c8;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="card">
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+            </div>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{frame_icon_url}" alt="Reference Request" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; font-size: 20px; color: #8b5cf6;">&#128100;</span>
+                    </div>
+                    <span class="badge-label">REFERENCE REQUEST</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">Reference Request</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    <span style="font-weight: 700; color: #1e3a7b;">{candidate_name}</span> has listed you as a professional reference on FLIT, a hiring platform for modern talent. They've invited you to share your perspective on their professional capabilities.
+                </p>
+
+                <!-- Detail Box -->
+                <div class="detail-box">
+                    <div class="detail-box-title">REQUEST DETAILS</div>
+                    <table class="detail-table">
+                        <tr>
+                            <td>Candidate</td>
+                            <td class="detail-value">{candidate_name}</td>
+                        </tr>
+                        <tr>
+                            <td>Relationship</td>
+                            <td class="detail-value">{relationship}</td>
+                        </tr>
+                        <tr>
+                            <td>Company</td>
+                            <td class="detail-value">{company_name}</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Form Box CTA -->
+                <div class="form-box">
+                    <div class="form-title">SUBMIT YOUR REFERENCE</div>
+                    <div class="form-label">Your reference</div>
+                    <div class="fake-textarea"></div>
+                    <div class="btn-wrap" style="margin-bottom: 0; margin-top: 20px;">
+                        <a href="{reference_url}" class="cta-button">Submit Reference</a>
+                    </div>
+                    <div class="form-disclaimer">
+                        Your response is confidential and will only be shared with the hiring team.
+                    </div>
+                </div>
+
+                <!-- Red Notice Box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed
+                </div>
+
+            </div><!-- /email-body -->
+
+        </div>
+        
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
+            <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+    return send_email(reference_email, subject, text_content, html_content)
