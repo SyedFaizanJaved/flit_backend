@@ -17,7 +17,8 @@ from applications.models import JobApplication, ProjectApplication
 from .serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserUpdateSerializer, ChangePasswordSerializer, UserListSerializer,
-    PasswordResetRequestSerializer, PasswordResetConfirmSerializer
+    PasswordResetRequestSerializer, PasswordResetConfirmSerializer,
+    ResendVerificationEmailSerializer
 )
 from candidates.models import Candidate, ReferenceRequest
 from applications.models import JobApplication, ProjectApplication
@@ -655,6 +656,21 @@ def verify_email(request):
     user.save(update_fields=['is_verified'])
 
     return Response({'message': 'Email verified successfully.'}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def resend_verification_email(request):
+    """
+    Resend email verification link.
+    """
+    serializer = ResendVerificationEmailSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    success = serializer.save()
+    
+    if success:
+        return Response({'message': 'Verification email has been resent.'}, status=status.HTTP_200_OK)
+    return Response({'detail': 'Failed to send email.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

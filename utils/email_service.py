@@ -34,7 +34,7 @@ def get_base_url():
 def get_logo_url():
     """Get the logo URL for email templates"""
     base_url = get_base_url()
-    return f"{base_url}/flit_icon.png"
+    return f"{base_url}/flit-logo.png"
 
 
 def get_email_styles():
@@ -705,7 +705,6 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Email - Flit</title>
     <style>
         {styles}
         .button {{
@@ -726,7 +725,6 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
         <div class="header">
             <div class="logo" style="justify-content: flex-start;">
                 <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
             </div>
             <h1 class="header-title">Verify Your Email</h1>
         </div>

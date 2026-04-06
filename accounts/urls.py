@@ -9,6 +9,7 @@ urlpatterns = [
     # Authentication
     path('register/', views.UserRegistrationView.as_view(), name='user-register'),
     path('verify-email/', views.verify_email, name='verify-email'),
+    path('resend-verification-email/', views.resend_verification_email, name='resend-verification-email'),
     path('login/', views.user_login, name='user-login'),
     path('logout/', views.user_logout, name='user-logout'),
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
