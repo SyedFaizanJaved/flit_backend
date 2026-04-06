@@ -164,7 +164,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
              # Set a reasonable expiration for verification link (e.g. 24 hours) if possible, 
              # but AccessToken default lifetime is often short. 
              # For verification, we might want a longer lifetime or a separate token type.
-             token.set_exp(lifetime=timedelta(minutes=1))
+             token.set_exp(lifetime=timedelta(minutes=15))
              
              verification_url = f"{getattr(settings, 'FLIT_REQUEST_URL')}/auth/verify-email?token={token}"
              
