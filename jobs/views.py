@@ -202,7 +202,16 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
 
         qs = super().get_queryset()
 
-        # Restriction: Employers can only manage/see their own items, 
+        # For retrieve action: candidates should be able to view any job
+        # they've applied to, even if it's closed/expired.
+        if self.action == 'retrieve':
+            # Pure employers (no candidate profile) can only see their company's jobs
+            if hasattr(self.request.user, 'employer_profile') and not hasattr(self.request.user, 'candidate_profile'):
+                qs = qs.filter(company=self.request.user.employer_profile.company)
+            # Candidates (including dual-role users) can retrieve any job
+            return qs.distinct()
+
+        # Restriction: Employers can only manage/see their own items,
         # but dual-role users (who are also candidates) should be able to browse all active ones.
         if hasattr(self.request.user, 'employer_profile'):
             from django.db.models import Q

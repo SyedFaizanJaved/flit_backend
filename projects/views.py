@@ -184,10 +184,19 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
                 self._call_ml_metadata_api(project)
             except Exception as e:
                 logger.error(f"Failed to call ML metadata API for project {project.id}: {str(e)}")
-        
+
         queryset = super().get_queryset()
 
-        # Restriction: Employers can only manage/see their own items, 
+        # For retrieve action: candidates should be able to view any project
+        # they've applied to, even if it's closed/expired.
+        if self.action == 'retrieve':
+            # Pure employers (no candidate profile) can only see their company's projects
+            if hasattr(self.request.user, 'employer_profile') and not hasattr(self.request.user, 'candidate_profile'):
+                queryset = queryset.filter(company=self.request.user.employer_profile.company)
+            # Candidates (including dual-role users) can retrieve any project
+            return queryset.distinct()
+
+        # Restriction: Employers can only manage/see their own items,
         # but dual-role users (who are also candidates) should be able to browse all active ones.
         if hasattr(self.request.user, 'employer_profile'):
             if not hasattr(self.request.user, 'candidate_profile'):
@@ -205,10 +214,8 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
                 if term:
                     queryset = queryset.filter(title__icontains=term)
 
-        # Only filter by active status for public list view
+        # Only filter by active status for list view
         if self.action == 'list':
-            queryset = queryset.filter(status='active')
-        # my_projects will show all statuses
             queryset = queryset.filter(status='active')
             queryset = queryset.prefetch_related('applications__candidate')
 

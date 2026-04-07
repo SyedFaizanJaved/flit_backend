@@ -203,11 +203,22 @@ class MeetingRoomListView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         
+        now = timezone.now()
+        
+        stats = {
+            "invited": queryset.filter(status='pending').count(),
+            "scheduled": queryset.filter(status='active', start_time__gt=now).count(),
+            "completed": queryset.filter(status='ended').count(),
+            "expired": queryset.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
+            "hired": queryset.filter(offers__status='hired').distinct().count(),
+        }
+        
         # Apply pagination
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             response_data = {
+                'stats': stats,
                 'count': self.paginator.page.paginator.count,
                 'next': self.paginator.get_next_link(),
                 'previous': self.paginator.get_previous_link(),
@@ -220,6 +231,7 @@ class MeetingRoomListView(generics.ListAPIView):
         # Fallback to non-paginated response if pagination is not applied
         serializer = self.get_serializer(queryset, many=True)
         return Response({
+            'stats': stats,
             'count': queryset.count(),
             'next': None,
             'previous': None,
