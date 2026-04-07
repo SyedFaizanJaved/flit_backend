@@ -475,7 +475,8 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
                 candidate=application.candidate,
                 job_or_project_title=project.title,
                 application_type='project',
-                rejection_reason=application.rejection_reason
+                rejection_reason=application.rejection_reason,
+                company_name=project.company.company_name if project.company else None
             )
         except Exception as e:
             logger.error(f"Failed to send rejection email notification: {str(e)}")

@@ -544,7 +544,7 @@ Need help? Contact Support: {support_url}
     return send_email(candidate_email, subject, text_content, html_content)
 
 
-def send_rejection_notification(candidate, job_or_project_title, application_type='job', rejection_reason=None):
+def send_rejection_notification(candidate, job_or_project_title, application_type='job', rejection_reason=None, company_name=None):
     """
     Send email notification when a candidate is rejected
     
@@ -553,101 +553,342 @@ def send_rejection_notification(candidate, job_or_project_title, application_typ
         job_or_project_title: Title of the job or project
         application_type: 'job' or 'project'
         rejection_reason: Optional rejection reason message
+        company_name: Optional company name
     
     Returns:
         bool: True if email sent successfully, False otherwise
     """
-    candidate_name = candidate.full_name
+    candidate_name = candidate.full_name or "Candidate"
+    candidate_first_name = candidate_name.split()[0]
     candidate_email = candidate.user.email
     logo_url = get_logo_url()
-    styles = get_email_styles()
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+    jobs_url = f"{base_url}/candidate/dashboard?tab=jobs"
     
     application_type_label = 'Job' if application_type == 'job' else 'Project'
     
-    subject = f"Update on your application for {job_or_project_title}"
+    subject = "An Update on Your Application"
+    
+    company_display_html = f" at <strong>{company_name}</strong>" if company_name else ""
+    company_display_text = f" at {company_name}" if company_name else ""
+    reject_icon_url = f"{base_url}/reject.png"
     
     # Plain text version
     text_content = f"""
-Hello {candidate_name},
+Hello {candidate_first_name},
 
-Thank you for your interest in the {application_type_label.lower()} position: {job_or_project_title}
+Thank you for your interest in the {job_or_project_title} role{company_display_text}. We appreciate the time and effort you put into your application.
 
-After careful consideration, we've decided to move forward with other candidates whose qualifications more closely match our current needs.
+APPLICATION DETAILS:
+Position: {job_or_project_title}
+Company: {company_name or 'N/A'}
+Type: {application_type_label}
+Status: Not Selected
 
-{f'Reason: {rejection_reason}' if rejection_reason else ''}
+After careful review, the team has decided to move forward with other candidates for this particular role. This doesn't reflect on your skills or potential, hiring decisions involve many factors, and the right match is out there.
 
-This decision was not easy, and we appreciate the time and effort you put into your application. We encourage you to keep applying to other opportunities that align with your skills and interests.
+{f'Note: {rejection_reason}' if rejection_reason else ''}
 
-We wish you the best in your job search and future endeavors.
+Browse More Opportunities: {jobs_url}
 
-Best regards,
-The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+We encourage you to keep your profile active and explore new opportunities on FLIT. New roles are posted regularly, and your next match could be just around the corner.
+
+Need help? Contact Support: {support_url}
+© 2026 FLIT · Where talent meets opportunity
 """
     
     # HTML version
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Application Update - Flit</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .info-box-rejection {{
-            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border-left: 5px solid #f39c12;
-            border: 1px solid #e0e6ed;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #dce8f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
         }}
-        .encouragement {{
-            background-color: #e8f5e9;
-            padding: 20px;
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card {{
+            background: #ffffff;
             border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #4caf50;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #1e3a7b;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
+            text-align: center;
+            margin-bottom: 18px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #f3f4f6;
+            border-radius: 8px;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+            font-size: 18px;
+            color: #6b7280;
+            font-weight: 500;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #6b7280;
+            text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 24px;
+            line-height: 1.2;
+            letter-spacing: -0.72px;
+            text-align: center;
+        }}
+
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 24px;
+        }}
+
+        .detail-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }}
+        .detail-box-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #7a7a99;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .detail-table td {{
+            padding: 14px 0;
+            border-bottom: 1px solid #eef0f5;
+            font-size: 14px;
+            color: #7a7a99;
+        }}
+        .detail-table tr:last-child td {{
+            border-bottom: none;
+            padding-bottom: 0;
+        }}
+        .detail-value {{
+            text-align: right;
+            color: #14181f !important;
+            font-weight: 600;
+        }}
+
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 28px;
+            margin-top: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #435185;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 28px;
+            border-radius: 24px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        .gray-notice-box {{
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 24px;
+            font-size: 13px;
+            color: #6b7280;
+            line-height: 1.6;
+            text-align: left;
+            margin-top: 16px;
+            margin-bottom: 24px;
+        }}
+        
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 24px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }}
+
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+            background-color: #dce8f5;
+        }}
+        .footer-support {{
+            font-size: 13px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9494b0;
+            margin-bottom: 4px;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
+    <div class="wrapper">
+        <div class="card">
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
-            <h1 class="header-title">Application Update</h1>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{reject_icon_url}" alt="Application Update" width="42" height="42" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none;">&#8594;</span>
+                    </div>
+                    <span class="badge-label">APPLICATION UPDATE</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">An Update on Your Application</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    Hi {candidate_first_name}, thank you for your interest in the <span style="font-weight: 700; color: #14181f;">{job_or_project_title}</span> role{company_display_html}. We appreciate the time and effort you put into your application.
+                </p>
+
+                <!-- Detail Box -->
+                <div class="detail-box">
+                    <div class="detail-box-title">APPLICATION DETAILS</div>
+                    <table class="detail-table">
+                        <tr>
+                            <td>Position</td>
+                            <td class="detail-value">{job_or_project_title}</td>
+                        </tr>
+                        <tr>
+                            <td>Company</td>
+                            <td class="detail-value">{company_name or 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td>Type</td>
+                            <td class="detail-value">{application_type_label}</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td class="detail-value" style="color: #4b5563;">Not Selected</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <p class="email-text">
+                    After careful review, the team has decided to move forward with other candidates for this particular role. This doesn't reflect on your skills or potential, hiring decisions involve many factors, and the right match is out there.
+                </p>
+                
+                {f'<p class="email-text" style="color: #6b7280;"><strong>Note:</strong> {rejection_reason}</p>' if rejection_reason else ''}
+
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{jobs_url}" class="cta-button">Browse More Opportunities</a>
+                </div>
+
+                <!-- Encouragement Box -->
+                <div class="gray-notice-box">
+                    We encourage you to keep your profile active and explore new opportunities on FLIT. New roles are posted regularly, and your next match could be just around the corner.
+                </div>
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed.
+                </div>
+
+            </div><!-- /email-body -->
+
         </div>
         
-        <div class="content">
-            <p class="greeting">Hello {candidate_name},</p>
-            
-            <p>Thank you for your interest in the <strong>{application_type_label}</strong> position:</p>
-            
-            <div class="info-box">
-                <h3>📋 Application Details</h3>
-                <p><strong>{application_type_label}:</strong> {job_or_project_title}</p>
-            </div>
-            
-            <p>After careful consideration, we've decided to move forward with other candidates whose qualifications more closely match our current needs.</p>
-            
-            {f'<div class="info-box-rejection"><p><strong>Note:</strong> {rejection_reason}</p></div>' if rejection_reason else ''}
-            
-            <div class="encouragement">
-                <p><strong>💪 Keep Going!</strong></p>
-                <p>This decision was not easy, and we appreciate the time and effort you put into your application. We encourage you to keep applying to other opportunities that align with your skills and interests.</p>
-            </div>
-            
-            <p>We wish you the best in your job search and future endeavors.</p>
-            {NO_REPLY_HTML}
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>Flit</strong> Team<br>
-            <small>Empowering careers, one opportunity at a time.</small></p>
+        <!-- Footer -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT - Where talent meets opportunity</p>
         </div>
     </div>
 </body>
@@ -657,7 +898,7 @@ The {getattr(settings, 'SITE_NAME', 'Flit')} Team
     return send_email(candidate_email, subject, text_content, html_content)
 
 
-def send_flit_pass_notification(candidate, employer_name, company_name=None):
+def send_flit_pass_notification(candidate, employer_name, company_name=None, category=None):
     """
     Send email notification when an employer flits (likes/saves) a candidate profile
     
@@ -665,108 +906,321 @@ def send_flit_pass_notification(candidate, employer_name, company_name=None):
         candidate: Candidate model instance
         employer_name: Name of the employer who flitted the profile
         company_name: Optional company name
+        category: Optional category or industry
     
     Returns:
         bool: True if email sent successfully, False otherwise
     """
-    candidate_name = candidate.full_name
+    candidate_name = candidate.full_name or "Candidate"
+    candidate_first_name = candidate_name.split()[0]
     candidate_email = candidate.user.email
     logo_url = get_logo_url()
-    styles = get_email_styles()
+    base_url = get_base_url()
+    support_url = f"{base_url}/support"
+    view_url = f"{base_url}/candidate/dashboard?tab=flit-list"
     
-    company_info = f" from {company_name}" if company_name else ""
+    subject = "Your Profile got FLIT"
     
-    subject = f"Your profile caught someone's attention! 🎯"
+    display_employer = company_name if company_name else employer_name
+    display_category = category if category else "Not specified"
+    stars_icon_url = f"{base_url}/stars.png"
     
     # Plain text version
     text_content = f"""
-Hello {candidate_name},
+Great news, {candidate_first_name}! An employer on FLIT showed interest in your profile. Your skills and experience stood out, and this could be the start of something exciting.
 
-Exciting news! Your profile has been flitted (saved) by {employer_name}{company_info}.
+INTEREST DETAILS:
+Employer: {display_employer}
+Category: {display_category}
+Interest: ⭐ Profile Interest
 
-This means an employer has shown interest in your profile and saved it for future opportunities. They may reach out to you when they have a position that matches your skills and experience.
+Employers who show interest are often looking to connect soon. Make sure your profile is up to date and keep an eye out for messages or interview requests.
 
-Keep your profile updated and continue showcasing your best work. Opportunities are coming your way!
+View Activity: {view_url}
 
-Best regards,
-The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+This is an automated email, so replies won't be seen. If you need help, please contact our support team: {support_url}
+© 2026 FLIT · Where talent meets opportunity
 """
     
     # HTML version
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profile Flitted - Flit</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .flit-box {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 25px;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #eef0f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card {{
+            background: #ffffff;
             border-radius: 8px;
-            margin: 20px 0;
-            color: white;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #3b82f6;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
+            text-align: center;
+            margin-bottom: 18px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: transparent;
+            border-radius: 8px;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #435185;
+            text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 24px;
+            line-height: 1.2;
+            letter-spacing: -0.72px;
             text-align: center;
         }}
-        .flit-box h2 {{
-            margin: 0 0 10px 0;
-            color: white;
-            font-size: 24px;
+
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #6b7280;
+            margin-bottom: 24px;
         }}
-        .highlight-box {{
-            background-color: #e3f2fd;
-            padding: 20px;
+
+        .detail-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
             border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #2196f3;
+            padding: 24px;
+            margin-bottom: 24px;
+        }}
+        .detail-box-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #7a7a99;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .detail-table td {{
+            padding: 14px 0;
+            border-bottom: 1px solid #eef0f5;
+            font-size: 14px;
+            color: #7a7a99;
+        }}
+        .detail-table tr:last-child td {{
+            border-bottom: none;
+            padding-bottom: 0;
+        }}
+        .detail-value {{
+            text-align: right;
+            color: #14181f !important;
+            font-weight: 600;
+        }}
+
+        .btn-wrap {{
+            text-align: center;
+            margin-bottom: 28px;
+            margin-top: 24px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #435185;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 28px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        .red-notice-box {
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 24px;
+        }
+        .red-notice-box strong {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }
+
+        .card-footer {{
+            border-top: 1px solid #eef0f5;
+            padding-top: 24px;
+            margin-top: 32px;
+            font-size: 13px;
+            color: #9ca3af;
+            text-align: left;
+            line-height: 1.5;
+        }}
+        .card-footer a {{
+            color: #3b82f6;
+            text-decoration: none;
+        }}
+
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+            background-color: #eef0f5;
+        }}
+        .footer-support {{
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #3b82f6;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 4px;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
+    <div class="wrapper">
+        <div class="card">
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
-            <h1 class="header-title">Profile Update</h1>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{stars_icon_url}" alt="Profile Interest" width="42" height="42" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; color: #435185; font-size: 24px;">✨</span>
+                    </div>
+                    <span class="badge-label">PROFILE INTEREST</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">Your Profile got FLIT</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    Great news, <span style="font-weight: 700; color: #435185;">{candidate_first_name}!</span> An employer on FLIT showed interest in your profile. Your skills and experience stood out, and this could be the start of something exciting.
+                </p>
+
+                <!-- Detail Box -->
+                <div class="detail-box">
+                    <div class="detail-box-title">INTEREST DETAILS</div>
+                    <table class="detail-table">
+                        <tr>
+                            <td>Employer</td>
+                            <td class="detail-value">{display_employer}</td>
+                        </tr>
+                        <tr>
+                            <td>Category</td>
+                            <td class="detail-value">{display_category}</td>
+                        </tr>
+                        <tr>
+                            <td>Interest</td>
+                            <td class="detail-value">&#11088; Profile Interest</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <p class="email-text">
+                    Employers who show interest are often looking to connect soon. Make sure your profile is up to date and keep an eye out for messages or interview requests.
+                </p>
+                
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{view_url}" class="cta-button">View Activity</a>
+                </div>
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed.
+                </div>
+
+            </div><!-- /email-body -->
+
         </div>
         
-        <div class="content">
-            <p class="greeting">Hello {candidate_name},</p>
-            
-            <div class="flit-box">
-                <h2>🎯 Your Profile Caught Attention!</h2>
-                <p style="margin: 0; font-size: 16px;">Someone flitted your profile!</p>
-            </div>
-            
-            <p>Exciting news! Your profile has been <strong>flitted</strong> (saved) by:</p>
-            
-            <div class="info-box">
-                <h3>👤 Employer Details</h3>
-                <p><strong>Name:</strong> {employer_name}</p>
-                {f'<p><strong>Company:</strong> {company_name}</p>' if company_name else ''}
-            </div>
-            
-            <div class="highlight-box">
-                <p><strong>What does this mean?</strong></p>
-                <p>An employer has shown interest in your profile and saved it for future opportunities. They may reach out to you when they have a position that matches your skills and experience.</p>
-            </div>
-            
-            <div class="message">
-                <p><strong>💡 Pro Tip:</strong> Keep your profile updated and continue showcasing your best work. Opportunities are coming your way!</p>
-            </div>
-            
-            <p>Stay positive and keep applying. Your next opportunity might be just around the corner!</p>
-            {NO_REPLY_HTML}
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>Flit</strong> Team<br>
-            <small>Empowering careers, one connection at a time.</small></p>
+        <!-- Footer -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT · Where talent meets opportunity</p>
+            <p class="footer-copy" style="font-size: 11px;">This is an automated message. Please do not reply directly.</p>
         </div>
     </div>
 </body>
@@ -788,92 +1242,330 @@ def send_chat_message_notification(sender, recipient, message_content):
     Returns:
         bool: True if email sent successfully, False otherwise
     """
-    recipient_name = recipient.first_name or recipient.username
-    sender_name = sender.first_name or sender.username
+    recipient_name = getattr(recipient, 'first_name', None) or recipient.username
+    if not recipient_name.strip():
+        recipient_name = recipient.username
+        
+    sender_full = getattr(sender, 'first_name', None) or sender.username
+    if getattr(sender, 'last_name', None):
+        sender_full += f" {sender.last_name}"
+    
+    sender_first = getattr(sender, 'first_name', None) or sender.username
+    if not sender_first:
+        sender_first = "User"
+    sender_initial = sender_first[0].upper() if sender_first else "U"
+    
     recipient_email = recipient.email
     
     logo_url = get_logo_url()
-    styles = get_email_styles()
     base_url = get_base_url()
-    
-    # Construct chat URL (assuming /chat or /messages route)
+    support_url = f"{base_url}/support"
     chat_url = f"{base_url}/candidate/dashboard"
     
-    subject = f"New message from {sender_name}"
+    try:
+        if hasattr(recipient, 'employer_profile'):
+            chat_url = f"{base_url}/employer/dashboard"
+    except Exception:
+        pass
+        
+    company_name = ""
+    sender_subtitle = "FLIT User"
+    try:
+        if hasattr(sender, 'employer_profile'):
+            company = sender.employer_profile.company
+            if company:
+                company_name = company.company_name
+                sender_subtitle = f"Employer · {company_name}"
+            else:
+                sender_subtitle = "Employer"
+        elif hasattr(sender, 'candidate_profile'):
+            title = getattr(sender.candidate_profile, 'job_title', None)
+            sender_subtitle = title if title else "Candidate"
+    except Exception:
+        pass
+        
+    sender_display = f"{sender_first} from {company_name}" if company_name else f"{sender_first}"
+    
+    subject = f"A New Message Is Waiting for You"
+    message_icon_url = f"{base_url}/Vector.png"
+    
+    import datetime
+    current_time = datetime.datetime.now().strftime("%I:%M %p")
     
     # Plain text version
     text_content = f"""
-Hello {recipient_name},
+Hi {recipient_name}, {sender_display} sent you a message on FLIT. Don't keep them waiting, check it out and keep the conversation going.
 
-You have received a new message from {sender_name}:
+From: {sender_full} ({sender_subtitle})
+Message: "{message_content}"
+Time: {current_time}
 
-"{message_content}"
+Timely responses help you stand out to employers. Head over to FLIT to read the full message and reply.
 
-Reply to this message here: {chat_url}
-
-Best regards,
-The {getattr(settings, 'SITE_NAME', 'Flit')} Team
+This is an automated email, so replies won't be seen. If you need help, please contact our support team.
+© 2026 FLIT · Where talent meets opportunity
 """
     
     # HTML version
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New Message - Flit</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .message-box {{
-            background-color: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #6c5ce7;
-            font-style: italic;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #eef0f5;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
         }}
-        .button {{
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            padding: 12px 25px;
-            border-radius: 25px;
-            font-weight: bold;
-            margin-top: 20px;
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card {{
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: none;
+            border-top: 4px solid #3b82f6;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
             text-align: center;
+            margin-bottom: 18px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #e0f2fe;
+            border-radius: 8px;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #3b82f6;
+            text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 24px;
+            line-height: 1.2;
+            letter-spacing: -0.72px;
+            text-align: center;
+        }}
+
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #4b5563;
+            margin-bottom: 24px;
+        }}
+
+        .message-card {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }}
+        .message-header {{
+            margin-bottom: 16px;
+        }}
+        .avatar {{
+            width: 40px;
+            height: 40px;
+            background-color: #e0e7ff;
+            color: #1e3a8a;
+            border-radius: 50%;
+            display: inline-block;
+            vertical-align: middle;
+            text-align: center;
+            line-height: 40px;
+            font-weight: 700;
+            font-size: 16px;
+            margin-right: 12px;
+        }}
+        .sender-info {{
+            display: inline-block;
+            vertical-align: middle;
+        }}
+        .sender-name {{
+            font-weight: 700;
+            color: #14181f;
+            font-size: 14px;
+        }}
+        .sender-subtitle {{
+            font-size: 12px;
+            color: #9ca3af;
+            margin-top: 2px;
+        }}
+        .message-body {{
+            background-color: #f3f4f6;
+            border-left: 3px solid #3b82f6;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            font-size: 14px;
+            color: #4b5563;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }}
+        .message-time {{
+            text-align: right;
+            font-size: 11px;
+            color: #9ca3af;
+        }}
+
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.6;
+            text-align: center;
+            margin-top: 24px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #8b0000;
+        }}
+
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
+            text-align: center;
+            background-color: #eef0f5;
+        }}
+        .footer-support {{
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 6px;
+        }}
+        .footer-support a {{
+            color: #3b82f6;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 4px;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
+    <div class="wrapper">
+        <div class="card">
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
-            <h1 class="header-title">New Message</h1>
+
+            <!-- Body -->
+            <div class="email-body">
+
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{message_icon_url}" alt="New Message" width="20" height="20" style="vertical-align: middle; margin-top: -3px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; color: #3b82f6; font-size: 20px; vertical-align: middle;">💬</span>
+                    </div>
+                    <span class="badge-label">NEW MESSAGE</span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="email-heading">A New Message Is Waiting for You</h1>
+
+                <!-- Body copy -->
+                <p class="email-text">
+                    Hi {recipient_name}, <span style="font-weight: 700; color: #14181f;">{sender_display}</span> sent you a message on FLIT. Don't keep them waiting, check it out and keep the conversation going.
+                </p>
+
+                <!-- Message Card -->
+                <div class="message-card">
+                    <div class="message-header">
+                        <div class="avatar">{sender_initial}</div>
+                        <div class="sender-info">
+                            <div class="sender-name">{sender_full}</div>
+                            <div class="sender-subtitle">{sender_subtitle}</div>
+                        </div>
+                    </div>
+                    <div class="message-body">
+                        "{message_content}"
+                    </div>
+                    <div class="message-time">{current_time}</div>
+                </div>
+
+                <p class="email-text">
+                    Timely responses help you stand out to employers. Head over to FLIT to read the full message and reply.
+                </p>
+
+                <!-- CTA Button Omitted per user request -->
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed.
+                </div>
+
+            </div><!-- /email-body -->
+
         </div>
         
-        <div class="content">
-            <p class="greeting">Hello {recipient_name},</p>
-            
-            <p>You have received a new message from <strong>{sender_name}</strong>:</p>
-            
-            <div class="message-box">
-                "{message_content}"
-            </div>
-            
-            <div style="text-align: center;">
-                <a href="{chat_url}" class="button" style="color: white;">Reply Now</a>
-            </div>
-            {NO_REPLY_HTML}
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>Flit</strong> Team<br>
-            <small>Connecting you to your next opportunity.</small></p>
+        <!-- Footer -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT · Where talent meets opportunity</p>
+            <p class="footer-copy" style="font-size: 11px;">This is an automated message. Please do not reply directly.</p>
         </div>
     </div>
 </body>
