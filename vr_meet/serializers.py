@@ -219,7 +219,39 @@ class OfferSerializer(serializers.ModelSerializer):
                 }
         
         # Add a clear 'type' tag at the root level as well
-        data['opportunity_type'] = instance.meeting.opportunity_type if instance.meeting else 'unknown'
+        opportunity_type = meeting.opportunity_type if meeting else 'unknown'
+        
+        # Fallback logic: If meeting has no job/project, try to infer from candidate's applications
+        if opportunity_type == 'unknown' and instance.candidate and instance.employer:
+            from applications.models import JobApplication, ProjectApplication
+            
+            # Check for project applications
+            p_apps = ProjectApplication.objects.filter(candidate__user=instance.candidate, employer=instance.employer)
+            has_project_apps = p_apps.exists()
+            
+            # Check for job applications
+            j_apps = JobApplication.objects.filter(candidate__user=instance.candidate, employer=instance.employer)
+            has_job_apps = j_apps.exists()
+            
+            if has_job_apps and not has_project_apps:
+                opportunity_type = 'job'
+                j_app = j_apps.first()
+                if j_app:
+                    data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
+            elif has_project_apps and not has_job_apps:
+                opportunity_type = 'project'
+                p_app = p_apps.first()
+                if p_app:
+                    data['project'] = {'id': p_app.project.id, 'title': p_app.project.title, 'type': 'project'}
+            elif has_job_apps and has_project_apps:
+                # If both exist, try to match by title (brittle but better than nothing)
+                # For now just default to job
+                opportunity_type = 'job'
+                j_app = j_apps.first()
+                if j_app:
+                    data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
+
+        data['opportunity_type'] = opportunity_type
                 
         return data
 
