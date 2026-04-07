@@ -223,7 +223,7 @@ def send_shortlist_notification(candidate, job_or_project_title, application_typ
     
     subject = f"Congratulations! You've been shortlisted for {job_or_project_title}"
     
-    frame_icon_url = f"{base_url}/star-green.png"
+    frame_icon_url = f"{base_url}/star.png"
     company_display = f"<strong>{company_name}</strong> has" if company_name else "An employer has"
     
     # Plain text version
@@ -564,7 +564,7 @@ def send_rejection_notification(candidate, job_or_project_title, application_typ
     logo_url = get_logo_url()
     base_url = get_base_url()
     support_url = f"{base_url}/support"
-    jobs_url = f"{base_url}/candidate/dashboard?tab=jobs"
+    jobs_url = f"{base_url}/candidate/opportunities"
     
     application_type_label = 'Job' if application_type == 'job' else 'Project'
     
@@ -1094,16 +1094,16 @@ This is an automated email, so replies won't be seen. If you need help, please c
             border-radius: 8px;
             padding: 16px;
             font-size: 13px;
-            color: #b91c1c;
+            color: #c81e1e;
             line-height: 1.6;
             text-align: center;
-            margin-top: 24px;
+            margin-top: 16px;
         }
         .red-notice-box strong {
             display: block;
             margin-bottom: 4px;
             font-size: 14px;
-            color: #8b0000;
+            color: #c81e1e;
         }
 
         .card-footer {{
@@ -1831,6 +1831,7 @@ This is an automated message. Please do not reply directly.
 </head>
 <body>
     <div class="wrapper">
+        <div class="card-top-border"></div>
         <div class="card">
 
             <!-- Header -->
@@ -1877,21 +1878,20 @@ This is an automated message. Please do not reply directly.
                 <!-- Red Notice box -->
                 <div class="red-notice-box">
                     <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
-                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed.
                 </div>
 
             </div><!-- /email-body -->
-
-            <!-- Footer -->
-            <div class="email-footer">
-                <p class="footer-support">
-                    Need help?&nbsp;<a href="{support_url}">Contact Support</a>
-                </p>
-                <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
-                <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
-            </div>
-
         </div><!-- /card -->
+
+        <!-- Footer -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help?&nbsp;<a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
+            <p class="footer-auto">This is an automated message. Please do not reply directly.</p>
+        </div>
     </div><!-- /wrapper -->
 </body>
 </html>
@@ -1937,6 +1937,8 @@ def send_offer_letter_email(candidate, company_name, position_title, offer_salar
         start_date_display = str(start_date)
 
     subject = f"🎉 Congratulations! Offer Letter from {company_name} — {position_title}"
+    support_url = f"{base_url}/support"
+    meddle_icon_url = f"{base_url}/meddle.png"
 
     # Plain text version
     text_content = f"""
@@ -1965,131 +1967,338 @@ The {company_name} Team
     # HTML version
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Offer Letter - {company_name}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .offer-box {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 25px;
-            border-radius: 8px;
-            margin: 20px 0;
-            color: white;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #f3f4f6;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        .wrapper {{
+            max-width: 560px;
+            margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
+        }}
+
+        .card-top-border {{
+            height: 4px;
+            background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
+            border-radius: 8px 8px 0 0;
+        }}
+
+        .card {{
+            background: #ffffff;
+            border-radius: 0 0 8px 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.05);
+        }}
+
+        .email-header {{
+            padding: 20px 36px;
+            border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }}
+        .logo-img {{
+            height: 36px;
+            width: auto;
+            margin-right: 10px;
+        }}
+
+        .email-body {{
+            padding: 36px 36px 28px 36px;
+        }}
+
+        .badge-row {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 18px;
+            gap: 10px;
+        }}
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: #eef2fb;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .badge-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #1e3a7b;
+            text-transform: uppercase;
+        }}
+
+        .email-heading {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #14181f;
+            margin-bottom: 16px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
             text-align: center;
         }}
-        .offer-box h2 {{
-            margin: 0 0 10px 0;
-            color: white;
-            font-size: 24px;
+
+        .email-text {{
+            font-size: 14.5px;
+            line-height: 1.7;
+            color: #4b5563;
+            margin-bottom: 24px;
         }}
-        .offer-box p {{
-            margin: 0;
-            font-size: 16px;
-            color: rgba(255,255,255,0.9);
+        
+        .highlight-name {{
+            color: #1e3a7b;
+            font-weight: 700;
+        }}
+
+        .detail-box {{
+            background-color: #ffffff;
+            border: 1px solid #eef0f5;
+            border-radius: 8px;
+            padding: 18px 24px;
+            margin-bottom: 24px;
+        }}
+        .detail-box-title {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: #1e3a7b;
+            text-transform: uppercase;
+            margin-bottom: 16px;
         }}
         .detail-table {{
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
         }}
         .detail-table td {{
-            padding: 12px 15px;
-            border-bottom: 1px solid #ecf0f1;
-            font-size: 14px;
-        }}
-        .detail-table td:first-child {{
-            color: #7f8c8d;
-            font-weight: bold;
-            width: 40%;
-        }}
-        .detail-table td:last-child {{
-            color: #2c3e50;
-            font-weight: 600;
+            padding: 12px 0;
+            border-bottom: 1px solid #f8f9fa;
+            font-size: 13.5px;
+            color: #6b7280;
         }}
         .detail-table tr:last-child td {{
-            border-bottom: 2px solid #667eea;
+            border-bottom: none;
         }}
-        .attachment-notice {{
-            background-color: #e8f8f5;
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #1abc9c;
+        .detail-value {{
+            color: #111827;
+            font-weight: 600;
+            text-align: right;
         }}
-        .cta-box {{
-            background-color: #f8f9fa;
-            padding: 20px;
+        
+        .offer-desc-box {{
+            background-color: #f9fafb;
             border-radius: 8px;
-            margin: 20px 0;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+        }}
+        .offer-desc-title {{
+            font-size: 13.5px;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 8px;
+        }}
+        .offer-desc-text {{
+            font-size: 14px;
+            color: #6b7280;
+            line-height: 1.6;
+        }}
+
+        .btn-wrap {{
             text-align: center;
-            border: 1px solid #e0e6ed;
+            margin-top: 8px;
+            margin-bottom: 32px;
+        }}
+        .cta-button {{
+            display: inline-block;
+            background-color: #3b426e;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 13px 36px;
+            border-radius: 30px;
+            font-size: 14.5px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }}
+        
+        .secondary-link {{
+            display: block;
+            font-size: 14px;
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+            margin-top: 8px;
+        }}
+
+        .red-notice-box {{
+            background-color: #fce8e8;
+            border: 1px solid #c81e1e;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            color: #c81e1e;
+            line-height: 1.6;
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .red-notice-box strong {{
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #c81e1e;
+        }}
+
+        .note-box {{
+            border-top: 1px solid #eef0f5;
+            padding-top: 20px;
+            font-size: 11.5px;
+            line-height: 1.6;
+            color: #9ca3af;
+        }}
+
+        .email-footer {{
+            padding: 24px 36px;
+            text-align: center;
+            background-color: transparent;
+        }}
+        .footer-support {{
+            font-size: 13.5px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }}
+        .footer-support a {{
+            color: #1e3a7b;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .footer-copy {{
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 4px;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .email-header,
+            .email-body,
+            .email-footer {{ padding-left: 20px; padding-right: 20px; }}
+            .email-heading {{ font-size: 22px; }}
+            .detail-box, .offer-desc-box {{ padding-left: 16px; padding-right: 16px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
-            </div>
-            <h1 class="header-title">Offer Letter</h1>
-        </div>
-
-        <div class="content">
-            <p class="greeting">Hello {candidate_name},</p>
-
-            <div class="offer-box">
-                <h2>🎉 Congratulations!</h2>
-                <p>You've been offered a position!</p>
+    <div class="wrapper">
+        <div class="card-top-border"></div>
+        <div class="card">
+            
+            <!-- Header -->
+            <div class="email-header">
+                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
 
-            <p>We are thrilled to inform you that you have been selected for the following position at <strong>{company_name}</strong>:</p>
+            <!-- Body -->
+            <div class="email-body">
 
-            <table class="detail-table">
-                <tr>
-                    <td>📋 Position</td>
-                    <td>{position_title}</td>
-                </tr>
-                <tr>
-                    <td>💼 Employment Type</td>
-                    <td>{emp_type_display}</td>
-                </tr>
-                <tr>
-                    <td>💰 Compensation</td>
-                    <td>{formatted_salary}</td>
-                </tr>
-                <tr>
-                    <td>📅 Start Date</td>
-                    <td>{start_date_display}</td>
-                </tr>
-                <tr>
-                    <td>📍 Location</td>
-                    <td>{location or 'To be determined'}</td>
-                </tr>
-            </table>
+                <!-- Badge -->
+                <div class="badge-row">
+                    <div class="badge-icon">
+                        <img src="{meddle_icon_url}" alt="Offer Received" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <span style="display:none; font-size: 20px;">⭐</span>
+                    </div>
+                    <span class="badge-label">OFFER RECEIVED</span>
+                </div>
 
-            {f'<div class="info-box"><h3>📝 Additional Terms</h3><p>{offer_terms}</p></div>' if offer_terms else ''}
+                <!-- Heading -->
+                <h1 class="email-heading">You've Received an Offer!</h1>
 
-            <div class="attachment-notice">
-                <p><strong>📎 Attachment:</strong> Your official offer letter is attached to this email as a PDF document. Please review it carefully.</p>
-            </div>
+                <!-- Body copy -->
+                <p class="email-text">
+                    Congratulations <span class="highlight-name">{candidate_name}</span> {company_name} has extended a formal offer to you through FLIT. Review the details below and take the next step.
+                </p>
 
-            <div class="cta-box">
-                <p><strong>Next Steps</strong></p>
-                <p>Please review the attached offer letter and respond at your earliest convenience. If you have any questions, feel free to reach out to us.</p>
-            </div>
+                <!-- Details Box -->
+                <div class="detail-box">
+                    <div class="detail-box-title">OFFER DETAILS</div>
+                    <table class="detail-table">
+                        <tr>
+                            <td>Position</td>
+                            <td class="detail-value">{position_title}</td>
+                        </tr>
+                        <tr>
+                            <td>Company</td>
+                            <td class="detail-value">{company_name}</td>
+                        </tr>
+                        <tr>
+                            <td>Salary</td>
+                            <td class="detail-value">{formatted_salary} / year</td>
+                        </tr>
+                        <tr>
+                            <td>Hourly Basis</td>
+                            <td class="detail-value">{'Yes' if 'contract' in employment_type.lower() or 'hourly' in employment_type.lower() else 'No'}</td>
+                        </tr>
+                        <tr>
+                            <td>Joining Date</td>
+                            <td class="detail-value">{start_date_display}</td>
+                        </tr>
+                        <tr>
+                            <td>Related Job</td>
+                            <td class="detail-value">{position_title}</td>
+                        </tr>
+                    </table>
+                </div>
 
-            <p>We are excited about the possibility of you joining the <strong>{company_name}</strong> team and look forward to working with you!</p>
-        </div>
+                <!-- Offer Description Box (Optional if terms are present) -->
+                {f'''<div class="offer-desc-box">
+                    <div class="offer-desc-title">Offer Description</div>
+                    <div class="offer-desc-text">
+                        {offer_terms}
+                    </div>
+                </div>''' if offer_terms else ''}
 
-        <div class="footer">
-            <p>Best regards,<br>
-            The <strong>{company_name}</strong> Team<br>
-            <small>Powered by Flit — Empowering careers, one opportunity at a time.</small></p>
+                <p class="email-text" style="font-size: 13.5px;">
+                    Please review the full offer details on the platform. You can accept, negotiate, or decline the offer directly from your dashboard.
+                </p>
+
+                <!-- CTA -->
+                <div class="btn-wrap">
+                    <a href="{base_url}/candidate/dashboard?tab=offer-letters" class="cta-button">Review Offer</a>
+                </div>
+
+                <!-- Red Notice box -->
+                <div class="red-notice-box">
+                    <strong>PLEASE DO NOT REPLY TO THIS EMAIL</strong>
+                    This is an automated message sent from an unmonitored mailbox. Replies to this email will not be received or reviewed.
+                </div>
+
+                <!-- Note box -->
+                <div class="note-box">
+                    This offer was sent through FLIT by {company_name}. If you have questions about the offer, you can message the employer directly through the platform.
+                </div>
+
+            </div><!-- /email-body -->
+        </div><!-- /card -->
+
+        <!-- Footer -->
+        <div class="email-footer">
+            <p class="footer-support">
+                Need help? <a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="footer-copy">© 2026 FLIT &middot; Where talent meets opportunity</p>
         </div>
     </div>
 </body>
