@@ -74,7 +74,7 @@ def get_email_styles():
         .logo img {
             height: 40px;
             width: auto;
-            margin-right: 10px;
+            
         }
         .logo-text {
             font-family: 'Montserrat', 'Arial', sans-serif;
@@ -282,17 +282,18 @@ Need help? Contact Support: {support_url}
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -305,6 +306,7 @@ Need help? Contact Support: {support_url}
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #e8faed;
             border-radius: 50%;
@@ -468,7 +470,7 @@ Need help? Contact Support: {support_url}
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{frame_icon_url}" alt="Good News" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{frame_icon_url}" alt="Good News" width="24" height="24" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none; font-size: 20px;">⭐</span>
                     </div>
                     <span class="badge-label">GOOD NEWS</span>
@@ -634,17 +636,18 @@ Need help? Contact Support: {support_url}
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -657,6 +660,7 @@ Need help? Contact Support: {support_url}
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #f3f4f6;
             border-radius: 8px;
@@ -820,7 +824,7 @@ Need help? Contact Support: {support_url}
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{reject_icon_url}" alt="Application Update" width="42" height="42" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{reject_icon_url}" alt="Application Update" width="42" height="42" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none;">&#8594;</span>
                     </div>
                     <span class="badge-label">APPLICATION UPDATE</span>
@@ -978,17 +982,18 @@ This is an automated email, so replies won't be seen. If you need help, please c
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -1001,6 +1006,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: transparent;
             border-radius: 8px;
@@ -1162,7 +1168,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{stars_icon_url}" alt="Profile Interest" width="42" height="42" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{stars_icon_url}" alt="Profile Interest" width="42" height="42" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none; color: #435185; font-size: 24px;">✨</span>
                     </div>
                     <span class="badge-label">PROFILE INTEREST</span>
@@ -1342,17 +1348,18 @@ This is an automated email, so replies won't be seen. If you need help, please c
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -1365,6 +1372,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #e0f2fe;
             border-radius: 8px;
@@ -1659,17 +1667,18 @@ This is an automated message. Please do not reply directly.
 
         /* ── Header (logo row) ─────────────────────────── */
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
         .logo-wordmark {{
             font-size: 22px;
@@ -1690,6 +1699,7 @@ This is an automated message. Please do not reply directly.
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #eef2fb;
             border-radius: 50%;
@@ -1850,7 +1860,7 @@ This is an automated message. Please do not reply directly.
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{frame_icon_url}" alt="Account Verification" width="24" height="24" style="display:block;" />
+                        <img src="{frame_icon_url}" alt="Account Verification" width="24" height="24" style="display:inline-block; vertical-align:middle;" />
                     </div>
                     <span class="badge-label">Account Verification</span>
                 </div>
@@ -1943,7 +1953,7 @@ def send_offer_letter_email(candidate, company_name, position_title, offer_salar
 
     subject = f"🎉 Congratulations! Offer Letter from {company_name} — {position_title}"
     support_url = f"{base_url}/support"
-    meddle_icon_url = f"{base_url}/meddle.png"
+    meddle_icon_url = f"{base_url}/medlle.png"
 
     # Plain text version
     text_content = f"""
@@ -2009,17 +2019,18 @@ The {company_name} Team
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -2032,6 +2043,7 @@ The {company_name} Team
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #eef2fb;
             border-radius: 50%;
@@ -2227,7 +2239,7 @@ The {company_name} Team
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{meddle_icon_url}" alt="Offer Received" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{meddle_icon_url}" alt="Offer Received" width="24" height="24" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none; font-size: 20px;">⭐</span>
                     </div>
                     <span class="badge-label">OFFER RECEIVED</span>
@@ -2583,17 +2595,18 @@ This is an automated message. Please do not reply directly.
 
         /* ── Header (logo row) ─────────────────────────── */
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         /* ── Body ──────────────────────────────────────── */
@@ -2611,6 +2624,7 @@ This is an automated message. Please do not reply directly.
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #fff4e5;
             border-radius: 50%;
@@ -2760,7 +2774,7 @@ This is an automated message. Please do not reply directly.
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{frame_icon_url}" alt="Security" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{frame_icon_url}" alt="Security" width="24" height="24" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none; font-size: 18px;">🔑</span>
                     </div>
                     <span class="badge-label">SECURITY</span>
@@ -2880,17 +2894,18 @@ Need help? Contact Support: {support_url}
         }}
 
         .email-header {{
+            text-align: center;
             padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
             background-color: #ffffff;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
         }}
         .logo-img {{
             height: 36px;
             width: auto;
-            margin-right: 10px;
+            
         }}
 
         .email-body {{
@@ -2903,6 +2918,7 @@ Need help? Contact Support: {support_url}
         }}
         .badge-icon {{
             width: 42px;
+            text-align: center;
             height: 42px;
             background-color: #f5eeff;
             border-radius: 50%;
@@ -3081,7 +3097,7 @@ Need help? Contact Support: {support_url}
                 <!-- Badge -->
                 <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="{frame_icon_url}" alt="Reference Request" width="24" height="24" style="display:block;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <img src="{frame_icon_url}" alt="Reference Request" width="24" height="24" style="display:inline-block; vertical-align:middle;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <span style="display:none; font-size: 20px; color: #8b5cf6;">&#128100;</span>
                     </div>
                     <span class="badge-label">REFERENCE REQUEST</span>

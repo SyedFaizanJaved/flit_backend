@@ -178,6 +178,7 @@ class OfferSerializer(serializers.ModelSerializer):
     opportunity_type = serializers.CharField(source='meeting.opportunity_type', read_only=True)
     job = serializers.ReadOnlyField(default=None)
     project = serializers.ReadOnlyField(default=None)
+    company_logo = serializers.SerializerMethodField()
 
     class Meta:
         model = Offer
@@ -186,13 +187,13 @@ class OfferSerializer(serializers.ModelSerializer):
             'title', 'description', 'status',
             'salary', 'hourly_rate', 'is_hourly',
             'offer_date', 'date_of_joining',
-            'candidate_name', 'employer_name', 'meeting_title', 'opportunity_type',
+            'candidate_name', 'employer_name', 'company_logo', 'meeting_title', 'opportunity_type',
             'job', 'project',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'employer', 'offer_date', 'status',
-            'candidate_name', 'employer_name', 'meeting_title', 'opportunity_type',
+            'candidate_name', 'employer_name', 'company_logo', 'meeting_title', 'opportunity_type',
             'created_at', 'updated_at',
         ]
 
@@ -260,6 +261,16 @@ class OfferSerializer(serializers.ModelSerializer):
 
     def get_employer_name(self, obj):
         return obj.employer.get_full_name() or obj.employer.email
+
+    def get_company_logo(self, obj):
+        try:
+            from employers.models import Employer
+            profile = Employer.objects.get(user=obj.employer)
+            if profile.company and profile.company.logo:
+                return profile.company.logo.url
+        except Exception:
+            pass
+        return None
 
     def validate_meeting(self, meeting):
         """Ensure the meeting exists and is not deleted."""
