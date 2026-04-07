@@ -5,6 +5,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.urls import reverse as drf_reverse
+from django.db.models import Q
 
 from rest_framework import viewsets, generics, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -79,8 +80,8 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
             try:
                 # Convert candidate_id to int if it's a string
                 candidate_id_int = int(candidate_id) if isinstance(candidate_id, str) else candidate_id
-                candidate = Candidate.objects.get(id=candidate_id_int)
-            except (Candidate.DoesNotExist, ValueError, TypeError) as e:
+                candidate = Candidate.objects.filter(Q(id=candidate_id_int) | Q(user_id=candidate_id_int)).first()
+            except (ValueError, TypeError) as e:
                 logger.warning(f"Candidate with id {candidate_id} not found for flit pass notification: {str(e)}")
 
         try:
