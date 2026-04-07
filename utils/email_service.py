@@ -1088,7 +1088,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
             letter-spacing: 0.2px;
         }}
 
-        .red-notice-box {
+        .red-notice-box {{
             background-color: #fce8e8;
             border: 1px solid #c81e1e;
             border-radius: 8px;
@@ -1098,13 +1098,13 @@ This is an automated email, so replies won't be seen. If you need help, please c
             line-height: 1.6;
             text-align: center;
             margin-top: 16px;
-        }
-        .red-notice-box strong {
+        }}
+        .red-notice-box strong {{
             display: block;
             margin-bottom: 4px;
             font-size: 14px;
             color: #c81e1e;
-        }
+        }}
 
         .card-footer {{
             border-top: 1px solid #eef0f5;
@@ -1685,20 +1685,22 @@ This is an automated message. Please do not reply directly.
 
         /* badge row */
         .badge-row {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            text-align: center;
             margin-bottom: 18px;
-            gap: 10px;
         }}
         .badge-icon {{
             width: 42px;
             height: 42px;
             background-color: #eef2fb;
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-icon img {{
+            display: inline-block;
+            vertical-align: middle;
+            margin-top: -3px;
         }}
         .badge-label {{
             font-size: 11px;
@@ -1706,6 +1708,9 @@ This is an automated message. Please do not reply directly.
             letter-spacing: 1.2px;
             color: #1e3a7b;
             text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
         }}
 
         /* heading */
@@ -2022,20 +2027,22 @@ The {company_name} Team
         }}
 
         .badge-row {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            text-align: center;
             margin-bottom: 18px;
-            gap: 10px;
         }}
         .badge-icon {{
             width: 42px;
             height: 42px;
             background-color: #eef2fb;
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 42px;
+        }}
+        .badge-icon img {{
+            display: inline-block;
+            vertical-align: middle;
+            margin-top: -3px;
         }}
         .badge-label {{
             font-size: 11px;
@@ -2043,6 +2050,9 @@ The {company_name} Team
             letter-spacing: 1.2px;
             color: #1e3a7b;
             text-transform: uppercase;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
         }}
 
         .email-heading {{
