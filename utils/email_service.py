@@ -2831,8 +2831,8 @@ def send_reference_request_email(reference_email, candidate_name, relationship, 
     base_url = get_base_url()
     support_url = f"{base_url}/support"
     
-    # Purple icon frame for reference
-    frame_icon_url = f"{base_url}/user-purple.png"
+    # User icon for reference
+    frame_icon_url = f"{base_url}/user.png"
     
     candidate_first_name = candidate_name.split()[0] if candidate_name else 'Candidate'
     
