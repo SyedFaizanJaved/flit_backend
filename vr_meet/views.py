@@ -206,9 +206,10 @@ class MeetingRoomListView(generics.ListAPIView):
         now = timezone.now()
         
         stats = {
-            "invited": queryset.filter(status='pending').count(),
-            "scheduled": queryset.filter(status='active', start_time__gt=now).count(),
-            "completed": queryset.filter(status='ended').count(),
+            # All meetings = all shortlisted/invited candidates
+            "invited": queryset.count(),
+            # Subset of invited where interview time has been scheduled (start_time is set)
+            "scheduled": queryset.filter(start_time__isnull=False).count(),
             "expired": queryset.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
             "hired": queryset.filter(offers__status='hired').distinct().count(),
         }

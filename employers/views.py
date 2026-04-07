@@ -96,7 +96,8 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     send_flit_pass_notification(
                         candidate=candidate,
                         employer_name=employer.full_name,
-                        company_name=company_name
+                        company_name=company_name,
+                        category=employer.company.industry if employer.company else "Not specified"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send flit pass email notification: {str(e)}")
@@ -119,7 +120,8 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                     send_flit_pass_notification(
                         candidate=candidate,
                         employer_name=employer.full_name,
-                        company_name=company_name
+                        company_name=company_name,
+                        category=employer.company.industry if employer.company else "Not specified"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send flit pass email notification: {str(e)}")
