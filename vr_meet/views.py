@@ -882,6 +882,10 @@ class CandidateOfferRespondView(APIView):
                 position_title=position_title,
                 company_name=company_name,
                 action=action,
+                salary=offer.salary,
+                start_date=offer.date_of_joining,
+                is_hourly=offer.is_hourly,
+                hourly_rate=offer.hourly_rate,
             )
         except Exception as e:
             logger.error(f'Failed to send offer response email: {str(e)}')

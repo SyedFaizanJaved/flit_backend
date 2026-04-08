@@ -2365,7 +2365,7 @@ The {company_name} Team
 
 
 def send_offer_response_email(employer_user, candidate_name, position_title,
-                              company_name, action):
+                              company_name, action, salary=None, start_date=None, is_hourly=False, hourly_rate=None):
     """
     Send email to employer when a candidate accepts or declines their offer.
 
@@ -2381,46 +2381,55 @@ def send_offer_response_email(employer_user, candidate_name, position_title,
     """
     employer_email = employer_user.email
     employer_name = employer_user.get_full_name() or employer_user.email
-    styles = get_email_styles()
-    logo_url = get_logo_url()
-
+    base_url = get_base_url()
+    logo_url = f"{base_url}/frame.png"
+    support_url = f"{base_url}/support"
+    dashboard_url = f"{base_url}/employer/dashboard?tab=hired-candidates"
+    
     is_accepted = action == 'accept'
+    
+    # Format salary display
+    salary_display = "N/A"
+    if is_hourly and hourly_rate:
+        salary_display = f"${float(hourly_rate):,.2f} / hr"
+    elif salary:
+        salary_display = f"${float(salary):,.0f} / year"
+
+    # Format start date
+    start_date_display = start_date.strftime("%B %d, %Y") if start_date else "To be determined"
 
     if is_accepted:
         subject = f"🎉 Great News! {candidate_name} has accepted your offer — {position_title}"
-        emoji = "🎉"
-        heading = "Offer Accepted!"
-        banner_color = "linear-gradient(135deg, #00b894 0%, #00cec9 100%)"
-        status_text = "accepted"
-        message_body = (
-            f"<b>{candidate_name}</b> has <b style='color: #00b894;'>accepted</b> "
-            f"your offer for the position of <b>{position_title}</b> at <b>{company_name}</b>."
-        )
-        next_steps = (
-            "You can now proceed with the onboarding process. "
-            "Please coordinate with the candidate to finalize the joining details."
-        )
+        heading = f"{candidate_name} Accepted The Offer!"
+        status_label = "OFFER ACCEPTED"
+        badge_bg = "#e8faed"
+        badge_color = "#27ae60"
+        status_badge_bg = "#e6fffa"
+        status_badge_text = "#319795"
+        status_text = "ACCEPTED"
+        message_intro = f"Great news! {candidate_name} has accepted the offer for the {position_title} position. Onboarding documents have been automatically triggered."
     else:
         subject = f"{candidate_name} has declined your offer — {position_title}"
-        emoji = "📋"
-        heading = "Offer Declined"
-        banner_color = "linear-gradient(135deg, #636e72 0%, #b2bec3 100%)"
-        status_text = "declined"
-        message_body = (
-            f"<b>{candidate_name}</b> has <b style='color: #d63031;'>declined</b> "
-            f"your offer for the position of <b>{position_title}</b> at <b>{company_name}</b>."
-        )
-        next_steps = (
-            "You may want to reach out to the candidate for feedback, "
-            "or consider other candidates for this position."
-        )
+        heading = f"{candidate_name} Has Declined The Offer"
+        status_label = "OFFER DECLINED"
+        badge_bg = "#fff5f5"
+        badge_color = "#e53e3e"
+        status_badge_bg = "#fff5f5"
+        status_badge_text = "#e53e3e"
+        status_text = "DECLINED"
+        message_intro = f"We're writing to inform you that {candidate_name} has declined the offer for the {position_title} position."
 
     text_content = f"""
 Hello {employer_name},
 
-{candidate_name} has {status_text} your offer for the position of {position_title} at {company_name}.
+{message_intro}
 
-{'You can now proceed with the onboarding process.' if is_accepted else 'You may want to consider other candidates for this position.'}
+OFFER DETAILS:
+Candidate: {candidate_name}
+Role: {position_title}
+Salary: {salary_display}
+Start Date: {start_date_display}
+Status: {status_text}
 
 Best regards,
 Flit Platform
@@ -2428,81 +2437,264 @@ Flit Platform
 
     html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        {styles}
-        .status-banner {{
-            background: {banner_color};
-            padding: 25px;
-            border-radius: 8px;
-            margin: 20px 0;
-            color: white;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            background-color: #f4f7fa;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #1a1a2e;
+            padding: 32px 16px;
+        }}
+
+        .wrapper {{
+            max-width: 600px;
+            margin: 0 auto;
+        }}
+
+        .card {{
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+            border-top: 4px solid #435185;
+        }}
+
+        .header {{
+            text-align: center;
+            padding: 32px 20px;
+            border-bottom: 1px solid #eef0f5;
+        }}
+
+        .logo-img {{
+            height: 48px;
+            width: auto;
+        }}
+
+        .body {{
+            padding: 40px;
+        }}
+
+        .badge-container {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+
+        .badge-icon {{
+            width: 42px;
+            height: 42px;
+            background-color: {badge_bg};
+            border-radius: 50%;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 46px; /* Adjust for icon centering */
             text-align: center;
         }}
-        .status-banner h2 {{
-            margin: 0 0 8px 0;
-            color: white;
-            font-size: 22px;
+
+        .badge-text {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: {badge_color};
+            text-transform: uppercase;
+            margin-left: 8px;
+            display: inline-block;
+            vertical-align: middle;
         }}
-        .status-banner p {{
-            margin: 0;
+
+        .heading {{
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 16px;
+            line-height: 1.2;
+            text-align: center;
+            letter-spacing: -0.5px;
+        }}
+
+        .intro-text {{
+            font-size: 16px;
+            line-height: 1.6;
+            color: #4a5568;
+            margin-bottom: 32px;
+            text-align: center;
+        }}
+
+        .details-box {{
+            background-color: #fbfbfd;
+            border: 1px solid #eef0f5;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }}
+
+        .details-title {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #435185;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }}
+
+        .details-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+
+        .details-table td {{
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f5;
             font-size: 15px;
-            color: rgba(255,255,255,0.9);
+            color: #718096;
         }}
-        .detail-card {{
-            background-color: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border: 1px solid #e0e6ed;
+
+        .details-table tr:last-child td {{
+            border-bottom: none;
         }}
-        .next-steps {{
-            background-color: #e8f8f5;
-            padding: 15px 20px;
+
+        .details-label {{
+            font-weight: 500;
+        }}
+
+        .details-value {{
+            text-align: right;
+            color: #1a1a2e;
+            font-weight: 600;
+        }}
+
+        .status-badge {{
+            background-color: {status_badge_bg};
+            color: {status_badge_text};
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+        }}
+
+        .btn-container {{
+            text-align: center;
+            margin-bottom: 32px;
+        }}
+
+        .cta-button {{
+            display: inline-block;
+            background-color: #435185;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 16px 48px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(67, 81, 133, 0.2);
+        }}
+
+        .dashboard-tip {{
+            background-color: #f7fafc;
             border-radius: 8px;
-            margin: 20px 0;
-            border-left: 4px solid #00b894;
+            padding: 16px;
+            text-align: center;
+            color: #718096;
+            font-size: 14px;
+            border: 1px solid #edf2f7;
+        }}
+
+        .footer {{
+            padding: 32px 20px;
+            text-align: center;
+        }}
+
+        .footer-links {{
+            font-size: 14px;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }}
+
+        .footer-links a {{
+            color: #435185;
+            text-decoration: none;
+            font-weight: 600;
+        }}
+
+        .copyright {{
+            font-size: 12px;
+            color: #a0aec0;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .body {{ padding: 24px; }}
+            .heading {{ font-size: 24px; }}
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="{logo_url}" alt="Flit Logo" style="display: block;" />
-                <span class="logo-text">FLIT</span>
+    <div class="wrapper">
+        <div class="card">
+            <div class="header">
+                <img src="{logo_url}" alt="FLIT" class="logo-img">
             </div>
-            <h1 class="header-title">Offer Response</h1>
-        </div>
+            
+            <div class="body">
+                <div class="badge-container">
+                    <div class="badge-icon">
+                        <img src="https://img.icons8.com/material-rounded/24/27ae60/ribbon.png" alt="" style="display:inline-block; vertical-align:middle;">
+                    </div>
+                    <span class="badge-text">{status_label}</span>
+                </div>
 
-        <div class="content">
-            <p class="greeting">Hello {employer_name},</p>
+                <h1 class="heading">{heading}</h1>
+                <p class="intro-text">{message_intro}</p>
 
-            <div class="status-banner">
-                <h2>{emoji} {heading}</h2>
-                <p>{candidate_name} has responded to your offer</p>
-            </div>
+                <div class="details-box">
+                    <h2 class="details-title">OFFER DETAILS</h2>
+                    <table class="details-table">
+                        <tr>
+                            <td class="details-label">Candidate</td>
+                            <td class="details-value">{candidate_name}</td>
+                        </tr>
+                        <tr>
+                            <td class="details-label">Role</td>
+                            <td class="details-value">{position_title}</td>
+                        </tr>
+                        <tr>
+                            <td class="details-label">Salary</td>
+                            <td class="details-value">{salary_display}</td>
+                        </tr>
+                        <tr>
+                            <td class="details-label">Start Date</td>
+                            <td class="details-value">{start_date_display}</td>
+                        </tr>
+                        <tr>
+                            <td class="details-label">Status</td>
+                            <td class="details-value"><span class="status-badge">{status_text}</span></td>
+                        </tr>
+                    </table>
+                </div>
 
-            <p>{message_body}</p>
+                {f'''<div class="btn-container">
+                    <a href="{dashboard_url}" class="cta-button">Start Onboarding</a>
+                </div>''' if is_accepted else ''}
 
-            <div class="detail-card">
-                <p><strong>Position:</strong> {position_title}</p>
-                <p><strong>Candidate:</strong> {candidate_name}</p>
-                <p><strong>Status:</strong> {status_text.capitalize()}</p>
-            </div>
-
-            <div class="next-steps">
-                <p><strong>Next Steps:</strong> {next_steps}</p>
+                <div class="dashboard-tip">
+                    You can track progress from your dashboard.
+                </div>
             </div>
         </div>
 
         <div class="footer">
-            <p>Best regards,<br>
-            <strong>Flit Platform</strong><br>
-            <small>Empowering careers, one opportunity at a time.</small></p>
+            <p class="footer-links">
+                Need help? <a href="{support_url}">Contact Support</a>
+            </p>
+            <p class="copyright">
+                © 2026 FLIT · Where talent meets opportunity
+            </p>
         </div>
     </div>
 </body>
@@ -2510,6 +2702,7 @@ Flit Platform
 """
 
     return send_email(employer_email, subject, text_content, html_content)
+
 
 
 def send_password_reset_email(user, reset_url):

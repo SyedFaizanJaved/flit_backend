@@ -24,6 +24,7 @@ from candidates.models import Candidate, ReferenceRequest
 from applications.models import JobApplication, ProjectApplication
 from jobs.models import Job, JobSkill
 import logging
+import jwt
 logger = logging.getLogger("exceptions")
 
 
@@ -636,6 +637,17 @@ def verify_email(request):
     try:
         access = AccessToken(token_str)
     except Exception as e:
+        # Try to check if user is already verified even if token is expired/invalid
+        try:
+            payload = jwt.decode(token_str, options={"verify_signature": False})
+            user_id = payload.get('user_id')
+            if user_id:
+                user = User.objects.filter(id=user_id).first()
+                if user and user.is_verified:
+                    return Response({'message': 'Email is already verified.'}, status=status.HTTP_200_OK)
+        except Exception:
+            pass
+
         print(f"Token verification failed: {e}")
         print(f"Token received: {token_str}")
         return Response({'detail': f'Invalid or malformed token. Error: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
