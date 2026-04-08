@@ -161,11 +161,15 @@ class MeetingRoomCreateView(generics.CreateAPIView):
             )
         except Exception as e:
             logger.exception("Failed to create Google Meet event")
-            meet_link, event_id= None,None
+            # If the exception is from our create_google_event, it might have a helpful message
+            error_msg = str(e)
+            if "connect your Google account" in error_msg or "Credentials Not Found" in error_msg:
+                raise ValidationError("Your Google Calendar is not connected. Please connect it from the dashboard settings to create meetings.")
+            raise ValidationError(f"Failed to create Google Meet event: {error_msg}")
         
         if not meet_link:
             logger.error("Failed to generate Google Meet link. Room not created.")
-            raise ValidationError("Failed to generate Google Meet link. Room not created.")
+            raise ValidationError("Google Calendar failed to return a meeting link. Please check if your Google account has enough permissions or try re-connecting your account.")
 
 
         # Save room in DB
@@ -393,26 +397,70 @@ class CandidateMeetingsView(generics.ListAPIView):
 def check_google_connection(request):
     """
     Check if the authenticated user has connected their Google account.
-    Returns:
-        Response: {"connected": bool, "message": str}
+    If the token is expired, try to refresh it to ensure the connection is still valid.
     """
     try:
-        token_exists = UserGoogleToken.objects.filter(user=request.user).exists()
-        if token_exists:
+        token_obj = UserGoogleToken.objects.filter(user=request.user).first()
+        if not token_obj:
+            return Response({
+                "connected": False,
+                "message": "Google account is not connected"
+            })
+            
+        # Check if the token is still valid or can be refreshed
+        try:
+            creds = Credentials.from_authorized_user_info(token_obj.token_json)
+            
+            # If expired, try to refresh immediately to verify connection
+            if creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                    # Update the stored token if refresh succeeded
+                    token_obj.token_json = json.loads(creds.to_json())
+                    token_obj.save()
+                except Exception as refresh_error:
+                    logger.warning(f"Failed to refresh Google token for user {request.user.id}: {str(refresh_error)}")
+                    # If refresh fails, the connection is effectively broken (e.g., revoked)
+                    token_obj.delete()
+                    return Response({
+                        "connected": False,
+                        "message": "Google connection has expired or been revoked. Please reconnect."
+                    })
+            
             return Response({
                 "connected": True,
                 "message": "Google account is connected"
             })
-        return Response({
-            "connected": False,
-            "message": "Google account is not connected"
-        })
+            
+        except Exception as cred_error:
+            logger.error(f"Error validating Google credentials: {str(cred_error)}")
+            return Response({
+                "connected": False,
+                "message": "Invalid connection state. Please reconnect."
+            })
+
     except Exception as e:
         logger.error(f"Error checking Google connection: {str(e)}")
         return Response({
             "connected": False,
             "message": "Error checking Google connection status"
         }, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def disconnect_google(request):
+    """
+    Disconnect Google account by deleting the user's token.
+    """
+    try:
+        deleted_count, _ = UserGoogleToken.objects.filter(user=request.user).delete()
+        if deleted_count > 0:
+            return Response({"message": "Google account disconnected successfully."}, status=status.HTTP_200_OK)
+        return Response({"message": "No connected Google account found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.error(f"Error disconnecting Google: {str(e)}")
+        return Response({"detail": "Error disconnecting Google account."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 def google_callback(request):
@@ -452,10 +500,124 @@ def google_callback(request):
                 defaults={"token_json": token_json}
             )
 
-            return HttpResponse("Google connected successfully", status=status.HTTP_200_OK)
+            # Define redirect URL (Frontend Dashboard)
+            base_url = getattr(settings, 'FLIT_REQUEST_URL', 'http://localhost:3000')
+            dashboard_url = f"{base_url}/employer/dashboard"
+            
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Connection Successful | FLIT</title>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    body {{
+                        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+                        background-color: #f0f4f8;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100vh;
+                        margin: 0;
+                        color: #1a202c;
+                    }}
+                    .card {{
+                        background: white;
+                        border-radius: 16px;
+                        padding: 40px;
+                        text-align: center;
+                        box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+                        max-width: 400px;
+                        width: 90%;
+                    }}
+                    .success-icon {{
+                        width: 64px;
+                        height: 64px;
+                        background-color: #e6fffa;
+                        color: #319795;
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 32px;
+                        margin: 0 auto 24px;
+                    }}
+                    h1 {{
+                        font-size: 24px;
+                        font-weight: 700;
+                        margin-bottom: 12px;
+                        color: #1a1a2e;
+                    }}
+                    p {{
+                        font-size: 16px;
+                        color: #718096;
+                        line-height: 1.5;
+                        margin-bottom: 32px;
+                    }}
+                    .loader {{
+                        width: 100%;
+                        height: 4px;
+                        background-color: #edf2f7;
+                        border-radius: 2px;
+                        margin-bottom: 24px;
+                        overflow: hidden;
+                        position: relative;
+                    }}
+                    .loader-bar {{
+                        width: 100%;
+                        height: 100%;
+                        background-color: #435185;
+                        animation: loading 3s linear forwards;
+                        transform-origin: left;
+                    }}
+                    @keyframes loading {{
+                        from {{ transform: scaleX(0); }}
+                        to {{ transform: scaleX(1); }}
+                    }}
+                    .btn {{
+                        display: inline-block;
+                        background-color: #435185;
+                        color: white !important;
+                        text-decoration: none;
+                        padding: 12px 28px;
+                        border-radius: 50px;
+                        font-weight: 600;
+                        transition: all 0.2s;
+                    }}
+                    .btn:hover {{
+                        background-color: #36426e;
+                        transform: translateY(-1px);
+                    }}
+                </style>
+                <script>
+                    setTimeout(function() {{
+                        window.location.href = "{dashboard_url}";
+                    }}, 3000);
+                </script>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="success-icon">✓</div>
+                    <h1>Connected!</h1>
+                    <p>Your Google Calendar has been successfully linked to your FLIT account.</p>
+                    
+                    <div class="loader">
+                        <div class="loader-bar"></div>
+                    </div>
+                    
+                    <p style="font-size: 14px; margin-bottom: 16px;">Redirecting to dashboard...</p>
+                    <a href="{dashboard_url}" class="btn">Go to Dashboard</a>
+                </div>
+            </body>
+            </html>
+            """
+            return HttpResponse(html_content)
+
         except Exception as e:
             logger.exception("Exception in google_callback")
-            return HttpResponse("failed to connect google", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return HttpResponse(f"failed to connect google: {{str(e)}}", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
         logger.exception("Exception in google_callback")
         return HttpResponse("failed to connect google", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
