@@ -38,7 +38,7 @@ class Company(models.Model):
     values = models.JSONField(default=list) 
     
     # Enhanced Branding Fields
-    founded_year = models.PositiveIntegerField(blank=True, null=True)
+    founded_year = models.DateField(blank=True, null=True)
     culture = models.TextField(blank=True, help_text="Describe the company culture")
     benefits = models.TextField(blank=True, help_text="List key benefits and perks")
     social_links = models.JSONField(
@@ -116,7 +116,7 @@ class CompanyMilestone(models.Model):
     Company history milestones
     """
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='milestones')
-    year = models.PositiveIntegerField()
+    year = models.DateField()
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
