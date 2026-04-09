@@ -8,10 +8,10 @@ from django.utils import timezone
 from django.db.models import Count, Q, F, OuterRef, Subquery, Max
 from django.db import models
 from django.db.models.functions import Coalesce
-from .models import ChatMessage
+from chat.models import ChatMessage
 from accounts.models import User
 from employers.models import Employer
-from candidates.models import Candidate
+from candidates.models import Candidate, ReferenceRequest
 from django.core.mail import send_mail
 from django.conf import settings
 from utils.email_service import send_chat_message_notification
@@ -500,3 +500,117 @@ class ChatListConsumer(AsyncJsonWebsocketConsumer):
 
     async def chat_list_update(self, event):
         await self.send_chat_list()
+
+
+class NotificationConsumer(AsyncJsonWebsocketConsumer):
+    logger = logging.getLogger(__name__)
+
+    async def connect(self):
+        try:
+            self.candidate_id = self.scope['url_route']['kwargs'].get('candidate_id')
+            if not self.candidate_id:
+                await self.close(code=4003)
+                return
+
+            self.group_name = f'notifications_candidate_{self.candidate_id}'
+            await self.channel_layer.group_add(self.group_name, self.channel_name)
+            await self.accept()
+            
+            self.logger.info(f"Notification socket connected for candidate {self.candidate_id}")
+            
+            # Send initial counts
+            await self.send_dashboard_update()
+            
+        except Exception as e:
+            self.logger.error(f"Notification connection error: {str(e)}")
+            await self.close(code=4001)
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def receive_json(self, content):
+        # Handle client-side events if any
+        pass
+
+    async def send_dashboard_update(self, event=None):
+        """
+        Calculates and sends the latest unread counts to the candidate.
+        """
+        try:
+            print(f"DEBUG: NotificationConsumer receiving send_dashboard_update for {self.candidate_id}")
+            self.logger.debug(f"Calculating dashboard updates for candidate {self.candidate_id}")
+            data = await self.get_unread_counts()
+            await self.send_json({
+                'type': 'dashboard_update',
+                'counts': data
+            })
+        except Exception as e:
+            self.logger.error(f"Error in send_dashboard_update: {e}")
+
+    async def notify_alert(self, event):
+        """
+        Sends a real-time alert (toast message) to the candidate.
+        Example: "Company XYZ flitted you!"
+        """
+        try:
+            print(f"DEBUG: NotificationConsumer receiving notify_alert for {self.candidate_id}: {event.get('title')}")
+            await self.send_json({
+                'type': 'notification_alert',
+                'title': event.get('title', 'New Notification'),
+                'message': event.get('message', ''),
+                'category': event.get('category', 'general')
+            })
+        except Exception as e:
+            self.logger.error(f"Error in notify_alert: {e}")
+
+    @database_sync_to_async
+    def get_unread_counts(self):
+        # Imports removed from here as they are at the top now or imported selectively
+        from applications.models import JobApplication as Application, ProjectApplication, InterviewRequest
+        from vr_meet.models import Offer
+        from employers.models import CandidateAction
+
+        try:
+            candidate = Candidate.objects.get(id=self.candidate_id)
+            cid_str = str(candidate.id)
+            
+            unread_flits = CandidateAction.objects.filter(
+                candidate_id=cid_str, 
+                action='pass', 
+                is_read=False
+            ).count()
+            
+            unread_job_apps = Application.objects.filter(candidate=candidate, is_read=False).count()
+            unread_project_apps = ProjectApplication.objects.filter(candidate=candidate, is_read=False).count()
+            # Offer model uses user
+            unread_offers = Offer.objects.filter(candidate=candidate.user, is_read=False).count()
+            unread_references = ReferenceRequest.objects.filter(candidate=candidate, is_read=False).count()
+            unread_interviews = InterviewRequest.objects.filter(
+                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
+                is_read=False
+            ).count()
+
+            return {
+                'unread_flits_count': unread_flits,
+                'unread_job_applications_count': unread_job_apps,
+                'unread_project_applications_count': unread_project_apps,
+                'unread_offers_count': unread_offers,
+                'unread_reference_requests_count': unread_references,
+                'unread_interview_requests_count': unread_interviews,
+                'total_unread_count': (
+                    unread_flits + unread_job_apps + unread_project_apps + 
+                    unread_offers + unread_references + unread_interviews
+                )
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting unread counts for candidate {self.candidate_id}: {e}")
+            return {
+                'unread_flits_count': 0,
+                'unread_job_applications_count': 0,
+                'unread_project_applications_count': 0,
+                'unread_offers_count': 0,
+                'unread_reference_requests_count': 0,
+                'unread_interview_requests_count': 0,
+                'total_unread_count': 0
+            }

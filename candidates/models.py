@@ -218,6 +218,7 @@ class ReferenceRequest(models.Model):
     request_message = models.TextField(blank=True, null=True)
     reply_message = models.TextField(blank=True, null=True, verbose_name='Reference Response')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    is_read = models.BooleanField(default=True) # Default True because candidate created it pending.
     token = models.UUIDField(
         default=uuid.uuid4, unique=True, editable=False, db_index=True
     )
