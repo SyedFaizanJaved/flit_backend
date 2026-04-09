@@ -167,6 +167,7 @@ class Offer(models.Model):
     title = models.CharField(max_length=255, help_text="Offer title / position name.")
     description = models.TextField(blank=True, default='', help_text="Additional details about the offer.")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    is_read = models.BooleanField(default=False)
 
     # Compensation
     salary = models.DecimalField(

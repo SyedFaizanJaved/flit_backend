@@ -31,7 +31,8 @@ from projects.models import Project
 from projects.serializers import ProjectListSerializer
 from jobs.models import Job
 from jobs.serializers import JobListSerializer
-from applications.models import JobApplication as Application, ProjectApplication
+from applications.models import JobApplication as Application, ProjectApplication, InterviewRequest
+from vr_meet.models import Offer
 from django.db.models import Q, Value, IntegerField, Case, When, F
 
 from accounts.views import BaseRoleRegistrationView
@@ -998,27 +999,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             'latest_projects': self._get_latest_projects_data(candidate),
         })
 
-    @action(detail=False, methods=['get'], url_path='dashboard/profile')
-    def profile_dashboard(self, request):
-        candidate = self.get_candidate()
-        applications_count = Application.objects.filter(
-            candidate=candidate,
-            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
-        ).count()
-        job_count = Application.objects.filter(candidate=candidate, job__isnull=False).count()
-        project_count = applications_count - job_count
-        references_count = ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count()
-        reference_requests_count = ReferenceRequest.objects.filter(candidate=candidate).count()
-
-        return Response({
-            'profile': CandidateSerializer(candidate, context={'request': request}).data,
-            'profile_completed': candidate.is_profile_complete,
-            'applications_count': applications_count,
-            'job_applications_count': job_count,
-            'project_applications_count': project_count,
-            'references_count': references_count,
-            'reference_requests_count': reference_requests_count,
-        })
 
     @action(detail=False, methods=['get'], url_path='dashboard/applications')
     def applications(self, request):
@@ -1110,7 +1090,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             'total_applications': counts['total'] or 0,
             'job_applications_count': counts['job_apps'] or 0,
             'project_applications_count': counts['project_apps'] or 0,
-            'references_count': ReferenceRequest.objects.filter(candidate=candidate, is_public=True).count(),
+            'references_count': ReferenceRequest.objects.filter(candidate=candidate, status='completed').count(),
         }
 
     def _get_latest_jobs_data(self, candidate, limit=5):
@@ -1402,6 +1382,38 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         
         serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='mark-as-read')
+    def mark_as_read(self, request):
+        """
+        Marks all items of a specific type as read for the candidate.
+        Expected data: {'type': 'flit' | 'job_application' | 'project_application' | 'offer' | 'reference' | 'interview'}
+        """
+        candidate = self.get_candidate()
+        category = request.data.get('type')
+        
+        if not category:
+            return Response({"error": "Type is required"}, status=400)
+            
+        if category == 'flit':
+            CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).update(is_read=True)
+        elif category == 'job_application':
+            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+        elif category == 'project_application':
+            ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+        elif category == 'offer':
+            Offer.objects.filter(candidate=candidate.user, is_read=False).update(is_read=True)
+        elif category == 'reference':
+            ReferenceRequest.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+        elif category == 'interview':
+            InterviewRequest.objects.filter(
+                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
+                is_read=False
+            ).update(is_read=True)
+        else:
+            return Response({"error": "Invalid type"}, status=400)
+            
+        return Response({"message": f"All {category} marked as read"})
 
     # ====================== AI MATCHING ======================
     @action(detail=True, methods=['get'], url_path='ai-matching', permission_classes=[permissions.AllowAny])

@@ -134,6 +134,7 @@ class CandidateAction(models.Model):
     employer = models.ForeignKey(Employer, on_delete=models.CASCADE, related_name='candidate_actions')
     candidate_id = models.CharField(max_length=100)
     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
