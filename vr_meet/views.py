@@ -368,6 +368,10 @@ class CandidateMeetingsView(generics.ListAPIView):
         # Base queryset for calculating all statistics accurately
         base_qs = MeetingRoom.objects.filter(is_deleted=False, candidate=user)
         
+        # Calculate unread count and mark as read
+        unread_count = base_qs.filter(is_read=False).count()
+        base_qs.filter(is_read=False).update(is_read=True)
+
         # Determine current tab/category filtering
         tab = self.request.query_params.get('tab', 'all')
         
@@ -376,6 +380,7 @@ class CandidateMeetingsView(generics.ListAPIView):
             "scheduled": base_qs.filter(status='active', start_time__gt=now).count(),
             "invited": base_qs.filter(status='pending').count(),
             "expired": base_qs.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
+            "unread_count": unread_count,
         }
         
         # Note: I'm using a slightly safer way to count expired to avoid bugs
@@ -386,6 +391,7 @@ class CandidateMeetingsView(generics.ListAPIView):
         
         return Response({
             "stats": stats,
+            "unread_count": unread_count,
             "meetings": serializer.data
         })
 
@@ -975,6 +981,31 @@ class CandidateOfferListView(generics.ListAPIView):
             candidate=self.request.user,
             status__in=['hired', 'accepted', 'declined']
         ).select_related('meeting', 'candidate', 'employer')
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        unread_count = queryset.filter(is_read=False).count()
+        queryset.filter(is_read=False).update(is_read=True)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return Response({
+                'count': self.paginator.page.paginator.count,
+                'unread_count': unread_count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'total_pages': self.paginator.page.paginator.num_pages,
+                'current_page': self.paginator.page.number,
+                'results': serializer.data
+            })
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': queryset.count(),
+            'unread_count': unread_count,
+            'results': serializer.data
+        })
 
 
 class CandidateOfferRespondView(APIView):

@@ -92,6 +92,8 @@ class MeetingRoom(models.Model):
     meet_link = models.URLField(max_length=500, null=True, blank=True)
     
     is_deleted = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+
 
     @property
     def meeting_date(self):
