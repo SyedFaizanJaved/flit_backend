@@ -103,6 +103,10 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     serializer_class = ReferenceRequestSerializer
     pagination_class = CustomPagination
 
+    def get_queryset(self):
+        return ReferenceRequest.objects.filter(candidate=self.get_candidate())
+
+
     def get_permissions(self):
         if self.action == 'retrieve':
             return [permissions.AllowAny()]
@@ -1056,42 +1060,48 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             
             # Mark all as read when list is accessed
             Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            # Mark all as read when list is accessed
+            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
             ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
 
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
             
-            counts = {
-                'job': Application.objects.filter(candidate=candidate).count(),
-                'project': ProjectApplication.objects.filter(candidate=candidate).count(),
+            job_count = Application.objects.filter(candidate=candidate).count()
+            project_count = ProjectApplication.objects.filter(candidate=candidate).count()
+
+            applications_list = page if page is not None else formatted
+
+            result_data = {
+                'total_applications': job_count + project_count,
+                'job_applications_count': job_count,
+                'project_applications_count': project_count,
+                'applications': applications_list,
             }
 
-            data = {
-                'total_applications': counts['job'] + counts['project'],
-                'job_applications_count': counts['job'],
-                'project_applications_count': counts['project'],
+            response_data = {
                 'unread_job_count': unread_job_count,
                 'unread_project_count': unread_project_count,
-                'applications': page if page is not None else formatted,
+                'total_unread_count': unread_job_count + unread_project_count,
             }
 
             if page is not None:
-                # Custom order for paginated response
-                return Response({
-                    'total_applications': data['total_applications'],
-                    'job_applications_count': data['job_applications_count'],
-                    'project_applications_count': data['project_applications_count'],
-                    'unread_job_count': data['unread_job_count'],
-                    'unread_project_count': data['unread_project_count'],
+                response_data.update({
                     'count': self.paginator.page.paginator.count,
                     'next': self.paginator.get_next_link(),
                     'previous': self.paginator.get_previous_link(),
                     'total_pages': self.paginator.page.paginator.num_pages,
                     'current_page': self.paginator.page.number,
-                    'results': data['applications']
+                    'results': result_data
+                })
+            else:
+                response_data.update({
+                    'count': len(formatted),
+                    'results': result_data
                 })
             
-            return Response(data)
+            return Response(response_data)
+
 
     def _format_application(self, app, app_type):
         if app_type == 'job':

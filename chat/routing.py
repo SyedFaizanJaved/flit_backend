@@ -13,9 +13,4 @@ websocket_urlpatterns = [
         consumers.ChatListConsumer.as_asgi(),
         name='chat_list'
     ),
-    re_path(
-        r'ws/notifications/(?P<candidate_id>\d+)/$',
-        consumers.NotificationConsumer.as_asgi(),
-        name='notifications'
-    ),
 ]
