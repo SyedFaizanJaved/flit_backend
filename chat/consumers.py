@@ -530,8 +530,56 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive_json(self, content):
-        # Handle client-side events if any
-        pass
+        """
+        Handles messages sent from the client (candidate).
+        Currently supports: {"action": "mark_read", "category": "flit"}
+        """
+        action = content.get('action')
+        category = content.get('category')
+        
+        if action == 'mark_read' and category:
+            await self.mark_category_as_read(category)
+            # After marking as read, send the updated counts back
+            await self.send_dashboard_update()
+
+    @database_sync_to_async
+    def mark_category_as_read(self, category):
+        """Database logic to mark items as read based on category."""
+        from applications.models import JobApplication, ProjectApplication, InterviewRequest
+        from vr_meet.models import Offer, MeetingRoom
+        from employers.models import CandidateAction
+        from candidates.models import Candidate, ReferenceRequest
+
+        try:
+            candidate = Candidate.objects.get(id=self.candidate_id)
+            
+            if category == 'flit':
+                CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).update(is_read=True)
+            
+            elif category == 'job_application':
+                JobApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            
+            elif category == 'project_application':
+                ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            
+            elif category == 'offer':
+                Offer.objects.filter(candidate=candidate.user, is_read=False).update(is_read=True)
+            
+            elif category == 'reference':
+                ReferenceRequest.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            
+            elif category == 'interview':
+                # Mark both systems as read
+                InterviewRequest.objects.filter(
+                    Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
+                    is_read=False
+                ).update(is_read=True)
+                
+                MeetingRoom.objects.filter(candidate=candidate.user, is_read=False).update(is_read=True)
+
+        except Exception as e:
+            self.logger.error(f"Error marking {category} as read in consumer: {e}")
+
 
     async def send_dashboard_update(self, event=None):
         """
@@ -568,7 +616,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
     def get_unread_counts(self):
         # Imports removed from here as they are at the top now or imported selectively
         from applications.models import JobApplication as Application, ProjectApplication, InterviewRequest
-        from vr_meet.models import Offer
+        from vr_meet.models import Offer, MeetingRoom
         from employers.models import CandidateAction
 
         try:
@@ -586,10 +634,20 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             # Offer model uses user
             unread_offers = Offer.objects.filter(candidate=candidate.user, is_read=False).count()
             unread_references = ReferenceRequest.objects.filter(candidate=candidate, is_read=False).count()
-            unread_interviews = InterviewRequest.objects.filter(
+            
+            # Combine InterviewRequest and MeetingRoom (which is what the UI shows)
+            unread_interviews_apps = InterviewRequest.objects.filter(
                 Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
                 is_read=False
             ).count()
+            
+            unread_interviews_vrmeet = MeetingRoom.objects.filter(
+                candidate=candidate.user,
+                is_read=False,
+                is_deleted=False
+            ).count()
+            
+            unread_interviews = unread_interviews_apps + unread_interviews_vrmeet
 
             return {
                 'unread_flits_count': unread_flits,
@@ -598,6 +656,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
                 'unread_offers_count': unread_offers,
                 'unread_reference_requests_count': unread_references,
                 'unread_interview_requests_count': unread_interviews,
+
                 'total_unread_count': (
                     unread_flits + unread_job_apps + unread_project_apps + 
                     unread_offers + unread_references + unread_interviews

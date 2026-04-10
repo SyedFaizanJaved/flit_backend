@@ -108,16 +108,30 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
-    def get_queryset(self):
-        queryset = ReferenceRequest.objects.all() if self.action == 'retrieve' else ReferenceRequest.objects.filter(candidate=self.get_candidate())
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        unread_count = queryset.filter(is_read=False).count()
+        queryset.filter(is_read=False).update(is_read=True)
         
-        # Real-time check: list fetch karte waqt expiry update kar dein
-        from django.utils import timezone
-        pending_expired = queryset.filter(status='pending', expires_at__lt=timezone.now())
-        for ref in pending_expired:
-            ref.mark_expired()
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return Response({
+                'count': self.paginator.page.paginator.count,
+                'unread_count': unread_count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'total_pages': self.paginator.page.paginator.num_pages,
+                'current_page': self.paginator.page.number,
+                'results': serializer.data
+            })
             
-        return queryset.order_by('-created_at')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'count': queryset.count(),
+            'unread_count': unread_count,
+            'results': serializer.data
+        })
 
     def perform_create(self, serializer):
         serializer.save(candidate=self.get_candidate())
@@ -1036,6 +1050,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             if not app_type:
                 formatted.sort(key=lambda x: x['applied_at'], reverse=True)
 
+            # Calculate unread counts before marking as read
+            unread_job_count = Application.objects.filter(candidate=candidate, is_read=False).count()
+            unread_project_count = ProjectApplication.objects.filter(candidate=candidate, is_read=False).count()
+            
+            # Mark all as read when list is accessed
+            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
             
@@ -1048,11 +1070,26 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 'total_applications': counts['job'] + counts['project'],
                 'job_applications_count': counts['job'],
                 'project_applications_count': counts['project'],
+                'unread_job_count': unread_job_count,
+                'unread_project_count': unread_project_count,
                 'applications': page if page is not None else formatted,
             }
 
             if page is not None:
-                return self.get_paginated_response(data)  # ← Custom format with total_pages etc.
+                # Custom order for paginated response
+                return Response({
+                    'total_applications': data['total_applications'],
+                    'job_applications_count': data['job_applications_count'],
+                    'project_applications_count': data['project_applications_count'],
+                    'unread_job_count': data['unread_job_count'],
+                    'unread_project_count': data['unread_project_count'],
+                    'count': self.paginator.page.paginator.count,
+                    'next': self.paginator.get_next_link(),
+                    'previous': self.paginator.get_previous_link(),
+                    'total_pages': self.paginator.page.paginator.num_pages,
+                    'current_page': self.paginator.page.number,
+                    'results': data['applications']
+                })
             
             return Response(data)
 
@@ -1363,25 +1400,47 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def flit_list(self, request):
         """
         Returns a list of companies/employers that have 'flitted' (action='pass') the candidate.
+        Includes unread count and marks them as read.
         """
         candidate = self.get_candidate()
         
         # Get CandidateAction records where this candidate was 'flitted'
-        actions = CandidateAction.objects.filter(
+        actions_qs = CandidateAction.objects.filter(
             candidate_id=str(candidate.id),
             action='pass'
         ).select_related('employer__company').order_by('-created_at')
         
-        employers = [action.employer for action in actions]
+        # Calculate unread count BEFORE marking as read
+        unread_count = actions_qs.filter(is_read=False).count()
+        
+        # Mark all as read when the list is accessed
+        actions_qs.filter(is_read=False).update(is_read=True)
+        
+        employers = [action.employer for action in actions_qs]
         
         # Paginate results
         page = self.paginate_queryset(employers)
         if page is not None:
             serializer = CandidateFlittedCompanySerializer(page, many=True, context={'request': request})
-            return self.get_paginated_response(serializer.data)
+            
+            # Manually construct response to control field order
+            return Response({
+                'count': self.paginator.page.paginator.count,
+                'unread_count': unread_count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'total_pages': self.paginator.page.paginator.num_pages,
+                'current_page': self.paginator.page.number,
+                'results': serializer.data
+            })
         
         serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
-        return Response(serializer.data)
+        return Response({
+            'count': len(employers),
+            'unread_count': unread_count,
+            'results': serializer.data
+        })
+
 
     @action(detail=False, methods=['post'], url_path='mark-as-read')
     def mark_as_read(self, request):
