@@ -46,6 +46,7 @@ from .serializers import (
     DiscoverTalentSerializer,
     AchievementSerializer,
 )
+from chat.models import ChatMessage
 from employers.models import CandidateAction
 from employers.serializers import CandidateFlittedCompanySerializer
 
@@ -115,8 +116,8 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         unread_count = queryset.filter(is_read=False).count()
-        queryset.filter(is_read=False).update(is_read=True)
-        
+        if unread_count > 0:
+            queryset.filter(is_read=False).update(is_read=True)
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -1010,11 +1011,64 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard')
     def dashboard(self, request):
         candidate = self.get_candidate()
+        user = request.user
+        
+        # 1. Unread Counts
+        unread_counts = {
+            'flit_list': CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).count(),
+            'interview_requests': InterviewRequest.objects.filter(
+                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
+                is_read=False
+            ).count(),
+            'offer_letters': Offer.objects.filter(candidate=user, is_read=False, status__in=['hired', 'accepted', 'declined']).count(),
+            'applications': Application.objects.filter(candidate=candidate, is_read=False).count() + 
+                            ProjectApplication.objects.filter(candidate=candidate, is_read=False).count(),
+            'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status='completed').count(),
+            'messages': ChatMessage.objects.filter(recipient=user, is_read=False).count(),
+        }
+        
+        total_unread = sum(unread_counts.values())
+
+        # 2. Stats Summary
+        stats = {
+            'profile_views': candidate.profile_views,
+            'total_applications': Application.objects.filter(candidate=candidate).count() + 
+                                  ProjectApplication.objects.filter(candidate=candidate).count(),
+            'total_interviews': InterviewRequest.objects.filter(
+                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
+            ).count(),
+            'matched_opportunities_count': 0, # Calculated below
+        }
+
+        # 3. Latest Data Snippets
+        latest_applications = self._get_latest_applications(candidate, limit=3)
+        latest_interviews = self._get_latest_interviews(candidate, limit=3)
+        latest_message = self._get_latest_message_summary(user)
+        
+        # 4. Top Matches (and count)
+        top_matches_jobs = self._get_latest_jobs_data(candidate, limit=5)
+        top_matches_projects = self._get_latest_projects_data(candidate, limit=5)
+        stats['matched_opportunities_count'] = len(top_matches_jobs) + len(top_matches_projects)
+
         return Response({
-            'profile': CandidateSerializer(candidate, context={'request': request}).data,
-            'applications': self._get_applications_summary(candidate),
-            'latest_jobs': self._get_latest_jobs_data(candidate),
-            'latest_projects': self._get_latest_projects_data(candidate),
+            'profile': {
+                'id': candidate.id,
+                'full_name': candidate.full_name,
+                'profile_views': candidate.profile_views,
+                'profile_image': candidate.profile_image.url if candidate.profile_image else None,
+            },
+            'unread_counts': unread_counts,
+            'total_unread_count': total_unread,
+            'stats': stats,
+            'latest_message': latest_message,
+            'latest_interview_requests': latest_interviews,
+            'top_matches': {
+                'jobs': top_matches_jobs,
+                'projects': top_matches_projects,
+            },
+            'latest_applications': latest_applications,
+            # Keeping applications_summary for legacy/stats purpose
+            'applications_summary': self._get_applications_summary(candidate),
         })
 
 
@@ -1054,18 +1108,18 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             if not app_type:
                 formatted.sort(key=lambda x: x['applied_at'], reverse=True)
 
-            # Calculate unread counts before marking as read
+            # Calculate unread counts and mark them as read
             unread_job_count = Application.objects.filter(candidate=candidate, is_read=False).count()
             unread_project_count = ProjectApplication.objects.filter(candidate=candidate, is_read=False).count()
             
-            # Mark all as read when list is accessed
-            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
-            # Mark all as read when list is accessed
-            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
-            ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
-
+            if unread_job_count > 0:
+                Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            if unread_project_count > 0:
+                ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
+
             
             job_count = Application.objects.filter(candidate=candidate).count()
             project_count = ProjectApplication.objects.filter(candidate=candidate).count()
@@ -1125,19 +1179,64 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         }
 
     def _get_applications_summary(self, candidate):
-        counts = Application.objects.filter(
+        job_apps_count = Application.objects.filter(
             candidate=candidate,
-            status__in=['pending', 'in_review', 'shortlisted', 'interview', 'offer']
-        ).aggregate(
-            total=Count('id'),
-            job_apps=Count('id', filter=Q(job__isnull=False)),
-            project_apps=Count('id', filter=Q(project__isnull=False))
-        )
+            status__in=['pending', 'reviewing', 'shortlisted', 'interviewed', 'offered']
+        ).count()
+        
+        project_apps_count = ProjectApplication.objects.filter(
+            candidate=candidate,
+            status__in=['pending', 'reviewing', 'shortlisted', 'interviewed', 'offered']
+        ).count()
+
         return {
-            'total_applications': counts['total'] or 0,
-            'job_applications_count': counts['job_apps'] or 0,
-            'project_applications_count': counts['project_apps'] or 0,
+            'total_applications': job_apps_count + project_apps_count,
+            'job_applications_count': job_apps_count,
+            'project_applications_count': project_apps_count,
             'references_count': ReferenceRequest.objects.filter(candidate=candidate, status='completed').count(),
+        }
+
+    def _get_latest_applications(self, candidate, limit=3):
+        job_apps = Application.objects.filter(candidate=candidate).order_by('-applied_at')[:limit]
+        proj_apps = ProjectApplication.objects.filter(candidate=candidate).order_by('-applied_at')[:limit]
+        
+        all_apps = []
+        for app in job_apps:
+            all_apps.append(self._format_application(app, 'job'))
+        for app in proj_apps:
+            all_apps.append(self._format_application(app, 'project'))
+            
+        all_apps.sort(key=lambda x: x['applied_at'], reverse=True)
+        return all_apps[:limit]
+
+    def _get_latest_interviews(self, candidate, limit=3):
+        interviews = InterviewRequest.objects.filter(
+            Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
+        ).order_by('-created_at')[:limit]
+        
+        from applications.serializers import InterviewRequestSerializer
+        return InterviewRequestSerializer(interviews, many=True).data
+
+    def _get_latest_message_summary(self, user):
+        from chat.models import ChatMessage
+        latest_msg = ChatMessage.objects.filter(
+            Q(sender=user) | Q(recipient=user)
+        ).order_by('-created_at').first()
+        
+        if not latest_msg:
+            return None
+            
+        other_user = latest_msg.recipient if latest_msg.sender == user else latest_msg.sender
+        
+        return {
+            'message': latest_msg.message,
+            'message_type': latest_msg.messageType,
+            'sender_name': latest_msg.sender.get_full_name() or latest_msg.sender.email,
+            'created_at': latest_msg.created_at,
+            'other_user': {
+                'id': other_user.id,
+                'name': other_user.get_full_name() or other_user.email,
+            }
         }
 
     def _get_latest_jobs_data(self, candidate, limit=5):
@@ -1420,13 +1519,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             action='pass'
         ).select_related('employer__company').order_by('-created_at')
         
-        # Calculate unread count BEFORE marking as read
+        # Calculate unread count and mark as read
         unread_count = actions_qs.filter(is_read=False).count()
-        
-        # Mark all as read when the list is accessed
-        actions_qs.filter(is_read=False).update(is_read=True)
+        if unread_count > 0:
+            actions_qs.filter(is_read=False).update(is_read=True)
         
         employers = [action.employer for action in actions_qs]
+
         
         # Paginate results
         page = self.paginate_queryset(employers)
