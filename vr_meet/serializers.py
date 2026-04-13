@@ -184,7 +184,7 @@ class OfferSerializer(serializers.ModelSerializer):
         model = Offer
         fields = [
             'id', 'meeting', 'candidate', 'employer',
-            'title', 'description', 'status',
+            'title', 'description', 'status', 'is_read',
             'salary', 'hourly_rate', 'is_hourly',
             'offer_date', 'date_of_joining',
             'candidate_name', 'employer_name', 'company_logo', 'meeting_title', 'opportunity_type',

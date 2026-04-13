@@ -27,7 +27,15 @@ from .serializers import (
     CandidateActionSerializer,
     CandidateActionDetailSerializer,
 )
-from applications.models import JobApplication, ProjectApplication
+from jobs.models import Job
+from projects.models import Project
+from vr_meet.models import Offer, MeetingRoom
+from applications.models import JobApplication, ProjectApplication, InterviewRequest
+from chat.models import ChatMessage
+from jobs.serializers import JobListSerializer
+from projects.serializers import ProjectListSerializer
+from vr_meet.serializers import MeetingRoomSerializer, OfferSerializer
+from applications.serializers import InterviewRequestSerializer
 from candidates.models import Candidate
 from utils.email_service import send_flit_pass_notification
 
@@ -230,6 +238,9 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
             employer=request.user
         ).select_related('candidate__user', 'job', 'company').order_by('-applied_at')
 
+        # Mark all as read when employer views the list
+        applications.filter(is_read=False).update(is_read=True)
+
         status_choices = ['pending', 'reviewing', 'shortlisted', 'interviewed', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}
 
@@ -260,6 +271,9 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
         applications = ProjectApplication.objects.filter(
             employer=request.user
         ).select_related('candidate__user', 'project', 'company').order_by('-applied_at')
+
+        # Mark all as read when employer views the list
+        applications.filter(is_read=False).update(is_read=True)
 
         status_choices = ['pending', 'reviewing', 'shortlisted', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}
@@ -318,28 +332,92 @@ class EmployerViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def dashboard(self, request):
-        base_url = request.build_absolute_uri('/')
+        user = request.user
+        
+        # 1. Unread Counts
+        # Applications (Employer's jobs/projects)
+        unread_applications = JobApplication.objects.filter(employer=user, is_read=False).count() + \
+                              ProjectApplication.objects.filter(employer=user, is_read=False).count()
+        
+        # Hired Candidate Responses (Offers that were accepted/declined and not yet read by employer)
+        unread_responses = Offer.objects.filter(employer=user, is_read_by_employer=False, status__in=['accepted', 'declined']).count()
+        
+        unread_counts = {
+            'applications': unread_applications,
+            'hired_responses': unread_responses,
+            'total_unread': unread_applications + unread_responses
+        }
 
-        profile_url = base_url.rstrip('/') + drf_reverse('employer-profile-dashboard', request=request)
-        profile_response = requests.get(profile_url, headers={'Authorization': request.headers.get('Authorization', '')})
+        # 2. Stats
+        stats = {
+            'active_projects': Project.objects.filter(employer=user, status='active').count(),
+            'active_jobs': Job.objects.filter(employer=user, status='active').count(),
+            'total_applications': user.received_job_applications.count() + user.received_project_applications.count(),
+            'completed': Job.objects.filter(employer=user, status='completed').count() + \
+                         Project.objects.filter(employer=user, status='completed').count()
+        }
 
-        if profile_response.status_code != 200:
-            return Response({'error': 'Could not fetch profile data'}, status=profile_response.status_code)
+        # 3. Meet & Greet (Latest 2 each)
+        invited_reqs = InterviewRequest.objects.filter(
+            Q(job_application__employer=user) | Q(project_application__employer=user),
+            status='pending'
+        ).select_related('job_application__job', 'project_application__project', 'job_application__candidate', 'project_application__candidate').order_by('-created_at')[:2]
+        
+        # In this project, scheduled meetings usually have 'active' status
+        scheduled_meetings = MeetingRoom.objects.filter(
+            employer=user,
+            status='active',
+            is_deleted=False
+        ).select_related('candidate').order_by('-start_time')[:2]
 
-        response_data = profile_response.json()
+        # 4. Posting (Latest 2 each)
+        latest_jobs = Job.objects.filter(employer=user).order_by('-created_at')[:2]
+        latest_projects = Project.objects.filter(employer=user).order_by('-created_at')[:2]
 
-        endpoints = [
-            ('job_applications', 'employer-job-applications'),
-            ('project_applications', 'employer-project-applications'),
-        ]
+        # 5. Hired Candidates (Latest 5 accepted offers)
+        hired_candidates = Offer.objects.filter(
+            employer=user,
+            status__in=['accepted', 'hired']
+        ).select_related('candidate', 'meeting').order_by('-updated_at')[:5]
 
-        for key, url_name in endpoints:
-            url = base_url.rstrip('/') + drf_reverse(url_name, request=request)
-            resp = requests.get(url, headers={'Authorization': request.headers.get('Authorization', '')})
-            if resp.status_code == 200:
-                response_data.update(resp.json())
-
-        return Response(response_data)
+        # 6. Latest Messages with sender images
+        latest_msgs = ChatMessage.objects.filter(recipient=user).select_related('sender').order_by('-created_at')[:4]
+        latest_messages_data = []
+        for m in latest_msgs:
+            sender_image = None
+            try:
+                if hasattr(m.sender, 'candidate_profile') and m.sender.candidate_profile.profile_image:
+                    sender_image = request.build_absolute_uri(m.sender.candidate_profile.profile_image.url)
+                elif hasattr(m.sender, 'employer_profile') and m.sender.employer_profile.profile_picture:
+                    sender_image = request.build_absolute_uri(m.sender.employer_profile.profile_picture.url)
+            except Exception:
+                pass
+                
+            latest_messages_data.append({
+                'id': m.id,
+                'message': m.message,
+                'sender_name': m.sender.get_full_name() or m.sender.email,
+                'logo': sender_image,
+                'created_at': m.created_at,
+                'sender_id': m.sender.id,
+                'is_read': m.is_read
+            })
+        
+        # Prepare response data
+        return Response({
+            'unread_counts': unread_counts,
+            'stats': stats,
+            'meet_and_greet': {
+                'invited': InterviewRequestSerializer(invited_reqs, many=True, context={'request': request}).data,
+                'scheduled': MeetingRoomSerializer(scheduled_meetings, many=True, context={'request': request}).data
+            },
+            'postings': {
+                'jobs': JobListSerializer(latest_jobs, many=True, context={'request': request}).data,
+                'projects': ProjectListSerializer(latest_projects, many=True, context={'request': request}).data
+            },
+            'hired_candidates': OfferSerializer(hired_candidates, many=True, context={'request': request}).data,
+            'latest_messages': latest_messages_data
+        })
 
     @action(detail=False, methods=['post'], url_path='profile/complete/(?P<section>[^/.]+)', permission_classes=[permissions.IsAuthenticated])
     def complete_profile_section(self, request, section=None):
