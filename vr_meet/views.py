@@ -370,9 +370,8 @@ class CandidateMeetingsView(generics.ListAPIView):
         
         # Calculate unread count and mark as read
         unread_count = base_qs.filter(is_read=False).count()
-        base_qs.filter(is_read=False).update(is_read=True)
-
-        # Determine current tab/category filtering
+        if unread_count > 0:
+            base_qs.filter(is_read=False).update(is_read=True)
         tab = self.request.query_params.get('tab', 'all')
         
         stats = {
@@ -985,8 +984,8 @@ class CandidateOfferListView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         unread_count = queryset.filter(is_read=False).count()
-        queryset.filter(is_read=False).update(is_read=True)
-        
+        if unread_count > 0:
+            queryset.filter(is_read=False).update(is_read=True)
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
