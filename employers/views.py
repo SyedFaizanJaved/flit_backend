@@ -40,6 +40,7 @@ from candidates.models import Candidate
 from utils.email_service import send_flit_pass_notification
 
 User = get_user_model()
+from .utils import get_employer_unread_counts
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
 
@@ -239,7 +240,7 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
         ).select_related('candidate__user', 'job', 'company').order_by('-applied_at')
 
         # Mark all as read when employer views the list
-        applications.filter(is_read=False).update(is_read=True)
+        applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
 
         status_choices = ['pending', 'reviewing', 'shortlisted', 'interviewed', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}
@@ -260,6 +261,8 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
             })
 
         return Response({
+            'unread_count': 0,
+            'unread_counts': get_employer_unread_counts(request.user),
             'recent_job_applications': data,
             'total_job_applications': applications.count(),
             **status_counts
@@ -273,7 +276,7 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
         ).select_related('candidate__user', 'project', 'company').order_by('-applied_at')
 
         # Mark all as read when employer views the list
-        applications.filter(is_read=False).update(is_read=True)
+        applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
 
         status_choices = ['pending', 'reviewing', 'shortlisted', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}
@@ -294,6 +297,8 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
             })
 
         return Response({
+            'unread_count': 0,
+            'unread_counts': get_employer_unread_counts(request.user),
             'recent_project_applications': data,
             'total_project_applications': applications.count(),
             **status_counts
@@ -334,19 +339,7 @@ class EmployerViewSet(viewsets.ViewSet):
     def dashboard(self, request):
         user = request.user
         
-        # 1. Unread Counts
-        # Applications (Employer's jobs/projects)
-        unread_applications = JobApplication.objects.filter(employer=user, is_read=False).count() + \
-                              ProjectApplication.objects.filter(employer=user, is_read=False).count()
-        
-        # Hired Candidate Responses (Offers that were accepted/declined and not yet read by employer)
-        unread_responses = Offer.objects.filter(employer=user, is_read_by_employer=False, status__in=['accepted', 'declined']).count()
-        
-        unread_counts = {
-            'applications': unread_applications,
-            'hired_responses': unread_responses,
-            'total_unread': unread_applications + unread_responses
-        }
+        unread_counts = get_employer_unread_counts(user)
 
         # 2. Stats
         stats = {

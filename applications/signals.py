@@ -10,6 +10,8 @@ def handle_job_application_unread(sender, instance, **kwargs):
             previous.is_shortlisted != instance.is_shortlisted or 
             previous.is_rejected != instance.is_rejected):
             instance.is_read = False
+            instance.is_read_by_candidate = False
+            instance.is_read_by_employer = False
 
 @receiver(post_save, sender=JobApplication)
 def notify_job_application_update(sender, instance, created, **kwargs):
@@ -24,6 +26,8 @@ def handle_project_application_unread(sender, instance, **kwargs):
             previous.is_shortlisted != instance.is_shortlisted or 
             previous.is_rejected != instance.is_rejected):
             instance.is_read = False
+            instance.is_read_by_candidate = False
+            instance.is_read_by_employer = False
 
 @receiver(post_save, sender=ProjectApplication)
 def notify_project_application_update(sender, instance, created, **kwargs):

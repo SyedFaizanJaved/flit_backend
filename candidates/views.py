@@ -38,6 +38,7 @@ from django.db.models import Q, Value, IntegerField, Case, When, F
 from accounts.views import BaseRoleRegistrationView
 
 from .models import Candidate, ReferenceRequest, WorkDNAQuestion
+from .utils import get_candidate_unread_counts
 from .serializers import (
     CandidateSerializer,
     CandidateListSerializer,
@@ -123,7 +124,7 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             serializer = self.get_serializer(page, many=True)
             return Response({
                 'count': self.paginator.page.paginator.count,
-                'unread_count': unread_count,
+                'unread_count': 0,
                 'next': self.paginator.get_next_link(),
                 'previous': self.paginator.get_previous_link(),
                 'total_pages': self.paginator.page.paginator.num_pages,
@@ -135,7 +136,8 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         return Response({
             'count': queryset.count(),
             'unread_count': unread_count,
-            'results': serializer.data
+            'results': serializer.data,
+            'unread_counts': get_candidate_unread_counts(request.user)
         })
 
     def perform_create(self, serializer):
@@ -1013,23 +1015,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         candidate = self.get_candidate()
         user = request.user
         
-        # Interview unread counts (InterviewRequest + MeetingRoom)
-        interview_requests_count = InterviewRequest.objects.filter(
-            Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
-            is_read=False
-        ).count()
-        meeting_rooms_unread = MeetingRoom.objects.filter(candidate=user, is_deleted=False, is_read=False).count()
-
-        unread_counts = {
-            'flit_list': CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).count(),
-            'interview_requests': interview_requests_count + meeting_rooms_unread,
-            'offer_letters': Offer.objects.filter(candidate=user, is_read=False, status__in=['hired', 'accepted', 'declined']).count(),
-            'applications': Application.objects.filter(candidate=candidate, is_read=False).count() + 
-                            ProjectApplication.objects.filter(candidate=candidate, is_read=False).count(),
-            'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status__in=['completed', 'accepted', 'declined']).count()
-        }
-        
-        total_unread = sum(unread_counts.values())
+        unread_counts = get_candidate_unread_counts(user)
+        total_unread = unread_counts['total_unread']
 
         # 2. Stats Summary
         total_interviews = InterviewRequest.objects.filter(
@@ -1112,13 +1099,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 formatted.sort(key=lambda x: x['applied_at'], reverse=True)
 
             # Calculate unread counts and mark them as read
-            unread_job_count = Application.objects.filter(candidate=candidate, is_read=False).count()
-            unread_project_count = ProjectApplication.objects.filter(candidate=candidate, is_read=False).count()
+            unread_job_count = Application.objects.filter(candidate=candidate, is_read_by_candidate=False).count()
+            unread_project_count = ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).count()
             
             if unread_job_count > 0:
-                Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+                Application.objects.filter(candidate=candidate, is_read_by_candidate=False).update(is_read_by_candidate=True)
             if unread_project_count > 0:
-                ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+                ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).update(is_read_by_candidate=True)
             
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
@@ -1137,9 +1124,9 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             }
 
             response_data = {
-                'unread_job_count': unread_job_count,
-                'unread_project_count': unread_project_count,
-                'total_unread_count': unread_job_count + unread_project_count,
+                'unread_job_count': 0,
+                'unread_project_count': 0,
+                'total_unread_count': 0,
             }
 
             if page is not None:
@@ -1149,12 +1136,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     'previous': self.paginator.get_previous_link(),
                     'total_pages': self.paginator.page.paginator.num_pages,
                     'current_page': self.paginator.page.number,
-                    'results': result_data
+                    'results': result_data,
+                    'unread_counts': get_candidate_unread_counts(request.user)
                 })
             else:
                 response_data.update({
                     'count': len(formatted),
-                    'results': result_data
+                    'results': result_data,
+                    'unread_counts': get_candidate_unread_counts(request.user)
                 })
             
             return Response(response_data)
@@ -1573,7 +1562,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             # Manually construct response to control field order
             return Response({
                 'count': self.paginator.page.paginator.count,
-                'unread_count': unread_count,
+                'unread_count': 0,
                 'next': self.paginator.get_next_link(),
                 'previous': self.paginator.get_previous_link(),
                 'total_pages': self.paginator.page.paginator.num_pages,
@@ -1584,8 +1573,9 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
         return Response({
             'count': len(employers),
-            'unread_count': unread_count,
-            'results': serializer.data
+            'unread_count': 0,
+            'results': serializer.data,
+            'unread_counts': get_candidate_unread_counts(request.user)
         })
 
 
@@ -1604,9 +1594,9 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         if category == 'flit':
             CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).update(is_read=True)
         elif category == 'job_application':
-            Application.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            Application.objects.filter(candidate=candidate, is_read_by_candidate=False).update(is_read_by_candidate=True)
         elif category == 'project_application':
-            ProjectApplication.objects.filter(candidate=candidate, is_read=False).update(is_read=True)
+            ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).update(is_read_by_candidate=True)
         elif category == 'offer':
             Offer.objects.filter(candidate=candidate.user, is_read=False).update(is_read=True)
         elif category == 'reference':
@@ -1619,7 +1609,10 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         else:
             return Response({"error": "Invalid type"}, status=400)
             
-        return Response({"message": f"All {category} marked as read"})
+        return Response({
+            "message": f"All {category} marked as read",
+            "unread_counts": get_candidate_unread_counts(request.user)
+        })
 
     # ====================== AI MATCHING ======================
     @action(detail=True, methods=['get'], url_path='ai-matching', permission_classes=[permissions.AllowAny])

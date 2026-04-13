@@ -32,6 +32,8 @@ class JobApplication(models.Model):
     # Application Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     is_read = models.BooleanField(default=False)
+    is_read_by_candidate = models.BooleanField(default=False)
+    is_read_by_employer = models.BooleanField(default=False)
     
     # Matching Scores
     overall_match_score = models.PositiveIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
@@ -97,6 +99,8 @@ class ProjectApplication(models.Model):
     # Application Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     is_read = models.BooleanField(default=False)
+    is_read_by_candidate = models.BooleanField(default=False)
+    is_read_by_employer = models.BooleanField(default=False)
     
     # Matching Scores
     overall_match_score = models.PositiveIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
