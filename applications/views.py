@@ -107,6 +107,23 @@ class CombinedApplicationsView(generics.ListAPIView):
         try:
             queryset = self.get_queryset()
             
+            # Mark applications as read when viewed by employer
+            user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+            if user_role == "employer":
+                company_id = self.request.query_params.get('company_id')
+                
+                # Mark unread job applications as read
+                job_unread = JobApplication.objects.filter(employer=request.user, is_read=False)
+                if company_id:
+                    job_unread = job_unread.filter(job__company_id=company_id)
+                job_unread.update(is_read=True)
+                
+                # Mark unread project applications as read
+                project_unread = ProjectApplication.objects.filter(employer=request.user, is_read=False)
+                if company_id:
+                    project_unread = project_unread.filter(project__company_id=company_id)
+                project_unread.update(is_read=True)
+            
             # Apply pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
@@ -147,6 +164,20 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             )
         return JobApplication.objects.none()
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+        if user_role == "employer":
+            queryset.filter(is_read=False).update(is_read=True)
+            
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 class ProjectApplicationViewSet(viewsets.ModelViewSet):
     pagination_class = CustomPagination
@@ -173,6 +204,20 @@ class ProjectApplicationViewSet(viewsets.ModelViewSet):
                 'project', 'candidate', 'company'
             )
         return ProjectApplication.objects.none()
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+        if user_role == "employer":
+            queryset.filter(is_read=False).update(is_read=True)
+            
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @api_view(["POST"])

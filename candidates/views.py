@@ -1041,7 +1041,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             'total_applications': Application.objects.filter(candidate=candidate).count() + 
                                   ProjectApplication.objects.filter(candidate=candidate).count(),
             'total_interviews': total_interviews,
-            'matched_opportunities_count': 0, # Calculated below
+            'matched_opportunities_count': 0,
         }
 
         # 3. Latest Data Snippets
@@ -1071,7 +1071,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 'projects': top_matches_projects,
             },
             'latest_applications': latest_applications,
-            # Keeping applications_summary for legacy/stats purpose
             'applications_summary': self._get_applications_summary(candidate),
         })
 
@@ -1255,6 +1254,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             
         other_user = latest_msg.recipient if latest_msg.sender == user else latest_msg.sender
         
+        # Determine image for the other user (profile picture or company logo)
+        other_user_image = None
+        try:
+            if hasattr(other_user, 'employer_profile') and other_user.employer_profile.company:
+                if other_user.employer_profile.company.logo:
+                    other_user_image = self.request.build_absolute_uri(other_user.employer_profile.company.logo.url)
+            elif hasattr(other_user, 'candidate_profile') and other_user.candidate_profile.profile_image:
+                other_user_image = self.request.build_absolute_uri(other_user.candidate_profile.profile_image.url)
+        except Exception:
+            pass
+
         return {
             'message': latest_msg.message,
             'message_type': latest_msg.messageType,
@@ -1263,6 +1273,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             'other_user': {
                 'id': other_user.id,
                 'name': other_user.get_full_name() or other_user.email,
+                'logo': other_user_image,
             }
         }
 

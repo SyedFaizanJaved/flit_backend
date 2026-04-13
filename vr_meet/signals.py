@@ -7,7 +7,10 @@ def handle_offer_unread(sender, instance, **kwargs):
     if instance.pk:
         previous = Offer.objects.get(pk=instance.pk)
         if previous.status != instance.status:
+            # If status changed, it's a new event that needs reading
             instance.is_read = False
+            instance.is_read_by_employer = False
+            instance.is_read_by_candidate = False
 
 @receiver(post_save, sender=Offer)
 def notify_offer(sender, instance, created, **kwargs):

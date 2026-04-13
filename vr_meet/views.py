@@ -215,7 +215,8 @@ class MeetingRoomListView(generics.ListAPIView):
             # Subset of invited where interview time has been scheduled (start_time is set)
             "scheduled": queryset.filter(start_time__isnull=False).count(),
             "expired": queryset.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
-            "hired": queryset.filter(offers__status='hired').distinct().count(),
+            # Count as hired if there's any offer that is either sent (hired) or accepted
+            "hired": queryset.filter(offers__status__in=['hired', 'accepted']).distinct().count(),
         }
         
         # Apply pagination
@@ -657,7 +658,8 @@ class OfferCreateView(generics.CreateAPIView):
             f"Employer {user.email} hiring candidate for meeting #{meeting.id}"
         )
         # Auto-set status to 'hired' when creating an offer
-        serializer.save(employer=user, status='hired')
+        # is_read_by_candidate set to False (default) means it's unread for candidate
+        serializer.save(employer=user, status='hired', is_read_by_candidate=False, is_read_by_employer=True)
 
         # Generate offer letter PDF and send email to candidate
         offer = serializer.instance
@@ -811,10 +813,19 @@ class OfferListView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         
+        # Mark as read logic
+        role_name = getattr(getattr(request.user, 'role', None), 'name', None)
+        if role_name == settings.USER_ROLE_EMPLOYER:
+            # Employer reading candidate's response
+            queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
+        else:
+            # Candidate reading employer's offer
+            queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
+        
         # Calculate stats for all offers of this user (not just this page)
         stats = {
             "total_sent": queryset.count(),
-            "hired": queryset.filter(status='hired').count(),
+            "hired": queryset.filter(status__in=['hired', 'accepted']).count(),
             "accepted": queryset.filter(status='accepted').count(),
             "rejected": queryset.filter(status='rejected').count(),
             "declined": queryset.filter(status='declined').count(),
@@ -983,9 +994,9 @@ class CandidateOfferListView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        unread_count = queryset.filter(is_read=False).count()
+        unread_count = queryset.filter(is_read_by_candidate=False).count()
         if unread_count > 0:
-            queryset.filter(is_read=False).update(is_read=True)
+            queryset.filter(is_read_by_candidate=False).update(is_read_by_candidate=True)
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -1044,10 +1055,18 @@ class CandidateOfferRespondView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Update status
+        # Update status and reset is_read fields
         new_status = 'accepted' if action == 'accept' else 'declined'
         offer.status = new_status
-        offer.save(update_fields=['status', 'updated_at'])
+        offer.is_read_by_employer = False  # Mark as unread for employer notification
+        offer.is_read_by_candidate = True   # Mark as read for candidate
+        offer.is_read = False               # Legacy support
+        offer.save(update_fields=['status', 'is_read_by_employer', 'is_read_by_candidate', 'is_read', 'updated_at'])
+
+        # Also mark the associated meeting room as unread
+        meeting = offer.meeting
+        meeting.is_read = False
+        meeting.save(update_fields=['is_read', 'updated_at'])
 
         # Get names for email
         candidate_name = request.user.get_full_name() or request.user.email
