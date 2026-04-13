@@ -14,6 +14,7 @@ class UserNameSerializer(serializers.ModelSerializer):
 
 class MeetingRoomSerializer(serializers.ModelSerializer):
     candidate = UserNameSerializer(read_only=True)
+    logo = serializers.SerializerMethodField()
     employer_company = serializers.SerializerMethodField()
     candidate_email = serializers.EmailField(write_only=True, required=False)
     candidate_id = serializers.PrimaryKeyRelatedField(
@@ -69,9 +70,20 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
         exclude = ['room_type', 'environment', 'privacy', 'status', 'enable_recording', 'room_code']
         read_only_fields = (
             'created_at', 'id', 'meet_link', 'employer',
-            'meeting_date', 'employer_company', 'opportunity_type', 'offer_status',
+            'meeting_date', 'employer_company', 'opportunity_type', 'offer_status', 'logo',
         )
     
+    def get_logo(self, obj):
+        request = self.context.get('request')
+        if obj.candidate:
+            try:
+                candidate_profile = obj.candidate.candidate_profile
+                if candidate_profile and candidate_profile.profile_image:
+                    return request.build_absolute_uri(candidate_profile.profile_image.url) if request else candidate_profile.profile_image.url
+            except Exception:
+                pass
+        return None
+
     def get_employer_company(self, obj):
         try:
             from employers.models import Employer

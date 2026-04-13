@@ -106,30 +106,47 @@ class CombinedApplicationsView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
+            unread_count = 0
             
-            # Mark applications as read when viewed by employer
+            # Handle unread count for employer
             user_role = getattr(getattr(request.user, 'role', None), 'name', None)
             if user_role == "employer":
                 company_id = self.request.query_params.get('company_id')
                 
-                # Mark unread job applications as read
-                job_unread = JobApplication.objects.filter(employer=request.user, is_read=False)
-                if company_id:
-                    job_unread = job_unread.filter(job__company_id=company_id)
-                job_unread.update(is_read=True)
+                # IMPORTANT: Count EXACTLY like the dashboard does
+                all_unread_jobs = JobApplication.objects.filter(employer=request.user, is_read=False)
+                all_unread_projects = ProjectApplication.objects.filter(employer=request.user, is_read=False)
                 
-                # Mark unread project applications as read
-                project_unread = ProjectApplication.objects.filter(employer=request.user, is_read=False)
                 if company_id:
-                    project_unread = project_unread.filter(project__company_id=company_id)
-                project_unread.update(is_read=True)
+                    # Filter for specific company if ID is provided
+                    jobs_to_mark = all_unread_jobs.filter(job__company_id=company_id)
+                    projects_to_mark = all_unread_projects.filter(project__company_id=company_id)
+                    unread_count = jobs_to_mark.count() + projects_to_mark.count()
+                    
+                    if unread_count > 0:
+                        jobs_to_mark.update(is_read=True)
+                        projects_to_mark.update(is_read=True)
+                else:
+                    # Mark EVERYTHING as read for this employer
+                    unread_count = all_unread_jobs.count() + all_unread_projects.count()
+                    if unread_count > 0:
+                        all_unread_jobs.update(is_read=True)
+                        all_unread_projects.update(is_read=True)
             
             # Apply pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
-                return self.get_paginated_response(page)
+                response = self.get_paginated_response(page)
+                # Put unread_count at the top of the dictionary
+                ordered_data = {'unread_count': unread_count}
+                ordered_data.update(response.data)
+                response.data = ordered_data
+                return response
                 
-            return Response(queryset)
+            return Response({
+                'unread_count': unread_count,
+                'results': queryset
+            })
         except Exception as e:
             logger.error(f"Error in CombinedApplicationsView: {str(e)}", exc_info=True)
             return Response(

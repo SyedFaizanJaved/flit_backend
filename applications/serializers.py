@@ -227,10 +227,24 @@ class InterviewRequestSerializer(serializers.ModelSerializer):
     project_title = serializers.CharField(
         source='project_application.project.title', read_only=True)
 
+    logo = serializers.SerializerMethodField()
+
     class Meta:
         model = InterviewRequest
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at','meetLink')
+        read_only_fields = ('created_at', 'updated_at', 'meetLink', 'logo')
+
+    def get_logo(self, obj):
+        request = self.context.get('request')
+        candidate = None
+        if obj.job_application:
+            candidate = obj.job_application.candidate
+        elif obj.project_application:
+            candidate = obj.project_application.candidate
+            
+        if candidate and candidate.profile_image:
+            return request.build_absolute_uri(candidate.profile_image.url) if request else candidate.profile_image.url
+        return None
 
     def update(self, instance, validated_data):
         if set(validated_data.keys()) != {'status'}:

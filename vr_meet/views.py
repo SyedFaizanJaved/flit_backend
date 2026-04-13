@@ -813,8 +813,15 @@ class OfferListView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         
-        # Mark as read logic
+        # Calculate unread count BEFORE marking as read
+        unread_count = 0
         role_name = getattr(getattr(request.user, 'role', None), 'name', None)
+        if role_name == settings.USER_ROLE_EMPLOYER:
+            unread_count = queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).count()
+        else:
+            unread_count = queryset.filter(is_read_by_candidate=False, status='hired').count()
+
+        # Mark as read logic
         if role_name == settings.USER_ROLE_EMPLOYER:
             # Employer reading candidate's response
             queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
@@ -836,11 +843,12 @@ class OfferListView(generics.ListAPIView):
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             response = self.get_paginated_response(serializer.data)
-            # Create a new dictionary with stats at the top
+            # Create a new dictionary with stats and unread_count at the top
             paginated_data = response.data
             response.data = {
                 "stats": stats,
                 "count": paginated_data.get('count'),
+                "unread_count": unread_count,
                 "total_pages": paginated_data.get('total_pages'),
                 "current_page": paginated_data.get('current_page'),
                 "next": paginated_data.get('next'),
@@ -853,6 +861,7 @@ class OfferListView(generics.ListAPIView):
         serializer = self.get_serializer(queryset, many=True)
         return Response({
             "stats": stats,
+            "unread_count": unread_count,
             "results": serializer.data
         })
 
