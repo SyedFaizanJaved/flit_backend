@@ -30,10 +30,10 @@ def get_candidate_unread_counts(user):
     unread_counts = {
         'flit_list': CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).count(),
         'interview_requests': interview_requests_count + meeting_rooms_unread,
-        'offer_letters': Offer.objects.filter(candidate=user, is_read=False, status__in=['hired', 'accepted', 'declined']).count(),
+        'offer_letters': Offer.objects.filter(candidate=user, is_read_by_candidate=False, status='hired').count(),
         'applications': JobApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).count() + 
                         ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).count(),
-        'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status__in=['completed', 'accepted', 'declined']).count()
+        'references': ReferenceRequest.objects.filter(candidate=candidate, is_read_by_candidate=False, status__in=['completed', 'accepted', 'declined']).count()
     }
     
     unread_counts['total_unread'] = sum(unread_counts.values())
