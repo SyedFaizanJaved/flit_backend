@@ -30,7 +30,12 @@ class ReferenceResponsesView(generics.ListAPIView):
         ).order_by('-updated_at')
     
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
+        queryset = self.get_queryset()
+        
+        # Mark as unread responses as read when candidate views them
+        queryset.filter(is_read=False).update(is_read=True)
+        
+        queryset = self.filter_queryset(queryset)
         
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -178,31 +183,23 @@ class ReferenceResponseView(APIView):
                 )
             
             # Update status based on action
-            new_status = 'accepted' if action == 'accept' else 'declined'
-            
-            # Only update if status is changing
-            if ref_request.status != new_status:
-                ref_request.status = new_status
-                
-                # Save reply message if provided and request is being accepted
-                if action == 'accept' and 'reply_message' in request.data:
+            if action == 'accept':
+                if 'reply_message' in request.data:
+                    ref_request.status = 'completed'
                     ref_request.reply_message = request.data['reply_message']
-                
-                ref_request.save()
-                
-                # TODO: Send notification to candidate about the response
-                
-                return Response({
-                    'status': 'success',
-                    'message': f'Reference request has been {new_status}',
-                    'reference_request': ReferenceRequestSerializer(ref_request).data
-                })
+                    ref_request.is_read = False
+                else:
+                    ref_request.status = 'accepted'
             else:
-                return Response({
-                    'status': 'success',
-                    'message': f'Reference request is already {ref_request.get_status_display().lower()}',
-                    'reference_request': ReferenceRequestSerializer(ref_request).data
-                })
+                ref_request.status = 'declined'
+            
+            ref_request.save()
+            
+            return Response({
+                'status': 'success',
+                'message': f'Reference request has been {ref_request.status}',
+                'reference_request': ReferenceRequestSerializer(ref_request).data
+            })
             
         except ReferenceRequest.DoesNotExist:
             try:

@@ -32,7 +32,7 @@ from projects.serializers import ProjectListSerializer
 from jobs.models import Job
 from jobs.serializers import JobListSerializer
 from applications.models import JobApplication as Application, ProjectApplication, InterviewRequest
-from vr_meet.models import Offer
+from vr_meet.models import Offer, MeetingRoom
 from django.db.models import Q, Value, IntegerField, Case, When, F
 
 from accounts.views import BaseRoleRegistrationView
@@ -1013,30 +1013,34 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         candidate = self.get_candidate()
         user = request.user
         
-        # 1. Unread Counts
+        # Interview unread counts (InterviewRequest + MeetingRoom)
+        interview_requests_count = InterviewRequest.objects.filter(
+            Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
+            is_read=False
+        ).count()
+        meeting_rooms_unread = MeetingRoom.objects.filter(candidate=user, is_deleted=False, is_read=False).count()
+
         unread_counts = {
             'flit_list': CandidateAction.objects.filter(candidate_id=str(candidate.id), action='pass', is_read=False).count(),
-            'interview_requests': InterviewRequest.objects.filter(
-                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate),
-                is_read=False
-            ).count(),
+            'interview_requests': interview_requests_count + meeting_rooms_unread,
             'offer_letters': Offer.objects.filter(candidate=user, is_read=False, status__in=['hired', 'accepted', 'declined']).count(),
             'applications': Application.objects.filter(candidate=candidate, is_read=False).count() + 
                             ProjectApplication.objects.filter(candidate=candidate, is_read=False).count(),
-            'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status='completed').count(),
-            'messages': ChatMessage.objects.filter(recipient=user, is_read=False).count(),
+            'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status__in=['completed', 'accepted', 'declined']).count()
         }
         
         total_unread = sum(unread_counts.values())
 
         # 2. Stats Summary
+        total_interviews = InterviewRequest.objects.filter(
+            Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
+        ).count() + MeetingRoom.objects.filter(candidate=user, is_deleted=False).count()
+
         stats = {
             'profile_views': candidate.profile_views,
             'total_applications': Application.objects.filter(candidate=candidate).count() + 
                                   ProjectApplication.objects.filter(candidate=candidate).count(),
-            'total_interviews': InterviewRequest.objects.filter(
-                Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
-            ).count(),
+            'total_interviews': total_interviews,
             'matched_opportunities_count': 0, # Calculated below
         }
 
@@ -1210,12 +1214,35 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         return all_apps[:limit]
 
     def _get_latest_interviews(self, candidate, limit=3):
-        interviews = InterviewRequest.objects.filter(
+        user = self.request.user
+        
+        # 1. Fetch InterviewRequests (invites)
+        from applications.models import InterviewRequest
+        interview_requests = InterviewRequest.objects.filter(
             Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
         ).order_by('-created_at')[:limit]
         
         from applications.serializers import InterviewRequestSerializer
-        return InterviewRequestSerializer(interviews, many=True).data
+        requests_data = InterviewRequestSerializer(interview_requests, many=True).data
+        for item in requests_data:
+            item['category_type'] = 'request'
+            
+        # 2. Fetch MeetingRooms (scheduled)
+        meetings = MeetingRoom.objects.filter(
+            candidate=user,
+            is_deleted=False
+        ).order_by('-created_at')[:limit]
+        
+        from vr_meet.serializers import MeetingRoomSerializer
+        meetings_data = MeetingRoomSerializer(meetings, many=True, context={'request': self.request}).data
+        for item in meetings_data:
+            item['category_type'] = 'scheduled'
+            
+        # 3. Combine and sort by created_at
+        combined = requests_data + meetings_data
+        combined.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        return combined[:limit]
 
     def _get_latest_message_summary(self, user):
         from chat.models import ChatMessage
