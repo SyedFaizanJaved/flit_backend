@@ -13,6 +13,8 @@ from django.http import HttpResponse
 from django.core.mail import send_mail
 from django.shortcuts import redirect
 from django.contrib.auth import get_user_model
+from employers.utils import get_employer_unread_counts
+from candidates.utils import get_candidate_unread_counts
 User = get_user_model()
 
 from .models import MeetingRoom, UserGoogleToken
@@ -23,7 +25,7 @@ from rest_framework.response import Response
 from .serializers import MeetingRoomSerializer
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
-
+from applications.models import InterviewRequest
 from datetime import timedelta
 import json
 import random
@@ -373,6 +375,13 @@ class CandidateMeetingsView(generics.ListAPIView):
         unread_count = base_qs.filter(is_read=False).count()
         if unread_count > 0:
             base_qs.filter(is_read=False).update(is_read=True)
+            
+        # Also mark all related InterviewRequests as read when candidate views meetings
+        InterviewRequest.objects.filter(
+            Q(job_application__candidate__user=user) | Q(project_application__candidate__user=user),
+            is_read=False
+        ).update(is_read=True)
+
         tab = self.request.query_params.get('tab', 'all')
         
         stats = {
@@ -380,7 +389,7 @@ class CandidateMeetingsView(generics.ListAPIView):
             "scheduled": base_qs.filter(status='active', start_time__gt=now).count(),
             "invited": base_qs.filter(status='pending').count(),
             "expired": base_qs.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
-            "unread_count": unread_count,
+            "unread_count": 0,
         }
         
         # Note: I'm using a slightly safer way to count expired to avoid bugs
@@ -391,8 +400,9 @@ class CandidateMeetingsView(generics.ListAPIView):
         
         return Response({
             "stats": stats,
-            "unread_count": unread_count,
-            "meetings": serializer.data
+            "unread_count": 0,
+            "meetings": serializer.data,
+            "unread_counts": get_candidate_unread_counts(request.user)
         })
 
 #--------------------------
@@ -828,7 +838,7 @@ class OfferListView(generics.ListAPIView):
         else:
             # Candidate reading employer's offer
             queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
-        
+            
         # Calculate stats for all offers of this user (not just this page)
         stats = {
             "total_sent": queryset.count(),
@@ -836,6 +846,7 @@ class OfferListView(generics.ListAPIView):
             "accepted": queryset.filter(status='accepted').count(),
             "rejected": queryset.filter(status='rejected').count(),
             "declined": queryset.filter(status='declined').count(),
+            "unread_count": 0,
         }
 
         # Apply pagination
@@ -845,25 +856,35 @@ class OfferListView(generics.ListAPIView):
             response = self.get_paginated_response(serializer.data)
             # Create a new dictionary with stats and unread_count at the top
             paginated_data = response.data
-            response.data = {
+            new_data = {
                 "stats": stats,
                 "count": paginated_data.get('count'),
-                "unread_count": unread_count,
+                "unread_count": 0,
                 "total_pages": paginated_data.get('total_pages'),
                 "current_page": paginated_data.get('current_page'),
                 "next": paginated_data.get('next'),
                 "previous": paginated_data.get('previous'),
                 "results": paginated_data.get('results')
             }
+            if role_name == settings.USER_ROLE_EMPLOYER:
+                new_data['unread_counts'] = get_employer_unread_counts(request.user)
+            else:
+                new_data['unread_counts'] = get_candidate_unread_counts(request.user)
+            response.data = new_data
             return response
 
         # Non-paginated fallback
         serializer = self.get_serializer(queryset, many=True)
-        return Response({
+        response_data = {
             "stats": stats,
             "unread_count": unread_count,
             "results": serializer.data
-        })
+        }
+        if role_name == settings.USER_ROLE_EMPLOYER:
+            response_data['unread_counts'] = get_employer_unread_counts(request.user)
+        else:
+            response_data['unread_counts'] = get_candidate_unread_counts(request.user)
+        return Response(response_data)
 
 
 class OfferDetailView(generics.RetrieveUpdateAPIView):

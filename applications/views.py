@@ -18,6 +18,7 @@ from projects.models import Project
 import logging
 from utils.pagination import CustomPagination
 
+from employers.utils import get_employer_unread_counts
 logger = logging.getLogger("exceptions")
 
 class CombinedApplicationsView(generics.ListAPIView):
@@ -114,8 +115,8 @@ class CombinedApplicationsView(generics.ListAPIView):
                 company_id = self.request.query_params.get('company_id')
                 
                 # IMPORTANT: Count EXACTLY like the dashboard does
-                all_unread_jobs = JobApplication.objects.filter(employer=request.user, is_read=False)
-                all_unread_projects = ProjectApplication.objects.filter(employer=request.user, is_read=False)
+                all_unread_jobs = JobApplication.objects.filter(employer=request.user, is_read_by_employer=False)
+                all_unread_projects = ProjectApplication.objects.filter(employer=request.user, is_read_by_employer=False)
                 
                 if company_id:
                     # Filter for specific company if ID is provided
@@ -124,27 +125,33 @@ class CombinedApplicationsView(generics.ListAPIView):
                     unread_count = jobs_to_mark.count() + projects_to_mark.count()
                     
                     if unread_count > 0:
-                        jobs_to_mark.update(is_read=True)
-                        projects_to_mark.update(is_read=True)
+                        jobs_to_mark.update(is_read_by_employer=True)
+                        projects_to_mark.update(is_read_by_employer=True)
                 else:
                     # Mark EVERYTHING as read for this employer
                     unread_count = all_unread_jobs.count() + all_unread_projects.count()
                     if unread_count > 0:
-                        all_unread_jobs.update(is_read=True)
-                        all_unread_projects.update(is_read=True)
+                        all_unread_jobs.update(is_read_by_employer=True)
+                        all_unread_projects.update(is_read_by_employer=True)
             
             # Apply pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
                 response = self.get_paginated_response(page)
-                # Put unread_count at the top of the dictionary
-                ordered_data = {'unread_count': unread_count}
+                # Put unread_counts at the top for frontend sync
+                ordered_data = {
+                    'unread_count': 0,
+                    'unread_counts': get_employer_unread_counts(request.user)
+                }
                 ordered_data.update(response.data)
                 response.data = ordered_data
                 return response
                 
+            # Mark all as read logic above updates the DB.
+            # We return 0 as requested by the user for frontend synchronization.
             return Response({
-                'unread_count': unread_count,
+                'unread_count': 0,
+                'unread_counts': get_employer_unread_counts(request.user),
                 'results': queryset
             })
         except Exception as e:
@@ -185,7 +192,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         user_role = getattr(getattr(request.user, 'role', None), 'name', None)
         if user_role == "employer":
-            queryset.filter(is_read=False).update(is_read=True)
+            queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
             
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -226,7 +233,7 @@ class ProjectApplicationViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         user_role = getattr(getattr(request.user, 'role', None), 'name', None)
         if user_role == "employer":
-            queryset.filter(is_read=False).update(is_read=True)
+            queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
             
         page = self.paginate_queryset(queryset)
         if page is not None:
