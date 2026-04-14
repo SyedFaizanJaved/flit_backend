@@ -10,6 +10,7 @@ router.register(r'projects', views.ProjectApplicationViewSet, basename='project-
 urlpatterns = [
     # Combined Applications
     path('combined/', views.CombinedApplicationsView.as_view(), name='combined-applications'),
+    path('active-postings/', views.ActivePostingsListView.as_view(), name='active-postings-list'),
     
     path('', include(router.urls)),
     
