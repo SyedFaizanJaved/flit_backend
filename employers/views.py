@@ -423,6 +423,7 @@ class EmployerViewSet(viewsets.ViewSet):
         # Prepare response data
         return Response({
             'stats': stats,
+            'unread_counts': get_employer_unread_counts(user),
             'meet_and_greet': {
                 'invited': InterviewRequestSerializer(invited_reqs, many=True, context={'request': request}).data,
                 'scheduled': MeetingRoomSerializer(scheduled_meetings, many=True, context={'request': request}).data
