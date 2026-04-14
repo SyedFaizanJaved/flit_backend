@@ -22,7 +22,10 @@ os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 django.setup()
 
 # Import WebSocket URL patterns after Django is initialized
-from chat.routing import websocket_urlpatterns
+from chat.routing import websocket_urlpatterns as chat_urlpatterns
+from utils.routing import websocket_urlpatterns as utils_urlpatterns
+
+websocket_urlpatterns = chat_urlpatterns + utils_urlpatterns
 
 # Combine HTTP and WebSocket applications
 application = ProtocolTypeRouter({

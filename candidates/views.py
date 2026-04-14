@@ -1571,7 +1571,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 'previous': self.paginator.get_previous_link(),
                 'total_pages': self.paginator.page.paginator.num_pages,
                 'current_page': self.paginator.page.number,
-                'results': serializer.data
+                'results': serializer.data,
+                'unread_counts': get_candidate_unread_counts(request.user)
             })
         
         serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})

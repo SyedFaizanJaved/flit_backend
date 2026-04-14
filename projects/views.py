@@ -449,6 +449,16 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Failed to send shortlist email notification: {str(e)}")
             # Don't fail the request if email fails
+            
+        # Notify Candidate via WebSocket
+        if application.candidate and application.candidate.user:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=application.candidate.user.id,
+                count_type="applications",
+                unread_count=get_candidate_unread_counts(application.candidate.user)
+            )
         
         return Response({'message': 'Application shortlisted successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_shortlisted': application.is_shortlisted}}, status=status.HTTP_200_OK)
 
@@ -481,5 +491,15 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Failed to send rejection email notification: {str(e)}")
             # Don't fail the request if email fails
+            
+        # Notify Candidate via WebSocket
+        if application.candidate and application.candidate.user:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=application.candidate.user.id,
+                count_type="applications",
+                unread_count=get_candidate_unread_counts(application.candidate.user)
+            )
         
         return Response({'message': 'Application rejected successfully', 'application': {'id': application.id, 'candidate_name': application.candidate.full_name, 'status': application.status, 'is_rejected': application.is_rejected}}, status=status.HTTP_200_OK)

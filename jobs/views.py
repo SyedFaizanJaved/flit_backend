@@ -442,6 +442,16 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Failed to send shortlist email notification: {str(e)}")
             # Don't fail the request if email fails
+            
+        # Notify Candidate via WebSocket
+        if app.candidate and app.candidate.user:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=app.candidate.user.id,
+                count_type="applications",
+                unread_count=get_candidate_unread_counts(app.candidate.user)
+            )
         
         return Response({'message': 'Application shortlisted successfully'})
 
@@ -467,5 +477,15 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Failed to send rejection email notification: {str(e)}")
             # Don't fail the request if email fails
+            
+        # Notify Candidate via WebSocket
+        if app.candidate and app.candidate.user:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=app.candidate.user.id,
+                count_type="applications",
+                unread_count=get_candidate_unread_counts(app.candidate.user)
+            )
         
         return Response({'message': 'Application rejected successfully'})
