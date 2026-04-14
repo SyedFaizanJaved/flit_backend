@@ -1010,14 +1010,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             }, status=500)
         
     # ====================== DASHBOARD ACTIONS ======================
+    @action(detail=False, methods=['get'], url_path='unread-counts')
+    def unread_counts(self, request):
+        return Response(get_candidate_unread_counts(request.user))
+
     @action(detail=False, methods=['get'], url_path='dashboard')
     def dashboard(self, request):
         candidate = self.get_candidate()
         user = request.user
         
-        unread_counts = get_candidate_unread_counts(user)
-        total_unread = unread_counts['total_unread']
-
         # 2. Stats Summary
         total_interviews = InterviewRequest.objects.filter(
             Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
@@ -1048,8 +1049,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 'profile_views': candidate.profile_views,
                 'profile_image': candidate.profile_image.url if candidate.profile_image else None,
             },
-            'unread_counts': unread_counts,
-            'total_unread_count': total_unread,
             'stats': stats,
             'latest_message': latest_message,
             'latest_interview_requests': latest_interviews,

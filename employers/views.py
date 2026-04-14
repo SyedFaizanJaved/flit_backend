@@ -335,12 +335,14 @@ class EmployerViewSet(viewsets.ViewSet):
         serializer.save()
         return Response(EmployerSerializer(employer, context={'request': request}).data)
 
+    @action(detail=False, methods=['get'], url_path='unread-counts', permission_classes=[permissions.IsAuthenticated])
+    def unread_counts(self, request):
+        return Response(get_employer_unread_counts(request.user))
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def dashboard(self, request):
         user = request.user
         
-        unread_counts = get_employer_unread_counts(user)
-
         # 2. Stats
         stats = {
             'active_projects': Project.objects.filter(employer=user, status='active').count(),
@@ -398,7 +400,6 @@ class EmployerViewSet(viewsets.ViewSet):
         
         # Prepare response data
         return Response({
-            'unread_counts': unread_counts,
             'stats': stats,
             'meet_and_greet': {
                 'invited': InterviewRequestSerializer(invited_reqs, many=True, context={'request': request}).data,
