@@ -184,6 +184,16 @@ class MeetingRoomCreateView(generics.CreateAPIView):
             candidate_email=candidate_email
         )
 
+        # Notify the candidate via WebSocket
+        if candidate:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=candidate.id,
+                count_type="interview_requests",
+                unread_count=get_candidate_unread_counts(candidate)
+            )
+
         return room
 
 
@@ -675,6 +685,16 @@ class OfferCreateView(generics.CreateAPIView):
         offer = serializer.instance
         _send_offer_letter_for_hire(offer, user)
 
+        # Notify Candidate via WebSocket
+        if offer.candidate:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=offer.candidate.id,
+                count_type="offer_letters",
+                unread_count=get_candidate_unread_counts(offer.candidate)
+            )
+
 
 def _send_offer_letter_for_hire(offer, employer_user):
     """
@@ -998,6 +1018,16 @@ class RejectCandidateView(APIView):
                 f"(created offer #{offer.id})"
             )
 
+        # Notify Candidate via WebSocket
+        if offer.candidate:
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=offer.candidate.id,
+                count_type="offer_letters",
+                unread_count=get_candidate_unread_counts(offer.candidate)
+            )
+
         # Return the offer data
         response_serializer = OfferSerializer(offer, context={'request': request})
         return Response(response_serializer.data, status=status.HTTP_200_OK)
@@ -1135,6 +1165,16 @@ class CandidateOfferRespondView(APIView):
             f'Candidate {request.user.email} {new_status} offer #{offer.id} '
             f'({position_title})'
         )
+
+        # Notify Employer via WebSocket
+        if offer.employer:
+            from utils.broadcaster import broadcast_count_update
+            from employers.utils import get_employer_unread_counts
+            broadcast_count_update(
+                user_id=offer.employer.id,
+                count_type="hired_responses",
+                unread_count=get_employer_unread_counts(offer.employer)
+            )
 
         response_serializer = OfferSerializer(offer, context={'request': request})
         return Response({

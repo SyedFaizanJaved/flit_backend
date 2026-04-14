@@ -290,6 +290,14 @@ def apply_to_job(request, job_id):
             interestedInTemp=request.data.get("interestedInTemp", False),
         )
 
+        from utils.broadcaster import broadcast_count_update
+        from employers.utils import get_employer_unread_counts
+        broadcast_count_update(
+            user_id=job.employer.id,
+            count_type="global",
+            unread_count=get_employer_unread_counts(job.employer)
+        )
+
         return Response(
             {
                 "message": "Application submitted successfully",
@@ -323,6 +331,14 @@ def apply_to_project(request, project_id):
             company=project.company,
             coverLetter=request.data.get("coverLetter", ""),
         )
+
+        from utils.broadcaster import broadcast_count_update
+        from employers.utils import get_employer_unread_counts
+        broadcast_count_update(
+            user_id=project.employer.id,
+            count_type="global",
+            unread_count=get_employer_unread_counts(project.employer)
+        )
         
         cache_key = f'candidate_{request.user.candidate_profile.id}_latest_projects'
         cache.delete(cache_key)
@@ -355,6 +371,16 @@ def withdraw_application(request, application_id, application_type):
         application.is_withdrawn = True
         application.status = "withdrawn"
         application.save()
+
+        # Notify Employer via WebSocket
+        if application.employer:
+            from utils.broadcaster import broadcast_count_update
+            from employers.utils import get_employer_unread_counts
+            broadcast_count_update(
+                user_id=application.employer.id,
+                count_type="applications",
+                unread_count=get_employer_unread_counts(application.employer)
+            )
 
         return Response({"message": "Application withdrawn successfully"})
     except JobApplication.DoesNotExist:

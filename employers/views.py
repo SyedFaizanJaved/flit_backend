@@ -112,7 +112,16 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     logger.error(f"Failed to send flit pass email notification: {str(e)}")
                     # Don't fail the request if email fails
-            
+
+            if requested_action == 'pass' and candidate:
+                from utils.broadcaster import broadcast_count_update
+                from candidates.utils import get_candidate_unread_counts
+                broadcast_count_update(
+                    user_id=candidate.user.id,
+                    count_type="flit_list",
+                    unread_count=get_candidate_unread_counts(candidate.user)
+                )
+
             serializer = CandidateActionDetailSerializer(instance, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
         except CandidateAction.DoesNotExist:
@@ -136,7 +145,15 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     logger.error(f"Failed to send flit pass email notification: {str(e)}")
                     # Don't fail the request if email fails
-            
+
+                from utils.broadcaster import broadcast_count_update
+                from candidates.utils import get_candidate_unread_counts
+                broadcast_count_update(
+                    user_id=candidate.user.id,
+                    count_type="flit_list",
+                    unread_count=get_candidate_unread_counts(candidate.user)
+                )
+
             detail_serializer = CandidateActionDetailSerializer(serializer.instance, context={'request': request})
             return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
 
