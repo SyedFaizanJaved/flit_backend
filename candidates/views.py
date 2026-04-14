@@ -1012,6 +1012,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     # ====================== DASHBOARD ACTIONS ======================
     @action(detail=False, methods=['get'], url_path='unread-counts')
     def unread_counts(self, request):
+        if not hasattr(request.user, 'candidate_profile'):
+            return Response(
+                {"detail": "You do not have permission to access candidate notifications."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
         return Response(get_candidate_unread_counts(request.user))
 
     @action(detail=False, methods=['get'], url_path='dashboard')

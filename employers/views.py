@@ -337,6 +337,11 @@ class EmployerViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='unread-counts', permission_classes=[permissions.IsAuthenticated])
     def unread_counts(self, request):
+        if not hasattr(request.user, 'employer_profile'):
+            return Response(
+                {"detail": "You do not have permission to access employer notifications."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
         return Response(get_employer_unread_counts(request.user))
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
