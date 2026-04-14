@@ -33,7 +33,7 @@ def get_candidate_unread_counts(user):
         'offer_letters': Offer.objects.filter(candidate=user, is_read_by_candidate=False, status='hired').count(),
         'applications': JobApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).count() + 
                         ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).count(),
-        'references': ReferenceRequest.objects.filter(candidate=candidate, is_read_by_candidate=False, status__in=['completed', 'accepted', 'declined']).count()
+        'references': ReferenceRequest.objects.filter(candidate=candidate, is_read=False, status__in=['completed', 'accepted', 'declined']).count()
     }
     
     unread_counts['total_unread'] = sum(unread_counts.values())
