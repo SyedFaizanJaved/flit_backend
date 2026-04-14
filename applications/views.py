@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, permissions
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db.models import Q
+from django.db.models import Q, Count
 from .models import JobApplication, ProjectApplication
 from .serializers import (
     JobApplicationSerializer,
@@ -31,13 +31,23 @@ class CombinedApplicationsView(generics.ListAPIView):
     def get_queryset(self):
         from applications.models import JobApplication, ProjectApplication
         
-        # Get the company_id from query params if provided
+        # Get query parameters
         company_id = self.request.query_params.get('company_id')
+        job_id = self.request.query_params.get('job_id')
+        project_id = self.request.query_params.get('project_id')
         
         # Base querysets with select_related/prefetch_related for performance
         job_apps = JobApplication.objects.select_related('job', 'candidate__user')
         project_apps = ProjectApplication.objects.select_related('project', 'candidate__user')
         
+        # Filter by specific Job or Project
+        if job_id:
+            job_apps = job_apps.filter(job_id=job_id)
+            project_apps = project_apps.none()  # Clear project apps if filtering specifically for a job
+        elif project_id:
+            project_apps = project_apps.filter(project_id=project_id)
+            job_apps = job_apps.none()  # Clear job apps if filtering specifically for a project
+
         # Apply company filter if company_id is provided
         if company_id:
             job_apps = job_apps.filter(job__company_id=company_id)
@@ -113,12 +123,26 @@ class CombinedApplicationsView(generics.ListAPIView):
             user_role = getattr(getattr(request.user, 'role', None), 'name', None)
             if user_role == "employer":
                 company_id = self.request.query_params.get('company_id')
+                job_id = self.request.query_params.get('job_id')
+                project_id = self.request.query_params.get('project_id')
                 
                 # IMPORTANT: Count EXACTLY like the dashboard does
                 all_unread_jobs = JobApplication.objects.filter(employer=request.user, is_read_by_employer=False)
                 all_unread_projects = ProjectApplication.objects.filter(employer=request.user, is_read_by_employer=False)
                 
-                if company_id:
+                if job_id:
+                    # Mark only this job's applications as read
+                    jobs_to_mark = all_unread_jobs.filter(job_id=job_id)
+                    unread_count = jobs_to_mark.count()
+                    if unread_count > 0:
+                        jobs_to_mark.update(is_read_by_employer=True)
+                elif project_id:
+                    # Mark only this project's applications as read
+                    projects_to_mark = all_unread_projects.filter(project_id=project_id)
+                    unread_count = projects_to_mark.count()
+                    if unread_count > 0:
+                        projects_to_mark.update(is_read_by_employer=True)
+                elif company_id:
                     # Filter for specific company if ID is provided
                     jobs_to_mark = all_unread_jobs.filter(job__company_id=company_id)
                     projects_to_mark = all_unread_projects.filter(project__company_id=company_id)
@@ -339,4 +363,54 @@ def withdraw_application(request, application_id, application_type):
         return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.exception("Error in withdraw_application")
-        return Response({"error": "Something went wrong"}, status=status.HTTP_400_BAD_REQUEST)
+
+class ActivePostingsListView(generics.ListAPIView):
+    """
+    Returns a list of unique Jobs and Projects that have received applications.
+    Useful for filtering applications by posting on the frontend.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        user_role = getattr(getattr(user, 'role', None), 'name', None)
+        
+        if user_role != "employer":
+            return Response({"detail": "Only employers can access this list."}, status=status.HTTP_403_FORBIDDEN)
+            
+        results = []
+        
+        # 1. Get unique Jobs with applications
+        jobs_with_apps = Job.objects.filter(
+            applications__employer=user
+        ).annotate(
+            app_count=Count('applications')
+        ).filter(app_count__gt=0).distinct()
+        
+        for job in jobs_with_apps:
+            results.append({
+                'id': job.id,
+                'title': job.title,
+                'type': 'job',
+                'application_count': job.app_count
+            })
+            
+        # 2. Get unique Projects with applications
+        projects_with_apps = Project.objects.filter(
+            applications__employer=user
+        ).annotate(
+            app_count=Count('applications')
+        ).filter(app_count__gt=0).distinct()
+        
+        for project in projects_with_apps:
+            results.append({
+                'id': project.id,
+                'title': project.title,
+                'type': 'project',
+                'application_count': project.app_count
+            })
+            
+        # Sort by title for easy lookup
+        results.sort(key=lambda x: x['title'])
+        
+        return Response({"results": results})
