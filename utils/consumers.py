@@ -1,6 +1,10 @@
 import json
 import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.db import database_sync_to_async
+from candidates.utils import get_candidate_unread_counts
+from employers.utils import get_employer_unread_counts
+from accounts.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,33 @@ class UnreadCountConsumer(AsyncWebsocketConsumer):
             )
             await self.accept()
             logger.info(f"UnreadCountConsumer connected for user {self.user_id}")
+
+         
+            @database_sync_to_async
+            def get_user_data(user_id):
+                try:
+                    user = User.objects.select_related('role').get(id=user_id)
+                    role_name = user.role.name if user.role else ''
+                    if role_name == 'employer':
+                        counts = get_employer_unread_counts(user)
+                        count_type = 'global'
+                    else:
+                        counts = get_candidate_unread_counts(user)
+                        count_type = 'flit_list'
+                    return count_type, counts
+                except User.DoesNotExist:
+                    return None, None
+
+            count_type, counts = await get_user_data(self.user_id)
+            
+            if count_type and counts:
+                await self.send(text_data=json.dumps({
+                    "type": "initial_count",
+                    "count_type": count_type,
+                    "unread_count": counts
+                }))
+            else:
+                logger.warning(f"User {self.user_id} not found or no data during WS initial count")
 
         except Exception as e:
             logger.error(f"UnreadCount connection error: {str(e)}")
