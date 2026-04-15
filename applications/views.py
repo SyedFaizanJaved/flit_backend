@@ -19,6 +19,7 @@ import logging
 from utils.pagination import CustomPagination
 
 from employers.utils import get_employer_unread_counts
+from candidates.utils import get_candidate_unread_counts
 logger = logging.getLogger("exceptions")
 
 class CombinedApplicationsView(generics.ListAPIView):
@@ -117,98 +118,101 @@ class CombinedApplicationsView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
-            unread_count = 0
+            unread_count_marked = 0
             
-            # Handle unread count for employer
+            # Identify user role
             user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+            
+            # 1. Update unread status in DB if needed
             if user_role == "employer":
                 company_id = self.request.query_params.get('company_id')
                 job_id = self.request.query_params.get('job_id')
                 project_id = self.request.query_params.get('project_id')
                 
-                # IMPORTANT: Count EXACTLY like the dashboard does
+                # Filter what needs to be marked as read
                 all_unread_jobs = JobApplication.objects.filter(employer=request.user, is_read_by_employer=False)
                 all_unread_projects = ProjectApplication.objects.filter(employer=request.user, is_read_by_employer=False)
                 
                 if job_id:
-                    # Mark only this job's applications as read
                     jobs_to_mark = all_unread_jobs.filter(job_id=job_id)
-                    unread_count = jobs_to_mark.count()
-                    if unread_count > 0:
+                    unread_count_marked = jobs_to_mark.count()
+                    if unread_count_marked > 0:
                         jobs_to_mark.update(is_read_by_employer=True)
                 elif project_id:
-                    # Mark only this project's applications as read
                     projects_to_mark = all_unread_projects.filter(project_id=project_id)
-                    unread_count = projects_to_mark.count()
-                    if unread_count > 0:
+                    unread_count_marked = projects_to_mark.count()
+                    if unread_count_marked > 0:
                         projects_to_mark.update(is_read_by_employer=True)
                 elif company_id:
-                    # Filter for specific company if ID is provided
                     jobs_to_mark = all_unread_jobs.filter(job__company_id=company_id)
                     projects_to_mark = all_unread_projects.filter(project__company_id=company_id)
-                    unread_count = jobs_to_mark.count() + projects_to_mark.count()
-                    
-                    if unread_count > 0:
+                    unread_count_marked = jobs_to_mark.count() + projects_to_mark.count()
+                    if unread_count_marked > 0:
                         jobs_to_mark.update(is_read_by_employer=True)
                         projects_to_mark.update(is_read_by_employer=True)
                 else:
-                    # Mark EVERYTHING as read for this employer
-                    unread_count = all_unread_jobs.count() + all_unread_projects.count()
-                    if unread_count > 0:
+                    # Mark everything for this employer
+                    unread_count_marked = all_unread_jobs.count() + all_unread_projects.count()
+                    if unread_count_marked > 0:
                         all_unread_jobs.update(is_read_by_employer=True)
                         all_unread_projects.update(is_read_by_employer=True)
+            
             elif user_role == "candidate":
                 # Mark as read for candidate
                 all_unread_jobs = JobApplication.objects.filter(candidate__user=request.user, is_read_by_candidate=False)
                 all_unread_projects = ProjectApplication.objects.filter(candidate__user=request.user, is_read_by_candidate=False)
                 
-                unread_count = all_unread_jobs.count() + all_unread_projects.count()
-                if unread_count > 0:
+                unread_count_marked = all_unread_jobs.count() + all_unread_projects.count()
+                if unread_count_marked > 0:
                     all_unread_jobs.update(is_read_by_candidate=True)
                     all_unread_projects.update(is_read_by_candidate=True)
 
-            if unread_count > 0:
-                # Broadcast update via WebSocket
+            # 2. WebSocket Broadcast if any changes happened
+            if unread_count_marked > 0:
                 from utils.broadcaster import broadcast_count_update
                 if user_role == "employer":
-                    from employers.utils import get_employer_unread_counts
                     broadcast_count_update(
                         user_id=request.user.id,
                         count_type="global",
                         unread_count=get_employer_unread_counts(request.user)
                     )
                 else:
-                    from candidates.utils import get_candidate_unread_counts
                     broadcast_count_update(
                         user_id=request.user.id,
                         count_type="applications",
                         unread_count=get_candidate_unread_counts(request.user)
                     )
-            
-            # Apply pagination
+
+            # 3. Get fresh unread counts for response
+            unread_data = {}
+            if user_role == "employer":
+                unread_data = get_employer_unread_counts(request.user)
+            else:
+                unread_data = get_candidate_unread_counts(request.user)
+
+            # 4. Handle Response & Pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
                 response = self.get_paginated_response(page)
-                # Put unread_counts at the top for frontend sync
-                ordered_data = {
-                    'unread_count': 0,
-                    'unread_counts': get_employer_unread_counts(request.user)
+                # Ensure counts are in response
+                final_data = {
+                    'unread_count': 0, # Maintaining 0 as per requirement when viewed
+                    'unread_counts': unread_data
                 }
-                ordered_data.update(response.data)
-                response.data = ordered_data
+                final_data.update(response.data)
+                response.data = final_data
                 return response
                 
-            # Mark all as read logic above updates the DB.
-            # We return 0 as requested by the user for frontend synchronization.
             return Response({
                 'unread_count': 0,
-                'unread_counts': get_employer_unread_counts(request.user),
+                'unread_counts': unread_data,
                 'results': queryset
             })
+            
         except Exception as e:
             logger.error(f"Error in CombinedApplicationsView: {str(e)}", exc_info=True)
             return Response(
-                {"error": "An error occurred while fetching applications"},
+                {"error": f"An error occurred while fetching applications: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
