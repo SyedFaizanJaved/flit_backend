@@ -1085,6 +1085,15 @@ class CandidateOfferListView(generics.ListAPIView):
         unread_count = queryset.filter(is_read_by_candidate=False).count()
         if unread_count > 0:
             queryset.filter(is_read_by_candidate=False).update(is_read_by_candidate=True)
+            
+            # Broadcast update via WebSocket
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=request.user.id,
+                count_type="offer_letters",
+                unread_count=get_candidate_unread_counts(request.user)
+            )
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -1155,6 +1164,25 @@ class CandidateOfferRespondView(APIView):
         meeting = offer.meeting
         meeting.is_read = False
         meeting.save(update_fields=['is_read', 'updated_at'])
+
+        # Broadcast updates via WebSocket
+        from utils.broadcaster import broadcast_count_update
+        # 1. Notify Employer (increment their count)
+        if offer.employer:
+            from employers.utils import get_employer_unread_counts
+            broadcast_count_update(
+                user_id=offer.employer.id,
+                count_type="global",
+                unread_count=get_employer_unread_counts(offer.employer)
+            )
+        
+        # 2. Update Candidate (decrement their count)
+        from candidates.utils import get_candidate_unread_counts
+        broadcast_count_update(
+            user_id=request.user.id,
+            count_type="offer_letters",
+            unread_count=get_candidate_unread_counts(request.user)
+        )
 
         # Get names for email
         candidate_name = request.user.get_full_name() or request.user.email

@@ -157,14 +157,32 @@ class CombinedApplicationsView(generics.ListAPIView):
                     if unread_count > 0:
                         all_unread_jobs.update(is_read_by_employer=True)
                         all_unread_projects.update(is_read_by_employer=True)
-
+            elif user_role == "candidate":
+                # Mark as read for candidate
+                all_unread_jobs = JobApplication.objects.filter(candidate__user=request.user, is_read_by_candidate=False)
+                all_unread_projects = ProjectApplication.objects.filter(candidate__user=request.user, is_read_by_candidate=False)
+                
+                unread_count = all_unread_jobs.count() + all_unread_projects.count()
                 if unread_count > 0:
-                    # Broadcast update via WebSocket
-                    from utils.broadcaster import broadcast_count_update
+                    all_unread_jobs.update(is_read_by_candidate=True)
+                    all_unread_projects.update(is_read_by_candidate=True)
+
+            if unread_count > 0:
+                # Broadcast update via WebSocket
+                from utils.broadcaster import broadcast_count_update
+                if user_role == "employer":
+                    from employers.utils import get_employer_unread_counts
                     broadcast_count_update(
                         user_id=request.user.id,
                         count_type="global",
                         unread_count=get_employer_unread_counts(request.user)
+                    )
+                else:
+                    from candidates.utils import get_candidate_unread_counts
+                    broadcast_count_update(
+                        user_id=request.user.id,
+                        count_type="applications",
+                        unread_count=get_candidate_unread_counts(request.user)
                     )
             
             # Apply pagination
