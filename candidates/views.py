@@ -1623,10 +1623,21 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             return Response({"error": "Invalid type"}, status=400)
 
         # Broadcast update via WebSocket
+        # Map categories to the keys used in get_candidate_unread_counts
+        broadcast_type_map = {
+            'flit': 'flit_list',
+            'job_application': 'applications',
+            'project_application': 'applications',
+            'offer': 'offer_letters',
+            'reference': 'references',
+            'interview': 'interview_requests'
+        }
+        broadcast_type = broadcast_type_map.get(category, category)
+
         from utils.broadcaster import broadcast_count_update
         broadcast_count_update(
             user_id=request.user.id,
-            count_type=category if category != 'flit' else 'flit_list',
+            count_type=broadcast_type,
             unread_count=get_candidate_unread_counts(request.user)
         )
             
