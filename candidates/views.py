@@ -119,6 +119,15 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         unread_count = queryset.filter(is_read=False).count()
         if unread_count > 0:
             queryset.filter(is_read=False).update(is_read=True)
+            
+            # Broadcast update via WebSocket
+            from utils.broadcaster import broadcast_count_update
+            from candidates.utils import get_candidate_unread_counts
+            broadcast_count_update(
+                user_id=request.user.id,
+                count_type="references",
+                unread_count=get_candidate_unread_counts(request.user)
+            )
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
