@@ -850,89 +850,87 @@ class OfferListView(generics.ListAPIView):
             )
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
-        
-        # Calculate unread count BEFORE marking as read
-        unread_count = 0
-        role_name = getattr(getattr(request.user, 'role', None), 'name', None)
-        if role_name == settings.USER_ROLE_EMPLOYER:
-            unread_count = queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).count()
-        else:
-            unread_count = queryset.filter(is_read_by_candidate=False, status='hired').count()
-
-        # Mark as read logic
-        if unread_count > 0:
-            if role_name == settings.USER_ROLE_EMPLOYER:
-                # Employer reading candidate's response
-                queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
-                
-                # Broadcast update via WebSocket
-                from utils.broadcaster import broadcast_count_update
-                from employers.utils import get_employer_unread_counts
-                broadcast_count_update(
-                    user_id=request.user.id,
-                    count_type="global",
-                    unread_count=get_employer_unread_counts(request.user)
-                )
-            else:
-                # Candidate reading employer's offer
-                queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
-                
-                # Broadcast update via WebSocket
-                from utils.broadcaster import broadcast_count_update
-                from candidates.utils import get_candidate_unread_counts
-                broadcast_count_update(
-                    user_id=request.user.id,
-                    count_type="offer_letters",
-                    unread_count=get_candidate_unread_counts(request.user)
-                )
+        try:
+            queryset = self.get_queryset()
             
-        # Calculate stats for all offers of this user (not just this page)
-        stats = {
-            "total_sent": queryset.count(),
-            "hired": queryset.filter(status__in=['hired', 'accepted']).count(),
-            "accepted": queryset.filter(status='accepted').count(),
-            "rejected": queryset.filter(status='rejected').count(),
-            "declined": queryset.filter(status='declined').count(),
-            "unread_count": 0,
-        }
-
-        # Apply pagination
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            response = self.get_paginated_response(serializer.data)
-            # Create a new dictionary with stats and unread_count at the top
-            paginated_data = response.data
-            new_data = {
-                "stats": stats,
-                "count": paginated_data.get('count'),
-                "unread_count": 0,
-                "total_pages": paginated_data.get('total_pages'),
-                "current_page": paginated_data.get('current_page'),
-                "next": paginated_data.get('next'),
-                "previous": paginated_data.get('previous'),
-                "results": paginated_data.get('results')
-            }
-            if role_name == settings.USER_ROLE_EMPLOYER:
-                new_data['unread_counts'] = get_employer_unread_counts(request.user)
+            # Identify user role
+            user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+            
+            # 1. Unread count and mark-as-read logic
+            unread_count_marked = 0
+            if user_role == settings.USER_ROLE_EMPLOYER:
+                unread_count_marked = queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).count()
+                if unread_count_marked > 0:
+                    queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
             else:
-                new_data['unread_counts'] = get_candidate_unread_counts(request.user)
-            response.data = new_data
-            return response
+                unread_count_marked = queryset.filter(is_read_by_candidate=False, status='hired').count()
+                if unread_count_marked > 0:
+                    queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
 
-        # Non-paginated fallback
-        serializer = self.get_serializer(queryset, many=True)
-        response_data = {
-            "stats": stats,
-            "unread_count": unread_count,
-            "results": serializer.data
-        }
-        if role_name == settings.USER_ROLE_EMPLOYER:
-            response_data['unread_counts'] = get_employer_unread_counts(request.user)
-        else:
-            response_data['unread_counts'] = get_candidate_unread_counts(request.user)
-        return Response(response_data)
+            # 2. WebSocket Broadcast if any changes happened
+            if unread_count_marked > 0:
+                from utils.broadcaster import broadcast_count_update
+                if user_role == settings.USER_ROLE_EMPLOYER:
+                    broadcast_count_update(
+                        user_id=request.user.id,
+                        count_type="global",
+                        unread_count=get_employer_unread_counts(request.user)
+                    )
+                else:
+                    broadcast_count_update(
+                        user_id=request.user.id,
+                        count_type="offer_letters",
+                        unread_count=get_candidate_unread_counts(request.user)
+                    )
+                
+            # 3. Calculate stats for the user
+            stats = {
+                "total_sent": queryset.count(),
+                "hired": queryset.filter(status__in=['hired', 'accepted']).count(),
+                "accepted": queryset.filter(status='accepted').count(),
+                "rejected": queryset.filter(status='rejected').count(),
+                "declined": queryset.filter(status='declined').count(),
+                "unread_count": 0,
+            }
+
+            # 4. Get fresh unread counts for response
+            unread_counts_data = {}
+            if user_role == settings.USER_ROLE_EMPLOYER:
+                unread_counts_data = get_employer_unread_counts(request.user)
+            else:
+                unread_counts_data = get_candidate_unread_counts(request.user)
+
+            # 5. Handle Response & Pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                response = self.get_paginated_response(serializer.data)
+                
+                # Enrich paginated data
+                final_data = {
+                    "stats": stats,
+                    "unread_count": 0,
+                    "unread_counts": unread_counts_data
+                }
+                final_data.update(response.data)
+                response.data = final_data
+                return response
+
+            # Fallback for non-paginated
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                "stats": stats,
+                "unread_count": 0,
+                "unread_counts": unread_counts_data,
+                "results": serializer.data
+            })
+
+        except Exception as e:
+            logger.error(f"Error in OfferListView: {str(e)}", exc_info=True)
+            return Response(
+                {"error": f"An error occurred while fetching offers: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class OfferDetailView(generics.RetrieveUpdateAPIView):
@@ -1169,7 +1167,6 @@ class CandidateOfferRespondView(APIView):
         from utils.broadcaster import broadcast_count_update
         # 1. Notify Employer (increment their count)
         if offer.employer:
-            from employers.utils import get_employer_unread_counts
             broadcast_count_update(
                 user_id=offer.employer.id,
                 count_type="global",
@@ -1177,7 +1174,6 @@ class CandidateOfferRespondView(APIView):
             )
         
         # 2. Update Candidate (decrement their count)
-        from candidates.utils import get_candidate_unread_counts
         broadcast_count_update(
             user_id=request.user.id,
             count_type="offer_letters",
@@ -1217,20 +1213,11 @@ class CandidateOfferRespondView(APIView):
         except Exception as e:
             logger.error(f'Failed to send offer response email: {str(e)}')
 
+        # Log successful response
         logger.info(
             f'Candidate {request.user.email} {new_status} offer #{offer.id} '
             f'({position_title})'
         )
-
-        # Notify Employer via WebSocket
-        if offer.employer:
-            from utils.broadcaster import broadcast_count_update
-            from employers.utils import get_employer_unread_counts
-            broadcast_count_update(
-                user_id=offer.employer.id,
-                count_type="hired_responses",
-                unread_count=get_employer_unread_counts(offer.employer)
-            )
 
         response_serializer = OfferSerializer(offer, context={'request': request})
         return Response({
