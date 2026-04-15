@@ -257,7 +257,17 @@ class EmployerJobApplicationsView(EmployerDashboardBaseView):
         ).select_related('candidate__user', 'job', 'company').order_by('-applied_at')
 
         # Mark all as read when employer views the list
-        applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+        unread_count = applications.filter(is_read_by_employer=False).count()
+        if unread_count > 0:
+            applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+            
+            # Broadcast update via WebSocket
+            from utils.broadcaster import broadcast_count_update
+            broadcast_count_update(
+                user_id=request.user.id,
+                count_type="global",
+                unread_count=get_employer_unread_counts(request.user)
+            )
 
         status_choices = ['pending', 'reviewing', 'shortlisted', 'interviewed', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}
@@ -293,7 +303,17 @@ class EmployerProjectApplicationsView(EmployerDashboardBaseView):
         ).select_related('candidate__user', 'project', 'company').order_by('-applied_at')
 
         # Mark all as read when employer views the list
-        applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+        unread_count = applications.filter(is_read_by_employer=False).count()
+        if unread_count > 0:
+            applications.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+            
+            # Broadcast update via WebSocket
+            from utils.broadcaster import broadcast_count_update
+            broadcast_count_update(
+                user_id=request.user.id,
+                count_type="global",
+                unread_count=get_employer_unread_counts(request.user)
+            )
 
         status_choices = ['pending', 'reviewing', 'shortlisted', 'hired', 'rejected', 'withdrawn']
         status_counts = {f'{s}_count': applications.filter(status=s).count() for s in status_choices}

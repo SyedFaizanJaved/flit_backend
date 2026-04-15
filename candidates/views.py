@@ -1554,6 +1554,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         unread_count = actions_qs.filter(is_read=False).count()
         if unread_count > 0:
             actions_qs.filter(is_read=False).update(is_read=True)
+            
+            # Broadcast update via WebSocket
+            from utils.broadcaster import broadcast_count_update
+            broadcast_count_update(
+                user_id=request.user.id,
+                count_type="flit_list",
+                unread_count=get_candidate_unread_counts(request.user)
+            )
         
         employers = [action.employer for action in actions_qs]
 
@@ -1613,6 +1621,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             ).update(is_read=True)
         else:
             return Response({"error": "Invalid type"}, status=400)
+
+        # Broadcast update via WebSocket
+        from utils.broadcaster import broadcast_count_update
+        broadcast_count_update(
+            user_id=request.user.id,
+            count_type=category if category != 'flit' else 'flit_list',
+            unread_count=get_candidate_unread_counts(request.user)
+        )
             
         return Response({
             "message": f"All {category} marked as read",

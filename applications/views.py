@@ -157,6 +157,15 @@ class CombinedApplicationsView(generics.ListAPIView):
                     if unread_count > 0:
                         all_unread_jobs.update(is_read_by_employer=True)
                         all_unread_projects.update(is_read_by_employer=True)
+
+                if unread_count > 0:
+                    # Broadcast update via WebSocket
+                    from utils.broadcaster import broadcast_count_update
+                    broadcast_count_update(
+                        user_id=request.user.id,
+                        count_type="global",
+                        unread_count=get_employer_unread_counts(request.user)
+                    )
             
             # Apply pagination
             page = self.paginate_queryset(queryset)
@@ -216,7 +225,18 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         user_role = getattr(getattr(request.user, 'role', None), 'name', None)
         if user_role == "employer":
-            queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+            unread_count = queryset.filter(is_read_by_employer=False).count()
+            if unread_count > 0:
+                queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+                
+                # Broadcast update via WebSocket
+                from utils.broadcaster import broadcast_count_update
+                from employers.utils import get_employer_unread_counts
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="global",
+                    unread_count=get_employer_unread_counts(request.user)
+                )
             
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -257,7 +277,18 @@ class ProjectApplicationViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         user_role = getattr(getattr(request.user, 'role', None), 'name', None)
         if user_role == "employer":
-            queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+            unread_count = queryset.filter(is_read_by_employer=False).count()
+            if unread_count > 0:
+                queryset.filter(is_read_by_employer=False).update(is_read_by_employer=True)
+                
+                # Broadcast update via WebSocket
+                from utils.broadcaster import broadcast_count_update
+                from employers.utils import get_employer_unread_counts
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="global",
+                    unread_count=get_employer_unread_counts(request.user)
+                )
             
         page = self.paginate_queryset(queryset)
         if page is not None:
