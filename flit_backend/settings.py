@@ -79,15 +79,18 @@ INSTALLED_APPS = ['channels'] + DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 # ASGI Application
 ASGI_APPLICATION = 'flit_backend.asgi.application'
 
-# Channel layer configuration
+# Redis & Channel Layer Configuration
+REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [("127.0.0.1", 6379)],
+            "hosts": [REDIS_URL],
         },
     },
 }
+
 
 
 
