@@ -392,6 +392,15 @@ class CandidateMeetingsView(generics.ListAPIView):
             is_read=False
         ).update(is_read=True)
 
+        # Broadcast update via WebSocket
+        from utils.broadcaster import broadcast_count_update
+        from candidates.utils import get_candidate_unread_counts
+        broadcast_count_update(
+            user_id=request.user.id,
+            count_type="interview_requests",
+            unread_count=get_candidate_unread_counts(request.user)
+        )
+
         tab = self.request.query_params.get('tab', 'all')
         
         stats = {
@@ -852,12 +861,31 @@ class OfferListView(generics.ListAPIView):
             unread_count = queryset.filter(is_read_by_candidate=False, status='hired').count()
 
         # Mark as read logic
-        if role_name == settings.USER_ROLE_EMPLOYER:
-            # Employer reading candidate's response
-            queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
-        else:
-            # Candidate reading employer's offer
-            queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
+        if unread_count > 0:
+            if role_name == settings.USER_ROLE_EMPLOYER:
+                # Employer reading candidate's response
+                queryset.filter(is_read_by_employer=False, status__in=['accepted', 'declined']).update(is_read_by_employer=True)
+                
+                # Broadcast update via WebSocket
+                from utils.broadcaster import broadcast_count_update
+                from employers.utils import get_employer_unread_counts
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="global",
+                    unread_count=get_employer_unread_counts(request.user)
+                )
+            else:
+                # Candidate reading employer's offer
+                queryset.filter(is_read_by_candidate=False, status='hired').update(is_read_by_candidate=True)
+                
+                # Broadcast update via WebSocket
+                from utils.broadcaster import broadcast_count_update
+                from candidates.utils import get_candidate_unread_counts
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="offer_letters",
+                    unread_count=get_candidate_unread_counts(request.user)
+                )
             
         # Calculate stats for all offers of this user (not just this page)
         stats = {
