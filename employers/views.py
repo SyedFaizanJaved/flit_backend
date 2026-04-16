@@ -384,7 +384,18 @@ class EmployerViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def dashboard(self, request):
         user = request.user
-        
+
+        # --- Banner Seen Logic ---
+        show_banner = False
+        try:
+            employer_profile = user.employer_profile
+            show_banner = employer_profile.banner_seen
+            if show_banner:
+                employer_profile.banner_seen = False
+                employer_profile.save(update_fields=['banner_seen'])
+        except Employer.DoesNotExist:
+            exception_logger.error("Employer profile not found for user %s", user.id)
+
         # 2. Stats
         stats = {
             'active_projects': Project.objects.filter(employer=user, status='active').count(),
@@ -442,6 +453,7 @@ class EmployerViewSet(viewsets.ViewSet):
         
         # Prepare response data
         return Response({
+            'banner_seen': show_banner,
             'stats': stats,
             'unread_counts': get_employer_unread_counts(user),
             'meet_and_greet': {

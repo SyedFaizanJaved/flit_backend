@@ -34,6 +34,7 @@ class Employer(models.Model):
     
     # Profile Visibility
     is_profile_public = models.BooleanField(default=True)
+    banner_seen = models.BooleanField(default=False)
     
     # Statistics
     total_jobs_posted = models.PositiveIntegerField(default=0)
