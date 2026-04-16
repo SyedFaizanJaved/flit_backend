@@ -112,10 +112,6 @@ def user_login(request):
             profile_completed = employer_company_completed
             try:
                 employer_profile = user.employer_profile
-                # If profile is now complete, force banner_seen=True as well
-                if profile_completed and not employer_profile.banner_seen:
-                    employer_profile.banner_seen = True
-                    employer_profile.save(update_fields=['banner_seen'])
                 banner_seen = employer_profile.banner_seen
             except Employer.DoesNotExist:
                 logger.error('Employer.DoesNotExist: Employer profile does not exist')
@@ -123,10 +119,6 @@ def user_login(request):
             try:
                 candidate_profile = user.candidate_profile
                 profile_completed = candidate_profile.is_profile_complete
-                # If profile is now complete, force banner_seen=True as well
-                if profile_completed and not candidate_profile.banner_seen:
-                    candidate_profile.banner_seen = True
-                    candidate_profile.save(update_fields=['banner_seen'])
                 banner_seen = candidate_profile.banner_seen
             except Candidate.DoesNotExist:
                 logger.error('Candidate.DoesNotExist: Candidate profile does not exist')
