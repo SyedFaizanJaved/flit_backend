@@ -1123,105 +1123,119 @@ class CandidateOfferRespondView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        # Validate action
-        action = request.data.get('action', '').lower()
-        if action not in ('accept', 'decline'):
-            return Response(
-                {'detail': 'Invalid action. Must be "accept" or "decline".'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Get the offer
         try:
-            offer = Offer.objects.select_related(
-                'meeting', 'candidate', 'employer'
-            ).get(pk=pk, candidate=request.user)
-        except Offer.DoesNotExist:
-            return Response(
-                {'detail': 'Offer not found.'},
-                status=status.HTTP_404_NOT_FOUND
+            # Validate action
+            action = request.data.get('action', '').lower()
+            if action not in ('accept', 'decline'):
+                return Response(
+                    {'detail': 'Invalid action. Must be "accept" or "decline".'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get the offer
+            try:
+                offer = Offer.objects.select_related(
+                    'meeting', 'candidate', 'employer'
+                ).get(pk=pk, candidate=request.user)
+            except Offer.DoesNotExist:
+                return Response(
+                    {'detail': 'Offer not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Only hired offers can be responded to
+            if offer.status != 'hired':
+                return Response(
+                    {'detail': f'Cannot respond to an offer with status "{offer.status}". '
+                               f'Only offers with status "hired" can be accepted or declined.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Update status and reset is_read fields
+            new_status = 'accepted' if action == 'accept' else 'declined'
+            offer.status = new_status
+            offer.is_read_by_employer = False  # Mark as unread for employer notification
+            offer.is_read_by_candidate = True   # Mark as read for candidate
+            offer.is_read = False               # Legacy support
+            offer.save(update_fields=['status', 'is_read_by_employer', 'is_read_by_candidate', 'is_read', 'updated_at'])
+
+            # Also mark the associated meeting room as unread
+            meeting = offer.meeting
+            meeting.is_read = False
+            # removed 'updated_at' because MeetingRoom model doesn't have it
+            meeting.save(update_fields=['is_read'])
+
+            # Broadcast updates via WebSocket
+            try:
+                from utils.broadcaster import broadcast_count_update
+                # 1. Notify Employer (increment their count)
+                if offer.employer:
+                    broadcast_count_update(
+                        user_id=offer.employer.id,
+                        count_type="global",
+                        unread_count=get_employer_unread_counts(offer.employer)
+                    )
+                
+                # 2. Update Candidate (decrement their count)
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="offer_letters",
+                    unread_count=get_candidate_unread_counts(request.user)
+                )
+            except Exception as broadcast_error:
+                logger.error(f"Failed to broadcast update: {str(broadcast_error)}")
+                # Continue anyway, as the DB is already updated
+
+            # Get names for email
+            candidate_name = request.user.get_full_name() or request.user.email
+            try:
+                candidate_name = request.user.candidate_profile.full_name or candidate_name
+            except Exception:
+                pass
+
+            position_title = offer.title
+            company_name = 'The Company'
+            try:
+                employer_profile = offer.employer.employer_profile
+                if employer_profile.company:
+                    company_name = employer_profile.company.company_name
+            except Exception:
+                pass
+
+            # Send email notification to employer
+            try:
+                from utils.email_service import send_offer_response_email
+                send_offer_response_email(
+                    employer_user=offer.employer,
+                    candidate_name=candidate_name,
+                    position_title=position_title,
+                    company_name=company_name,
+                    action=action,
+                    salary=offer.salary,
+                    start_date=offer.date_of_joining,
+                    is_hourly=offer.is_hourly,
+                    hourly_rate=offer.hourly_rate,
+                )
+            except Exception as e:
+                logger.error(f'Failed to send offer response email: {str(e)}')
+
+            # Log successful response
+            logger.info(
+                f'Candidate {request.user.email} {new_status} offer #{offer.id} '
+                f'({position_title})'
             )
 
-        # Only hired offers can be responded to
-        if offer.status != 'hired':
-            return Response(
-                {'detail': f'Cannot respond to an offer with status "{offer.status}". '
-                           f'Only offers with status "hired" can be accepted or declined.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            response_serializer = OfferSerializer(offer, context={'request': request})
+            return Response({
+                'status': 'success',
+                'message': f'Offer {new_status} successfully.',
+                'offer': response_serializer.data,
+            }, status=status.HTTP_200_OK)
 
-        # Update status and reset is_read fields
-        new_status = 'accepted' if action == 'accept' else 'declined'
-        offer.status = new_status
-        offer.is_read_by_employer = False  # Mark as unread for employer notification
-        offer.is_read_by_candidate = True   # Mark as read for candidate
-        offer.is_read = False               # Legacy support
-        offer.save(update_fields=['status', 'is_read_by_employer', 'is_read_by_candidate', 'is_read', 'updated_at'])
-
-        # Also mark the associated meeting room as unread
-        meeting = offer.meeting
-        meeting.is_read = False
-        meeting.save(update_fields=['is_read', 'updated_at'])
-
-        # Broadcast updates via WebSocket
-        from utils.broadcaster import broadcast_count_update
-        # 1. Notify Employer (increment their count)
-        if offer.employer:
-            broadcast_count_update(
-                user_id=offer.employer.id,
-                count_type="global",
-                unread_count=get_employer_unread_counts(offer.employer)
-            )
-        
-        # 2. Update Candidate (decrement their count)
-        broadcast_count_update(
-            user_id=request.user.id,
-            count_type="offer_letters",
-            unread_count=get_candidate_unread_counts(request.user)
-        )
-
-        # Get names for email
-        candidate_name = request.user.get_full_name() or request.user.email
-        try:
-            candidate_name = request.user.candidate_profile.full_name or candidate_name
-        except Exception:
-            pass
-
-        position_title = offer.title
-        company_name = 'The Company'
-        try:
-            employer_profile = offer.employer.employer_profile
-            if employer_profile.company:
-                company_name = employer_profile.company.company_name
-        except Exception:
-            pass
-
-        # Send email notification to employer
-        try:
-            from utils.email_service import send_offer_response_email
-            send_offer_response_email(
-                employer_user=offer.employer,
-                candidate_name=candidate_name,
-                position_title=position_title,
-                company_name=company_name,
-                action=action,
-                salary=offer.salary,
-                start_date=offer.date_of_joining,
-                is_hourly=offer.is_hourly,
-                hourly_rate=offer.hourly_rate,
-            )
         except Exception as e:
-            logger.error(f'Failed to send offer response email: {str(e)}')
-
-        # Log successful response
-        logger.info(
-            f'Candidate {request.user.email} {new_status} offer #{offer.id} '
-            f'({position_title})'
-        )
-
-        response_serializer = OfferSerializer(offer, context={'request': request})
-        return Response({
-            'status': 'success',
-            'message': f'Offer {new_status} successfully.',
-            'offer': response_serializer.data,
-        }, status=status.HTTP_200_OK)
+            logger.exception(f"Unexpected error in CandidateOfferRespondView: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': 'An unexpected server error occurred.',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
