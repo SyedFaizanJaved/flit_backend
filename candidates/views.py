@@ -1120,8 +1120,19 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             if unread_project_count > 0:
                 ProjectApplication.objects.filter(candidate=candidate, is_read_by_candidate=False).update(is_read_by_candidate=True)
             
+            # Broadcast updates via WebSocket if any items were marked as read
+            if unread_job_count > 0 or unread_project_count > 0:
+                from utils.broadcaster import broadcast_count_update
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="applications",
+                    unread_count=get_candidate_unread_counts(request.user)
+                )
+
+
             # Use CustomPagination properly
             page = self.paginate_queryset(formatted)
+
 
             
             job_count = Application.objects.filter(candidate=candidate).count()
