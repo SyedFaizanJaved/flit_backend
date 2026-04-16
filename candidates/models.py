@@ -99,6 +99,7 @@ class Candidate(models.Model):
     skills_completed = models.BooleanField(default=False)
     portfolio_completed = models.BooleanField(default=False)
     privacy_completed = models.BooleanField(default=False)
+    banner_seen = models.BooleanField(default=False)
 
 
     # Ml Endpoints

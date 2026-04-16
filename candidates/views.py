@@ -1032,7 +1032,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def dashboard(self, request):
         candidate = self.get_candidate()
         user = request.user
-        
+
+        # --- Banner Seen Logic ---
+        show_banner = candidate.banner_seen
+        if show_banner:
+            candidate.banner_seen = False
+            candidate.save(update_fields=['banner_seen'])
+
         # 2. Stats Summary
         total_interviews = InterviewRequest.objects.filter(
             Q(job_application__candidate=candidate) | Q(project_application__candidate=candidate)
@@ -1057,6 +1063,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         stats['matched_opportunities_count'] = len(top_matches_jobs) + len(top_matches_projects)
 
         return Response({
+            'banner_seen': show_banner,
             'profile': {
                 'id': candidate.id,
                 'full_name': candidate.full_name,

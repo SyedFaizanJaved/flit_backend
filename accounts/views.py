@@ -92,6 +92,7 @@ def user_login(request):
         user_role = getattr(getattr(user, 'role', None), 'name', None)
         profile_completed = False
         employer_company_completed = False
+        banner_seen = False
         try:
             # Fast path: if employer profile exists and is linked to a company, treat as completed
             if hasattr(user, 'employer_profile') and getattr(user.employer_profile, 'company_id', None):
@@ -109,10 +110,24 @@ def user_login(request):
 
         if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer') or (user_role is None and employer_company_completed):
             profile_completed = employer_company_completed
+            try:
+                employer_profile = user.employer_profile
+                # If profile is now complete, force banner_seen=True as well
+                if profile_completed and not employer_profile.banner_seen:
+                    employer_profile.banner_seen = True
+                    employer_profile.save(update_fields=['banner_seen'])
+                banner_seen = employer_profile.banner_seen
+            except Employer.DoesNotExist:
+                logger.error('Employer.DoesNotExist: Employer profile does not exist')
         elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate') or (user_role is None and hasattr(user, 'candidate_profile')):
             try:
                 candidate_profile = user.candidate_profile
                 profile_completed = candidate_profile.is_profile_complete
+                # If profile is now complete, force banner_seen=True as well
+                if profile_completed and not candidate_profile.banner_seen:
+                    candidate_profile.banner_seen = True
+                    candidate_profile.save(update_fields=['banner_seen'])
+                banner_seen = candidate_profile.banner_seen
             except Candidate.DoesNotExist:
                 logger.error('Candidate.DoesNotExist: Candidate profile does not exist')
                 profile_completed = False
@@ -128,6 +143,7 @@ def user_login(request):
             'refresh': str(refresh),
             'message': 'Login successful',
             'profile_completed': profile_completed,
+            'banner_seen': banner_seen,
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
