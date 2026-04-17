@@ -2382,7 +2382,8 @@ def send_offer_response_email(employer_user, candidate_name, position_title,
     employer_email = employer_user.email
     employer_name = employer_user.get_full_name() or employer_user.email
     base_url = get_base_url()
-    logo_url = f"{base_url}/frame.png"
+    flit_logo_url = get_logo_url()
+    ribbon_icon_url = f"{base_url}/frame.png"
     support_url = f"{base_url}/support"
     dashboard_url = f"{base_url}/employer/dashboard?tab=hired-candidates"
     
@@ -2408,6 +2409,7 @@ def send_offer_response_email(employer_user, candidate_name, position_title,
         status_badge_text = "#319795"
         status_text = "ACCEPTED"
         message_intro = f"Great news! {candidate_name} has accepted the offer for the {position_title} position. Onboarding documents have been automatically triggered."
+        badge_icon_url = ribbon_icon_url
     else:
         subject = f"{candidate_name} has declined your offer — {position_title}"
         heading = f"{candidate_name} Has Declined The Offer"
@@ -2418,6 +2420,7 @@ def send_offer_response_email(employer_user, candidate_name, position_title,
         status_badge_text = "#e53e3e"
         status_text = "DECLINED"
         message_intro = f"We're writing to inform you that {candidate_name} has declined the offer for the {position_title} position."
+        badge_icon_url = f"{base_url}/reject.png"
 
     text_content = f"""
 Hello {employer_name},
@@ -2448,43 +2451,49 @@ Flit Platform
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            background-color: #f4f7fa;
+            background-color: #dce8f5;
             font-family: 'Inter', Arial, sans-serif;
             color: #1a1a2e;
             padding: 32px 16px;
         }}
 
         .wrapper {{
-            max-width: 600px;
+            max-width: 560px;
             margin: 0 auto;
+            font-family: 'Inter', Arial, sans-serif;
         }}
 
         .card {{
             background: #ffffff;
-            border-radius: 12px;
+            border-radius: 8px;
             overflow: hidden;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
-            border-top: 4px solid #435185;
+            border: none;
+            border-top: 4px solid #1e3a7b;
+            box-shadow: 0 4px 24px rgba(30, 58, 123, 0.10);
         }}
 
-        .header {{
-            text-align: center;
-            padding: 32px 20px;
+        .email-header {{
+            text-align: left;
+            padding: 20px 36px;
             border-bottom: 1px solid #eef0f5;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
         }}
 
         .logo-img {{
-            height: 48px;
+            height: 36px;
             width: auto;
         }}
 
-        .body {{
-            padding: 40px;
+        .email-body {{
+            padding: 36px 36px 28px 36px;
         }}
 
-        .badge-container {{
+        .badge-row {{
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: 18px;
         }}
 
         .badge-icon {{
@@ -2494,11 +2503,11 @@ Flit Platform
             border-radius: 50%;
             display: inline-block;
             vertical-align: middle;
-            line-height: 46px; /* Adjust for icon centering */
+            line-height: 42px;
             text-align: center;
         }}
 
-        .badge-text {{
+        .badge-label {{
             font-size: 11px;
             font-weight: 700;
             letter-spacing: 1.2px;
@@ -2509,64 +2518,61 @@ Flit Platform
             vertical-align: middle;
         }}
 
-        .heading {{
-            font-size: 28px;
+        .email-heading {{
+            font-size: 24px;
             font-weight: 700;
-            color: #1a1a2e;
+            color: #14181f;
             margin-bottom: 16px;
-            line-height: 1.2;
-            text-align: center;
-            letter-spacing: -0.5px;
-        }}
-
-        .intro-text {{
-            font-size: 16px;
-            line-height: 1.6;
-            color: #4a5568;
-            margin-bottom: 32px;
+            line-height: 28.8px;
+            letter-spacing: -0.72px;
             text-align: center;
         }}
 
-        .details-box {{
+        .email-text {{
+            font-size: 15px;
+            line-height: 1.7;
+            color: #3d3d5c;
+            margin-bottom: 24px;
+            text-align: center;
+        }}
+
+        .detail-box {{
             background-color: #fbfbfd;
             border: 1px solid #eef0f5;
-            border-radius: 12px;
+            border-radius: 8px;
             padding: 24px;
-            margin-bottom: 32px;
+            margin-bottom: 24px;
         }}
 
-        .details-title {{
+        .detail-box-title {{
             font-size: 11px;
             font-weight: 700;
-            color: #435185;
+            color: #7a7a99;
             letter-spacing: 1px;
             text-transform: uppercase;
             margin-bottom: 16px;
         }}
 
-        .details-table {{
+        .detail-table {{
             width: 100%;
             border-collapse: collapse;
         }}
 
-        .details-table td {{
-            padding: 12px 0;
-            border-bottom: 1px solid #f0f0f5;
-            font-size: 15px;
-            color: #718096;
+        .detail-table td {{
+            padding: 14px 0;
+            border-bottom: 1px solid #eef0f5;
+            font-size: 14px;
+            color: #7a7a99;
         }}
 
-        .details-table tr:last-child td {{
+        .detail-table tr:last-child td {{
             border-bottom: none;
+            padding-bottom: 0;
         }}
 
-        .details-label {{
-            font-weight: 500;
-        }}
-
-        .details-value {{
+        .detail-value {{
             text-align: right;
-            color: #1a1a2e;
+            color: #14181f !important;
             font-weight: 600;
         }}
 
@@ -2579,21 +2585,22 @@ Flit Platform
             font-weight: 700;
         }}
 
-        .btn-container {{
+        .btn-wrap {{
             text-align: center;
-            margin-bottom: 32px;
+            margin-bottom: 24px;
+            margin-top: 24px;
         }}
 
         .cta-button {{
             display: inline-block;
-            background-color: #435185;
+            background-color: #1e3a7b;
             color: #ffffff !important;
             text-decoration: none;
-            padding: 16px 48px;
+            padding: 14px 40px;
             border-radius: 50px;
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 600;
-            box-shadow: 0 4px 12px rgba(67, 81, 133, 0.2);
+            letter-spacing: 0.2px;
         }}
 
         .dashboard-tip {{
@@ -2604,81 +2611,84 @@ Flit Platform
             color: #718096;
             font-size: 14px;
             border: 1px solid #edf2f7;
+            margin-top: 24px;
         }}
 
-        .footer {{
-            padding: 32px 20px;
+        .email-footer {{
+            padding: 20px 36px 28px 36px;
             text-align: center;
+            background-color: #dce8f5;
         }}
 
-        .footer-links {{
-            font-size: 14px;
-            color: #4a5568;
-            margin-bottom: 8px;
+        .footer-support {{
+            font-size: 13px;
+            color: #3d3d5c;
+            margin-bottom: 6px;
         }}
 
-        .footer-links a {{
-            color: #435185;
-            text-decoration: none;
+        .footer-support a {{
+            color: #1e3a7b;
             font-weight: 600;
+            text-decoration: none;
         }}
 
-        .copyright {{
+        .footer-copy {{
             font-size: 12px;
-            color: #a0aec0;
+            color: #9494b0;
+            margin-bottom: 4px;
         }}
 
         @media only screen and (max-width: 600px) {{
-            .body {{ padding: 24px; }}
-            .heading {{ font-size: 24px; }}
+            .email-header, .email-body, .email-footer {{ padding-left: 20px; padding-right: 20px; }}
+            .email-heading {{ font-size: 22px; }}
         }}
     </style>
 </head>
 <body>
     <div class="wrapper">
         <div class="card">
-            <div class="header">
-                <img src="{logo_url}" alt="FLIT" class="logo-img">
+            <div class="email-header">
+                <img src="{flit_logo_url}" alt="FLIT" class="logo-img">
             </div>
             
-            <div class="body">
-                <div class="badge-container">
+            <div class="email-body">
+                <div class="badge-row">
                     <div class="badge-icon">
-                        <img src="https://img.icons8.com/material-rounded/24/27ae60/ribbon.png" alt="" style="display:inline-block; vertical-align:middle;">
+                        <img src="{badge_icon_url}" alt="" width="24" height="24" style="display:inline-block; vertical-align:middle;">
                     </div>
-                    <span class="badge-text">{status_label}</span>
+                    <span class="badge-label">{status_label}</span>
                 </div>
 
-                <h1 class="heading">{heading}</h1>
-                <p class="intro-text">{message_intro}</p>
+                <h1 class="email-heading">{heading}</h1>
+                <p class="email-text">{message_intro}</p>
 
-                <div class="details-box">
-                    <h2 class="details-title">OFFER DETAILS</h2>
-                    <table class="details-table">
+                <div class="detail-box">
+                    <div class="detail-box-title">OFFER DETAILS</div>
+                    <table class="detail-table">
                         <tr>
-                            <td class="details-label">Candidate</td>
-                            <td class="details-value">{candidate_name}</td>
+                            <td>Candidate</td>
+                            <td class="detail-value">{candidate_name}</td>
                         </tr>
                         <tr>
-                            <td class="details-label">Role</td>
-                            <td class="details-value">{position_title}</td>
+                            <td>Role</td>
+                            <td class="detail-value">{position_title}</td>
                         </tr>
                         <tr>
-                            <td class="details-label">Salary</td>
-                            <td class="details-value">{salary_display}</td>
+                            <td>Salary</td>
+                            <td class="detail-value">{salary_display}</td>
                         </tr>
                         <tr>
-                            <td class="details-label">Start Date</td>
-                            <td class="details-value">{start_date_display}</td>
+                            <td>Start Date</td>
+                            <td class="detail-value">{start_date_display}</td>
                         </tr>
                         <tr>
-                            <td class="details-label">Status</td>
-                            <td class="details-value"><span class="status-badge">{status_text}</span></td>
+                            <td>Status</td>
+                            <td class="detail-value"><span class="status-badge">{status_text}</span></td>
                         </tr>
                     </table>
                 </div>
 
-                {f'''<div class="btn-container">
+                {f'''<div class="btn-wrap">
                     <a href="{dashboard_url}" class="cta-button">Start Onboarding</a>
                 </div>''' if is_accepted else ''}
 
@@ -2688,11 +2698,11 @@ Flit Platform
             </div>
         </div>
 
-        <div class="footer">
-            <p class="footer-links">
+        <div class="email-footer">
+            <p class="footer-support">
                 Need help? <a href="{support_url}">Contact Support</a>
             </p>
-            <p class="copyright">
+            <p class="footer-copy">
                 © 2026 FLIT · Where talent meets opportunity
             </p>
         </div>
