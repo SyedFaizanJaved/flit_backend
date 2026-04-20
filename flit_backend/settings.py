@@ -124,8 +124,8 @@ TEMPLATES = [
 ]
 
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', cast=bool)
+CORS_ALLOW_CREDENTIALS = config('CORS_ALLOW_CREDENTIALS', cast=bool)
 
 
 # ASGI application for Django Channels
@@ -189,8 +189,9 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Media files
-
+# # Media files
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -213,11 +214,6 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ],
 }
-
-# CORS/CSRF settings
-# Allow all CORS origins in dev (adjust for prod as needed)
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
 
 
 # Explicitly trust local frontend origins for CSRF origin checking
@@ -312,7 +308,7 @@ LOGGING = {
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',  # Ab verbose kar diya taaki module/name dikhe
+            'formatter': 'verbose',  
         },
         'api_file': {
             'level': 'INFO',
@@ -332,7 +328,7 @@ LOGGING = {
             'filename': os.path.join(LOG_DIR, 'exceptions.log'),
             'formatter': 'verbose',
         },
-        'debug_file': {  # Optional: Sab debug logs file mein bhi
+        'debug_file': {  
             'level': 'DEBUG',
             'class': 'logging.FileHandler',
             'filename': os.path.join(LOG_DIR, 'debug.log'),
@@ -340,7 +336,7 @@ LOGGING = {
         },
     },
     'loggers': {
-        # Django ke default
+      
         'django': {
             'handlers': ['console'],
             'level': 'INFO',
@@ -362,19 +358,19 @@ LOGGING = {
             'propagate': False,
         },
 
-        # Yeh sabse important – tere consumers ke logs capture karne ke liye
+     
         'chat.consumers': {
             'handlers': ['console', 'debug_file'],
-            'level': 'DEBUG',  # Development mein DEBUG rakh, production mein INFO
+            'level': 'DEBUG', 
             'propagate': False,
         },
-        'chat': {  # Agar consumers ke alawa chat app mein aur logs hain
+        'chat': {  
             'handlers': ['console', 'debug_file'],
             'level': 'DEBUG',
             'propagate': False,
         },
 
-        # Channels/Daphne ke logs bhi
+      
         'daphne': {
             'handlers': ['console'],
             'level': 'INFO',
@@ -396,6 +392,7 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
 # AI Related Variables
 
 FLIT_AI_URL=config('FLIT_AI_URL')
