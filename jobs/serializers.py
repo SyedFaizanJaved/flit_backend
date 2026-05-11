@@ -290,11 +290,41 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     """
     timezone = TimeZoneSerializerField(required=False)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    skills = serializers.ListField(
+        child=serializers.CharField(),
+        required=False
+    )
 
     class Meta:
         model = Job
         fields = ('title', 'description', 'location', 'workStyle', 'category',
                  'experienceLevel', 'employmentType', 'hasTemporaryOption',
                  'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 'salary_currency',
-                 'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name', 'timezone')
+                 'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name', 'timezone', 'skills')
+
+    def update(self, instance, validated_data):
+        skills = validated_data.pop('skills', None)
+        
+        # Update the instance with the rest of the validated data
+        instance = super().update(instance, validated_data)
+        
+        if skills is not None:
+            # Update the JSONField in Job model
+            instance.skills = skills
+            instance.save(update_fields=['skills'])
+            
+            # Sync JobSkill related model
+            # First, remove existing skills that are not in the new list
+            JobSkill.objects.filter(job=instance).exclude(name__in=skills).delete()
+            
+            # Add new skills that aren't already there
+            existing_skill_names = set(JobSkill.objects.filter(job=instance).values_list('name', flat=True))
+            new_skills_to_create = [
+                JobSkill(job=instance, name=skill_name)
+                for skill_name in skills
+                if skill_name not in existing_skill_names
+            ]
+            JobSkill.objects.bulk_create(new_skills_to_create)
+            
+        return instance
                  
