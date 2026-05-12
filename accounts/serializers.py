@@ -280,8 +280,8 @@ class ChangePasswordSerializer(serializers.Serializer):
         if len(password) < 8:
             raise ValidationError({'new_password': 'Password must be at least 8 characters long.'})
         
-        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
-            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).+$', password):
+            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and at least one special character.'})
         
         validate_password(password)
         
@@ -361,8 +361,8 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         if len(password) < 8:
             raise ValidationError({'new_password': 'Password must be at least 8 characters long.'})
         
-        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', password):
-            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&).'})
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).+$', password):
+            raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and at least one special character.'})
         
         validate_password(password)
 
