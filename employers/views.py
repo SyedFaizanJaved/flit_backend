@@ -396,13 +396,25 @@ class EmployerViewSet(viewsets.ViewSet):
         except Employer.DoesNotExist:
             exception_logger.error("Employer profile not found for user %s", user.id)
 
-        # 2. Stats
+        # 2. Stats — scope by company so the dashboard agrees with the per-tab
+        # `my-projects` / `my-jobs` endpoints (Bug #22). Falls back to `employer=user`
+        # for users without an employer_profile.company link.
+        company = getattr(getattr(user, 'employer_profile', None), 'company', None)
+        if company is not None:
+            project_qs = Project.objects.filter(company=company)
+            job_qs = Job.objects.filter(company=company)
+        else:
+            project_qs = Project.objects.filter(employer=user)
+            job_qs = Job.objects.filter(employer=user)
+
         stats = {
-            'active_projects': Project.objects.filter(employer=user, status='active').count(),
-            'active_jobs': Job.objects.filter(employer=user, status='active').count(),
+            'total_projects': project_qs.count(),
+            'active_projects': project_qs.filter(status='active').count(),
+            'total_jobs': job_qs.count(),
+            'active_jobs': job_qs.filter(status='active').count(),
             'total_applications': user.received_job_applications.count() + user.received_project_applications.count(),
-            'completed': Job.objects.filter(employer=user, status='completed').count() + \
-                         Project.objects.filter(employer=user, status='completed').count()
+            'completed': job_qs.filter(status='completed').count()
+                         + project_qs.filter(status='completed').count(),
         }
 
         # 3. Meet & Greet (Latest 2 each)

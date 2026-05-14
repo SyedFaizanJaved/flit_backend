@@ -752,7 +752,23 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         ach_start = time.time()
                         if not ach_data:
                             continue
-                        
+
+                        # Bug #33: defense-in-depth — silently skip entries the user
+                        # never filled in. Mirrors the Experience/Education guards.
+                        # Only applies to NEW entries (no id/pk); existing entries can
+                        # be partially patched.
+                        has_id = bool(ach_data.get('id') or ach_data.get('pk'))
+                        if not has_id and not (
+                            ach_data.get('title')
+                            and ach_data.get('achievement_type')
+                            and ach_data.get('date_achieved')
+                        ):
+                            logger.info(
+                                "Skipping incomplete achievement at index %s (missing required fields)",
+                                index,
+                            )
+                            continue
+
                         # Prepare achievement data copy
                         achievement_data = ach_data.copy()
                         

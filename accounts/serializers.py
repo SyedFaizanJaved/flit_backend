@@ -7,10 +7,14 @@ from datetime import timedelta
 from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework.exceptions import ErrorDetail
 from jwt import InvalidTokenError
+import logging
 import re
 from rest_framework.serializers import ValidationError
 from .models import User, PasswordReset, Role
+
+logger = logging.getLogger(__name__)
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -190,20 +194,40 @@ class UserLoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         email = attrs.get('email')
         password = attrs.get('password')
-        
-        if email and password:
-            user = authenticate(username=email, password=password)
-            if not user:
-                raise serializers.ValidationError('Invalid credentials.')
-            if not user.is_active:
-                raise serializers.ValidationError('User account is disabled.')
-            
-            if not getattr(user, 'is_verified', False):
-                 raise serializers.ValidationError('Please verify your email address before logging in.')
-            attrs['user'] = user
-        else:
+
+        if not (email and password):
             raise serializers.ValidationError('Must include email and password.')
-        
+
+        # Distinct error code so FE can show "Account not found. Please create your account first."
+        # Trade-off: enables user enumeration; mitigated by LoginRateThrottle on the view.
+        if not User.objects.filter(email__iexact=email).exists():
+            logger.warning('Login attempt for non-existent email: %s', email)
+            raise serializers.ValidationError({
+                'email': [ErrorDetail(
+                    'Account not found. Please create your account first.',
+                    code='user_not_found',
+                )]
+            })
+
+        user = authenticate(username=email, password=password)
+        if not user:
+            logger.warning('Login attempt with wrong password for email: %s', email)
+            raise serializers.ValidationError({
+                'password': [ErrorDetail('Invalid credentials.', code='invalid_credentials')]
+            })
+        if not user.is_active:
+            raise serializers.ValidationError({
+                'detail': [ErrorDetail('User account is disabled.', code='user_disabled')]
+            })
+        if not getattr(user, 'is_verified', False):
+            raise serializers.ValidationError({
+                'detail': [ErrorDetail(
+                    'Please verify your email address before logging in.',
+                    code='email_not_verified',
+                )]
+            })
+
+        attrs['user'] = user
         return attrs
 
 
@@ -276,15 +300,26 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError("New passwords don't match.")
 
         password = attrs['new_password']
-        
+
+        # Reject reusing the current password — must check against the hash since
+        # the raw current password isn't available client-side.
+        user = self.context['request'].user
+        if user.check_password(password):
+            raise serializers.ValidationError({
+                'new_password': [ErrorDetail(
+                    'New password cannot be the same as the current password.',
+                    code='new_password_same_as_current',
+                )]
+            })
+
         if len(password) < 8:
             raise ValidationError({'new_password': 'Password must be at least 8 characters long.'})
-        
+
         if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).+$', password):
             raise ValidationError({'new_password': 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and at least one special character.'})
-        
+
         validate_password(password)
-        
+
         return attrs
     
     def validate_old_password(self, value):

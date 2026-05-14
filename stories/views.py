@@ -687,11 +687,9 @@ class ProjectListView(generics.ListAPIView):
 
         search_query = self.request.query_params.get('search')
         
-        # Auto-close expired projects
-        Project.objects.filter(
-            status='active',
-            deadline__lt=timezone.now().date()
-        ).update(status='closed')
+        # Auto-close moved to `manage.py close_expired_projects` (Bug #23).
+        # The `deadline__gte=today` filter below already excludes expired rows
+        # without needing to mutate them on read.
 
         # Only show active and non-expired projects in storyline
         queryset = Project.objects.select_related('company').filter(

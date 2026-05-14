@@ -892,8 +892,35 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
 
 
 class AchievementSerializer(serializers.ModelSerializer):
+    # Bug #33: explicitly require core fields. With `fields = '__all__'` alone,
+    # empty strings could slip through CharField validation; explicit declarations
+    # with allow_blank=False reject them on create.
+    title = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        max_length=200,
+        error_messages={
+            'blank': 'Title is required.',
+            'required': 'Title is required.',
+        },
+    )
+    achievement_type = serializers.ChoiceField(
+        choices=Achievement.ACHIEVEMENT_TYPE_CHOICES,
+        required=True,
+        error_messages={
+            'required': 'Achievement type is required.',
+            'invalid_choice': 'Invalid achievement type.',
+        },
+    )
+    date_achieved = serializers.DateField(
+        required=True,
+        error_messages={
+            'required': 'Date achieved is required.',
+            'invalid': 'Date achieved must be a valid date (YYYY-MM-DD).',
+        },
+    )
     image = serializers.ImageField(required=False, allow_null=True)
-    
+
     class Meta:
         model = Achievement
         fields = '__all__'

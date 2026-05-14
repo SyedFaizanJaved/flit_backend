@@ -4,9 +4,40 @@ from django.conf import settings
 from employers.models import Employer
 from utils.file_validators import sanitize_filename
 import json
+import logging
 import os
 
+logger = logging.getLogger(__name__)
 
+# Per-file gallery image cap. Mirrors FILE_UPLOAD_MAX_MEMORY_SIZE so a single
+# image can never silently exceed Django's per-file in-memory threshold.
+GALLERY_IMAGE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+GALLERY_IMAGE_MAX_COUNT = 15  # matches CompanyImageBulkUploadSerializer.max_length
+
+
+
+
+def _validate_gallery_images(images, existing_count):
+    """
+    Shared validator for `uploaded_images`:
+      - bound the per-file size at GALLERY_IMAGE_MAX_BYTES
+      - bound total gallery size (existing + new) at GALLERY_IMAGE_MAX_COUNT
+    """
+    if not images:
+        return images
+    for img in images:
+        size = getattr(img, 'size', None)
+        if size is not None and size > GALLERY_IMAGE_MAX_BYTES:
+            raise serializers.ValidationError(
+                f"Each gallery image must be {GALLERY_IMAGE_MAX_BYTES // (1024 * 1024)} MB or smaller."
+            )
+    total = (existing_count or 0) + len(images)
+    if total > GALLERY_IMAGE_MAX_COUNT:
+        raise serializers.ValidationError(
+            f"Gallery is limited to {GALLERY_IMAGE_MAX_COUNT} images "
+            f"(would become {total})."
+        )
+    return images
 
 
 class SanitizedImageField(serializers.ImageField):
@@ -107,7 +138,10 @@ class CompanySerializer(serializers.ModelSerializer):
     def validate_logo(self, value):
         """Sanitize logo filename if it exists"""
         return sanitize_filename(value)
-    
+
+    def validate_uploaded_images(self, value):
+        return _validate_gallery_images(value, existing_count=0)
+
     def create(self, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', None)
         captions_data = validated_data.pop('caption', [])
@@ -130,20 +164,32 @@ class CompanySerializer(serializers.ModelSerializer):
 
         # Handle images bulk upload
         if uploaded_images:
+            total_bytes = sum(getattr(f, 'size', 0) or 0 for f in uploaded_images)
+            logger.info(
+                "Company %s: uploading %d gallery images (total %d bytes)",
+                company.id, len(uploaded_images), total_bytes,
+            )
             for index, image_file in enumerate(uploaded_images):
-                # Map caption to image by index. If only one caption is sent for multiple images, 
+                # Map caption to image by index. If only one caption is sent for multiple images,
                 # apply that single caption to all images in the batch.
                 if len(captions_data) == 1 and len(uploaded_images) > 1:
                     curr_caption = captions_data[0]
                 else:
                     curr_caption = captions_data[index] if index < len(captions_data) else ""
 
-                CompanyImage.objects.create(
-                    company=company,
-                    image=image_file,
-                    caption=curr_caption,
-                    order=index + 1
-                )
+                try:
+                    CompanyImage.objects.create(
+                        company=company,
+                        image=image_file,
+                        caption=curr_caption,
+                        order=index + 1
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to persist gallery image %d for company %s: %s",
+                        index, company.id, e,
+                    )
+                    raise
 
         # Handle milestones bulk upload
         if milestones_data:
@@ -228,10 +274,27 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = (
-            'company_name', 'description', 'industry', 'size', 'website', 'logo', 
-            'location', 'values', 'founded_year', 'culture', 'benefits', 
+            'company_name', 'description', 'industry', 'size', 'website', 'logo',
+            'location', 'values', 'founded_year', 'culture', 'benefits',
             'social_links', 'work_mode', 'uploaded_images', 'milestones_data', 'deleted_images', 'deleted_milestones'
         )
+
+    def validate_uploaded_images(self, value):
+        # Subtract pending deletions from the existing count so a user can swap
+        # images in a single PATCH (delete some, upload some) without hitting the cap.
+        existing_count = 0
+        if self.instance is not None:
+            existing_count = self.instance.images.count()
+            raw = self.initial_data.get('deleted_images') if hasattr(self, 'initial_data') else None
+            if raw:
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except json.JSONDecodeError:
+                        raw = []
+                if isinstance(raw, list):
+                    existing_count = max(0, existing_count - len(raw))
+        return _validate_gallery_images(value, existing_count=existing_count)
 
     def update(self, instance, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', None)
@@ -283,13 +346,25 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
                 CompanyMilestone.objects.filter(id__in=deleted_milestones, company=instance).delete()
 
         if uploaded_images:
+            total_bytes = sum(getattr(f, 'size', 0) or 0 for f in uploaded_images)
+            logger.info(
+                "Company %s: appending %d gallery images (total %d bytes)",
+                instance.id, len(uploaded_images), total_bytes,
+            )
             last_order = CompanyImage.objects.filter(company=instance).order_by('-order').values_list('order', flat=True).first() or 0
             for index, image_file in enumerate(uploaded_images):
-                CompanyImage.objects.create(
-                    company=instance,
-                    image=image_file,
-                    order=last_order + index + 1
-                )
+                try:
+                    CompanyImage.objects.create(
+                        company=instance,
+                        image=image_file,
+                        order=last_order + index + 1
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to persist gallery image %d for company %s: %s",
+                        index, instance.id, e,
+                    )
+                    raise
 
         # Handle milestones bulk upload in the same request
         if milestones_data:

@@ -213,7 +213,18 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',
+        'user': '300/min',
+        'login': '10/min',
+    },
 }
+
+# File upload limits — sized for the company gallery flow (up to 15 images, ~10 MB each).
+# Upstream proxy (Nginx/ALB) request body limit must be >= DATA_UPLOAD_MAX_MEMORY_SIZE.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+DATA_UPLOAD_MAX_NUMBER_FILES = 25
 
 
 # Explicitly trust local frontend origins for CSRF origin checking

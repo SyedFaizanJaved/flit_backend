@@ -123,23 +123,11 @@ class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMi
     ordering = ['-created_at']
 
     def get_queryset(self):
-        # Auto-close expired jobs
-        expired_jobs = Job.objects.filter(
-            status='active',
-            applicationDeadline__date__lt=timezone.now().date()
-        )
-        for job in expired_jobs:
-            job.status = 'closed'
-            job.save(update_fields=['status'])
-            # Notify ML API about the auto-closure
-            try:
-                self._call_ml_metadata_api(job)
-            except Exception as e:
-                logger.error(f"Failed to call ML metadata API for job {job.id}: {str(e)}")
-
-        # Base queryset with active status and deadline >= today (or no deadline)
+        # Auto-close moved to `manage.py close_expired_jobs` (Bug #23).
+        # Public list filters by applicationDeadline >= today (or null),
+        # so expired rows are already excluded here without mutating them.
         queryset = super().get_queryset().filter(
-            models.Q(applicationDeadline__date__gte=timezone.now().date()) | 
+            models.Q(applicationDeadline__date__gte=timezone.now().date()) |
             models.Q(applicationDeadline__isnull=True)
         )
     
@@ -186,20 +174,8 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        # Auto-close expired jobs
-        expired_jobs = Job.objects.filter(
-            status='active',
-            applicationDeadline__date__lt=timezone.now().date()
-        )
-        for job in expired_jobs:
-            job.status = 'closed'
-            job.save(update_fields=['status'])
-            # Notify ML API about the auto-closure
-            try:
-                self._call_ml_metadata_api(job)
-            except Exception as e:
-                logger.error(f"Failed to call ML metadata API for job {job.id}: {str(e)}")
-
+        # Auto-close moved to `manage.py close_expired_jobs` (Bug #23).
+        # Active-with-past-deadline updates are blocked by JobUpdateSerializer.validate().
         qs = super().get_queryset()
 
         # For retrieve action: candidates should be able to view any job
@@ -254,15 +230,19 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
     def my_jobs(self, request):
         queryset = self.filter_queryset(self.get_queryset())
 
-        # Get company for counting active items
+        # Get company for scoping per-tab counts
         company = None
         if hasattr(request.user, 'employer_profile'):
             company = request.user.employer_profile.company
 
-        # Count active jobs
+        # Per-tab counts must be scoped to the Job model only — never mixed
+        # with Project counts (Bug #22).
+        total_jobs_count = 0
         active_jobs_count = 0
         if company:
-            active_jobs_count = Job.objects.filter(company=company, status='active').count()
+            company_jobs = Job.objects.filter(company=company)
+            total_jobs_count = company_jobs.count()
+            active_jobs_count = company_jobs.filter(status='active').count()
 
         page = self.paginate_queryset(queryset)
         serializer = JobListSerializer(
@@ -273,13 +253,13 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
 
         if page is not None:
             paginated_response = self.get_paginated_response(serializer.data)
-            # Reconstruct response with active_jobs right after current_page
             return Response({
                 'count': paginated_response.data['count'],
                 'next': paginated_response.data['next'],
                 'previous': paginated_response.data['previous'],
                 'total_pages': paginated_response.data['total_pages'],
                 'current_page': paginated_response.data['current_page'],
+                'total_jobs': total_jobs_count,
                 'active_jobs': active_jobs_count,
                 'results': paginated_response.data['results']
             })
@@ -290,6 +270,7 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
             'previous': None,
             'total_pages': 1,
             'current_page': 1,
+            'total_jobs': total_jobs_count,
             'active_jobs': active_jobs_count,
             'results': serializer.data
         })
