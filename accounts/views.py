@@ -1,6 +1,7 @@
 from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes, api_view
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
+from .throttles import LoginRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from django.contrib.auth import login, logout
 from django.core.paginator import Paginator
@@ -77,6 +78,7 @@ class BaseRoleRegistrationView(generics.CreateAPIView):
 
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
+@throttle_classes([LoginRateThrottle])
 def user_login(request):
     """
     User login endpoint

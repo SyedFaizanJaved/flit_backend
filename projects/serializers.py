@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from rest_framework.exceptions import ErrorDetail
 from timezone_field.rest_framework import TimeZoneSerializerField
+from django.utils import timezone
 from .models import Project, ProjectSkill, ProjectMilestone
 
 
@@ -296,4 +298,23 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
             'paymentAmount': {'required': True, 'min_value': 0},
             'estimatedHours': {'required': True},
             'deadline': {'required': True},
+            'status': {'choices': Project.STATUS_CHOICES},
         }
+
+    def validate(self, attrs):
+        # Bug #23: Block transition to `active` when the deadline is already past.
+        # Without this, the project saves as active, then the next read used to
+        # auto-close it; even after removing that side effect, an active project
+        # with a stale deadline shouldn't exist.
+        new_status = attrs.get('status', getattr(self.instance, 'status', None))
+        if new_status == 'active':
+            deadline = attrs.get('deadline', getattr(self.instance, 'deadline', None))
+            if deadline and deadline < timezone.now().date():
+                raise serializers.ValidationError({
+                    'status': [ErrorDetail(
+                        'Cannot mark project active: deadline has already passed. '
+                        'Update the deadline first.',
+                        code='deadline_in_past',
+                    )]
+                })
+        return attrs

@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from rest_framework.exceptions import ErrorDetail
 from timezone_field.rest_framework import TimeZoneSerializerField
+from django.utils import timezone
 from .models import Job, JobSkill, JobLanguage
 
 
@@ -301,6 +303,26 @@ class JobUpdateSerializer(serializers.ModelSerializer):
                  'experienceLevel', 'employmentType', 'hasTemporaryOption',
                  'temporaryDuration', 'salaryRangeMin', 'salaryRangeMax', 'salary_currency',
                  'benefits', 'applicationDeadline', 'start_date', 'status', 'company_name', 'timezone', 'skills')
+        extra_kwargs = {
+            'status': {'choices': Job.STATUS_CHOICES},
+        }
+
+    def validate(self, attrs):
+        # Bug #23: Block transition to `active` when applicationDeadline is past.
+        new_status = attrs.get('status', getattr(self.instance, 'status', None))
+        if new_status == 'active':
+            deadline = attrs.get('applicationDeadline', getattr(self.instance, 'applicationDeadline', None))
+            if deadline is not None:
+                deadline_date = deadline.date() if hasattr(deadline, 'date') else deadline
+                if deadline_date < timezone.now().date():
+                    raise serializers.ValidationError({
+                        'status': [ErrorDetail(
+                            'Cannot mark job active: application deadline has already passed. '
+                            'Update the deadline first.',
+                            code='deadline_in_past',
+                        )]
+                    })
+        return attrs
 
     def update(self, instance, validated_data):
         skills = validated_data.pop('skills', None)

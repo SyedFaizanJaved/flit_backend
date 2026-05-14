@@ -1,5 +1,6 @@
 from rest_framework import viewsets, mixins, status, permissions
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -44,6 +45,9 @@ class CompanyViewSet(
     """
     queryset = Company.objects.all().prefetch_related('images', 'milestones')
     permission_classes = [permissions.IsAuthenticated]
+    # Explicit parsers so gallery uploads (multipart/form-data with multiple files
+    # under `uploaded_images`) are always handled, regardless of DRF defaults.
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['industry', 'size', 'is_verified', 'work_mode']
     search_fields = ['company_name', 'industry', 'description']

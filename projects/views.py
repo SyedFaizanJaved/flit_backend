@@ -112,21 +112,9 @@ class PublicProjectViewSet(ProjectMLMixin, mixins.ListModelMixin, mixins.Retriev
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        # Auto-close expired projects
-        expired_projects = Project.objects.filter(
-            status='active',
-            deadline__lt=timezone.now().date()
-        )
-        for project in expired_projects:
-            project.status = 'closed'
-            project.save(update_fields=['status'])
-            # Notify ML API about the auto-closure
-            try:
-                self._call_ml_metadata_api(project)
-            except Exception as e:
-                logger.error(f"Failed to call ML metadata API for project {project.id}: {str(e)}")
-
-        # Base queryset with active status and deadline >= today
+        # Auto-close moved to `manage.py close_expired_projects` (Bug #23).
+        # Public list filters by deadline >= today, so expired rows are already
+        # excluded here without mutating them.
         queryset = super().get_queryset().filter(
             status='active',
             deadline__gte=timezone.now().date()
@@ -171,20 +159,13 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        # Auto-close expired projects
-        expired_projects = Project.objects.filter(
-            status='active',
-            deadline__lt=timezone.now().date()
-        )
-        for project in expired_projects:
-            project.status = 'closed'
-            project.save(update_fields=['status'])
-            # Notify ML API about the auto-closure
-            try:
-                self._call_ml_metadata_api(project)
-            except Exception as e:
-                logger.error(f"Failed to call ML metadata API for project {project.id}: {str(e)}")
-
+        # NOTE: Auto-closing of past-deadline projects used to live here as a
+        # side effect of every read. That made reads racy and caused Bug #23
+        # (Draft -> Active save was reverted to Closed on the next read because
+        # the deadline was already in the past). The auto-close logic now lives
+        # in `python manage.py close_expired_projects`; schedule it via cron or
+        # Celery beat. Active-with-past-deadline updates are now blocked by
+        # `ProjectUpdateSerializer.validate()`.
         queryset = super().get_queryset()
 
         # For retrieve action: candidates should be able to view any project
@@ -255,43 +236,48 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='my-projects')
     def my_projects(self, request):
         queryset = self.filter_queryset(self.get_queryset())
-        
-        # Get company for counting active items
+
+        # Get company for scoping per-tab counts
         company = None
         if hasattr(request.user, 'employer_profile'):
             company = request.user.employer_profile.company
 
-        # Count active projects
+        # Per-tab counts must be scoped to the Project model only — never mixed
+        # with Job counts (Bug #22).
+        total_projects_count = 0
         active_projects_count = 0
         if company:
-            active_projects_count = Project.objects.filter(company=company, status='active').count()
-        
+            company_projects = Project.objects.filter(company=company)
+            total_projects_count = company_projects.count()
+            active_projects_count = company_projects.filter(status='active').count()
+
         page = self.paginate_queryset(queryset)
         serializer = ProjectListSerializer(
             page if page is not None else queryset,
             many=True,
             context={'request': request}
         )
-        
+
         if page is not None:
             paginated_response = self.get_paginated_response(serializer.data)
-            # Reconstruct response with active_projects right after current_page
             return Response({
                 'count': paginated_response.data['count'],
                 'next': paginated_response.data['next'],
                 'previous': paginated_response.data['previous'],
                 'total_pages': paginated_response.data['total_pages'],
                 'current_page': paginated_response.data['current_page'],
+                'total_projects': total_projects_count,
                 'active_projects': active_projects_count,
                 'results': paginated_response.data['results']
             })
-        
+
         return Response({
             'count': queryset.count(),
             'next': None,
             'previous': None,
             'total_pages': 1,
             'current_page': 1,
+            'total_projects': total_projects_count,
             'active_projects': active_projects_count,
             'results': serializer.data
         })
