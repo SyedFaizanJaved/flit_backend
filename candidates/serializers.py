@@ -892,7 +892,7 @@ class CandidateProfileUpdateSerializer(serializers.ModelSerializer):
 
 
 class AchievementSerializer(serializers.ModelSerializer):
-    # Bug #33: explicitly require core fields. With `fields = '__all__'` alone,
+    #Explicitly require core fields. With `fields = '__all__'` alone,
     # empty strings could slip through CharField validation; explicit declarations
     # with allow_blank=False reject them on create.
     title = serializers.CharField(

@@ -308,7 +308,7 @@ class JobUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        # Bug #23: Block transition to `active` when applicationDeadline is past.
+        #  Block transition to `active` when applicationDeadline is past.
         new_status = attrs.get('status', getattr(self.instance, 'status', None))
         if new_status == 'active':
             deadline = attrs.get('applicationDeadline', getattr(self.instance, 'applicationDeadline', None))

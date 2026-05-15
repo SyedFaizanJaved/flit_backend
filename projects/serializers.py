@@ -302,7 +302,7 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        # Bug #23: Block transition to `active` when the deadline is already past.
+        # Block transition to `active` when the deadline is already past.
         # Without this, the project saves as active, then the next read used to
         # auto-close it; even after removing that side effect, an active project
         # with a stale deadline shouldn't exist.
