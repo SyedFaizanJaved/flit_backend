@@ -723,6 +723,7 @@ class ReferenceRequestSerializer(serializers.ModelSerializer):
                 candidate=candidate,
                 reference_email=email,
                 status__in=['pending', 'accepted', 'declined'],
+                request_deleted_at__isnull=True,
             ).exists()
 
             if existing:
