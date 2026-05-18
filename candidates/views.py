@@ -152,6 +152,47 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(candidate=self.get_candidate())
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        with transaction.atomic():
+            try:
+                locked = ReferenceRequest.objects.select_for_update().get(pk=instance.pk)
+            except ReferenceRequest.DoesNotExist:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+
+            ref_id = locked.pk
+            ref_status = locked.status
+            ref_email = locked.reference_email
+            had_reply = bool(locked.reply_message)
+            was_unread = not locked.is_read
+            was_response_status = locked.status in ('accepted', 'declined', 'completed')
+            candidate_id = locked.candidate_id
+
+            logger.info(
+                "reference_request.deleted id=%s candidate_id=%s status=%s "
+                "reference_email=%s had_reply=%s",
+                ref_id, candidate_id, ref_status, ref_email, had_reply,
+            )
+
+            locked.delete()
+
+        if was_unread and was_response_status:
+            try:
+                from utils.broadcaster import broadcast_count_update
+                broadcast_count_update(
+                    user_id=request.user.id,
+                    count_type="references",
+                    unread_count=get_candidate_unread_counts(request.user),
+                )
+            except Exception:
+                logger.warning(
+                    "reference_request.deleted broadcast_count_update failed id=%s",
+                    ref_id, exc_info=True,
+                )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 # ==================== MAIN CANDIDATE VIEWSET ====================
 # ========================= BACKGROUND FILE + ML PROCESSOR =========================
