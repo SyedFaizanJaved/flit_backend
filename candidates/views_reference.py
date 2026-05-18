@@ -26,7 +26,8 @@ class ReferenceResponsesView(generics.ListAPIView):
         # Get all reference requests for the current user's candidate profile
         return ReferenceRequest.objects.filter(
             candidate=self.request.user.candidate_profile,
-            status__in=['accepted', 'declined', 'completed']
+            status__in=['accepted', 'declined', 'completed'],
+            response_deleted_at__isnull=True,
         ).order_by('-updated_at')
     
     def list(self, request, *args, **kwargs):
@@ -91,9 +92,10 @@ class VerifyReferenceTokenView(APIView):
             ref_request = ReferenceRequest.objects.get(
                 token=token,
                 status='pending',
-                expires_at__gt=timezone.now()
+                expires_at__gt=timezone.now(),
+                request_deleted_at__isnull=True,
             )
-            
+
             return Response({
                 'status': 'success',
                 'message': 'Token is valid',
@@ -144,35 +146,38 @@ class ReferenceResponseView(APIView):
         try:
             ref_request = ReferenceRequest.objects.get(
                 token=token,
-                expires_at__gt=timezone.now()
+                expires_at__gt=timezone.now(),
+                request_deleted_at__isnull=True,
             )
-            
+
             return Response({
                 'status': 'success',
                 'reference_request': ReferenceRequestSerializer(ref_request).data
             })
-            
+
         except ReferenceRequest.DoesNotExist:
             return Response(
-                {'error': 'Invalid or expired token'}, 
+                {'error': 'Invalid or expired token'},
                 status=status.HTTP_404_NOT_FOUND
             )
-    
+
     def post(self, request, *args, **kwargs):
         token = request.data.get('token')
         action = request.data.get('action')
-        
+
         if not token or action not in ['accept', 'deny']:
             return Response(
-                {'error': 'Token and valid action (accept/deny) are required'}, 
+                {'error': 'Token and valid action (accept/deny) are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
-            # First check if token exists and is not expired
+            # First check if token exists, is not expired, and the candidate
+            # has not withdrawn the request.
             ref_request = ReferenceRequest.objects.get(
                 token=token,
-                expires_at__gt=timezone.now()
+                expires_at__gt=timezone.now(),
+                request_deleted_at__isnull=True,
             )
             
             # Check if the reference request can be updated

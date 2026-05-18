@@ -106,7 +106,12 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        return ReferenceRequest.objects.filter(candidate=self.get_candidate())
+        # Soft-detached rows stay in the table for the Responses tab; the
+        # Requests tab (this viewset) must not surface them.
+        return ReferenceRequest.objects.filter(
+            candidate=self.get_candidate(),
+            request_deleted_at__isnull=True,
+        )
 
 
     def get_permissions(self):
@@ -161,6 +166,11 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             except ReferenceRequest.DoesNotExist:
                 return Response(status=status.HTTP_404_NOT_FOUND)
 
+            # Race-safe idempotency: another request already soft-detached this row
+            # between get_object() and the lock acquisition.
+            if locked.request_deleted_at is not None:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+
             ref_id = locked.pk
             ref_status = locked.status
             ref_email = locked.reference_email
@@ -169,13 +179,29 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             was_response_status = locked.status in ('accepted', 'declined', 'completed')
             candidate_id = locked.candidate_id
 
-            logger.info(
-                "reference_request.deleted id=%s candidate_id=%s status=%s "
-                "reference_email=%s had_reply=%s",
-                ref_id, candidate_id, ref_status, ref_email, had_reply,
-            )
+            # Hard delete only when there's no response data to preserve.
+            # Anything with a submitted reply OR a non-pending/expired status is
+            # soft-detached so it survives on the Responses tab.
+            hard_delete = ref_status in ('pending', 'expired') and not had_reply
 
-            locked.delete()
+            if hard_delete:
+                logger.info(
+                    "reference_request.deleted mode=hard id=%s candidate_id=%s "
+                    "status=%s reference_email=%s",
+                    ref_id, candidate_id, ref_status, ref_email,
+                )
+                locked.delete()
+            else:
+                locked.request_deleted_at = timezone.now()
+                # Clear the unread badge for this row — the candidate has
+                # acknowledged it by deleting.
+                locked.is_read = True
+                locked.save(update_fields=['request_deleted_at', 'is_read', 'updated_at'])
+                logger.info(
+                    "reference_request.deleted mode=soft id=%s candidate_id=%s "
+                    "status=%s reference_email=%s had_reply=%s",
+                    ref_id, candidate_id, ref_status, ref_email, had_reply,
+                )
 
         if was_unread and was_response_status:
             try:
@@ -192,6 +218,30 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['delete'], url_path='delete-response')
+    def delete_response(self, request, pk=None):
+        instance = self.get_object()
+        
+        # Check if a response actually exists
+        if instance.status not in ('accepted', 'declined', 'completed') and not instance.reply_message:
+            return Response(
+                {"error": "No response exists to delete for this reference request."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        if instance.response_deleted_at is not None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        instance.response_deleted_at = timezone.now()
+        instance.save(update_fields=['response_deleted_at', 'updated_at'])
+        
+        logger.info(
+            "reference_response.deleted id=%s candidate_id=%s status=%s",
+            instance.pk, instance.candidate_id, instance.status
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 
 # ==================== MAIN CANDIDATE VIEWSET ====================

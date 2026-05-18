@@ -24,6 +24,10 @@ urlpatterns = [
         'delete': 'destroy'
     }), name='reference-request-detail'),
 
+    path('reference-requests/<int:pk>/delete-response/', views.ReferenceRequestViewSet.as_view({
+        'delete': 'delete_response'
+    }), name='reference-request-delete-response'),
+
     path('register/', CandidateRegistrationView.as_view(), name='candidate-register'),
     path('discover-talent/', DiscoverTalentView.as_view(), name='discover-talent'),
   

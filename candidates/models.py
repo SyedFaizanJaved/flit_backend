@@ -232,6 +232,15 @@ class ReferenceRequest(models.Model):
         help_text='Timestamp when the reference email was successfully sent.'
     )
 
+    # Set when the candidate removes the request from their own Requests tab.
+    # The row is preserved (and remains visible on the Responses tab) so the
+    # reference-giver's submitted response is not lost. NULL = not detached.
+    request_deleted_at = models.DateTimeField(blank=True, null=True, db_index=True)
+
+    # Set when the candidate removes the response from their own Responses tab.
+    # NULL = not deleted/detached.
+    response_deleted_at = models.DateTimeField(blank=True, null=True, db_index=True)
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
