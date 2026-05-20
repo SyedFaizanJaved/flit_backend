@@ -886,7 +886,7 @@ class OfferListView(generics.ListAPIView):
             # 3. Calculate stats for the user
             stats = {
                 "total_sent": queryset.count(),
-                "hired": queryset.filter(status__in=['hired', 'accepted']).count(),
+                "hired": queryset.filter(status='hired').count(),
                 "accepted": queryset.filter(status='accepted').count(),
                 "rejected": queryset.filter(status='rejected').count(),
                 "declined": queryset.filter(status='declined').count(),
