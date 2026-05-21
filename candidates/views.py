@@ -1165,9 +1165,17 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         latest_message = self._get_latest_message_summary(user)
         
         # 4. Top Matches (and count)
+        # `top_matches` keeps the existing DB-backed snippets used by the dashboard tiles.
+        # The matched_opportunities count must mirror what the Opportunities page renders
+        # (i.e. the paginated `count` from /dashboard/latest-jobs and /dashboard/latest-projects),
+        # so derive it from the same ML-backed helpers those endpoints use. When the ML
+        # service returns nothing for this candidate, both helpers return [] and the
+        # count is 0 — matching the page.
         top_matches_jobs = self._get_latest_jobs_data(candidate, limit=5)
         top_matches_projects = self._get_latest_projects_data(candidate, limit=5)
-        stats['matched_opportunities_count'] = len(top_matches_jobs) + len(top_matches_projects)
+        ml_jobs = self._get_ml_jobs_list(candidate, request)
+        ml_projects = self._get_ml_projects_list(candidate, request)
+        stats['matched_opportunities_count'] = len(ml_jobs) + len(ml_projects)
 
         return Response({
             'banner_seen': show_banner,
@@ -1451,15 +1459,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
     # ====================== LATEST JOBS & PROJECTS (ML version) ======================
 
-    @action(detail=False, methods=['get'], url_path='dashboard/latest-jobs')
-    def latest_jobs(self, request):
-        candidate = self.get_candidate()
+    def _get_ml_jobs_list(self, candidate, request):
+        """ML-ranked active jobs for the candidate. Cached for 5 min. Returns a list."""
         from django.core.cache import cache
         cache_key = f'candidate_{candidate.id}_latest_jobs'
         cached = cache.get(cache_key)
     
         if cached and cached.get('ml_success'):
-            # Use cached data but update has_applied status from database and format fields
             jobs = cached.get('jobs', [])
             job_ids = [j['id'] for j in jobs if 'id' in j]
             if job_ids:
@@ -1471,7 +1477,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 )
                 for job in jobs:
                     job['has_applied'] = job['id'] in applied_job_ids
-                    # Format cached data fields
                     if 'workStyle' in job:
                         job['workStyle'] = job['workStyle'].replace('-', ' ').title()
                     if 'category' in job:
@@ -1482,65 +1487,87 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         job['employmentType'] = job['employmentType'].replace('-', ' ').title()
                     if 'status' in job:
                         job['status'] = job['status'].title()
-            queryset = jobs
-        else:
-            queryset = []
-            try:
-                ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-                response = requests.get(ml_url)
-                if response.status_code == 200:
-                    ranked = response.json().get('ranked_opportunities', [])
-                    jobs = []
-                    job_ids = []  # For bulk query
+            return jobs
 
-                    for item in ranked:
-                        job_id = item.get('job_id') or item.get('id')
-                        if not job_id:
-                            continue
-                            
-                        # Only include active jobs
-                        if item.get('status') != 'active':
-                            continue
-                            
-                        company = item.get('company', {})
-                        job_data = {
-                            'id': job_id,
-                            'title': item.get('title', 'No Title'),
-                            'description': item.get('description', ''),
-                            'workStyle': item.get('work_style', 'remote').replace('-', ' ').title(),
-                            'category': self._format_category(item.get('category', 'other')),
-                            'experienceLevel': item.get('experience_level', 'mid').title(),
-                            'employmentType': item.get('employment_type', 'full-time').replace('-', ' ').title(),
-                            'salaryRangeMin': item.get('salary_range', {}).get('min'),
-                            'salaryRangeMax': item.get('salary_range', {}).get('max'),
-                            'status': item.get('status', 'active').title(),
-                            'created_at': item.get('created_at', timezone.now().isoformat()),
-                            'location': item.get('location'),
-                            'skills': [skill.title() if isinstance(skill, str) else skill for skill in item.get('skills', [])],
-                            'company_name': company.get('company_name', 'Unknown'),
-                            'company_logo': company.get('company_logo'),
-                            'company_id': company.get('id'),
-                            'has_applied': False  
-                        }
-                        jobs.append(job_data)
-                        job_ids.append(job_id)
+        jobs = []
+        try:
+            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
+            response = requests.get(ml_url)
+            if response.status_code == 200:
+                payload = response.json()
+                ranked = (
+                    payload.get('ranked_opportunities')
+                    or payload.get('opportunities')
+                    or payload.get('matches')
+                    or payload.get('jobs')
+                    or []
+                )
+                job_ids = []
+                for item in ranked:
+                    job_id = item.get('job_id') or item.get('id')
+                    if not job_id:
+                        continue
 
-                    # Bulk check for job applications
-                    if job_ids:
-                        applied_job_ids = set(
-                            Application.objects.filter(
-                                candidate=candidate,
-                                job_id__in=job_ids
-                            ).values_list('job_id', flat=True)
-                        )
-                        for job in jobs:
-                            job['has_applied'] = job['id'] in applied_job_ids
+                    # Authoritative active-status check via DB (mirrors latest_projects).
+                    # The ML payload's `status` field is not reliable across services.
+                    job = Job.objects.filter(
+                        id=job_id,
+                        status='active'
+                    ).select_related('company').first()
+                    if not job:
+                        continue
 
-                    if jobs:
-                        cache.set(cache_key, {'jobs': jobs, 'ml_success': True}, timeout=300)
-                    queryset = jobs
-            except Exception as e:
-                logger.warning(f"ML jobs fetch failed: {e}")
+                    company = job.company
+                    company_logo_url = None
+                    if company and company.logo:
+                        try:
+                            company_logo_url = request.build_absolute_uri(company.logo.url)
+                        except Exception:
+                            company_logo_url = company.logo.url
+
+                    job_data = {
+                        'id': job.id,
+                        'title': job.title,
+                        'description': job.description,
+                        'workStyle': (job.workStyle or 'remote').replace('-', ' ').title(),
+                        'category': self._format_category(job.category or 'other'),
+                        'experienceLevel': (job.experienceLevel or 'mid').title(),
+                        'employmentType': (job.employmentType or 'full-time').replace('-', ' ').title(),
+                        'salaryRangeMin': job.salaryRangeMin,
+                        'salaryRangeMax': job.salaryRangeMax,
+                        'status': job.status.title(),
+                        'created_at': job.created_at.isoformat(),
+                        'location': job.location,
+                        'skills': [skill.title() if isinstance(skill, str) else skill for skill in (list(job.skills) if job.skills else [])],
+                        'company_name': company.company_name if company else 'Unknown',
+                        'company_logo': company_logo_url,
+                        'company_id': company.id if company else None,
+                        'has_applied': False
+                    }
+                    jobs.append(job_data)
+                    job_ids.append(job.id)
+
+                if job_ids:
+                    applied_job_ids = set(
+                        Application.objects.filter(
+                            candidate=candidate,
+                            job_id__in=job_ids
+                        ).values_list('job_id', flat=True)
+                    )
+                    for job in jobs:
+                        job['has_applied'] = job['id'] in applied_job_ids
+
+                if jobs:
+                    cache.set(cache_key, {'jobs': jobs, 'ml_success': True}, timeout=300)
+        except Exception as e:
+            logger.warning(f"ML jobs fetch failed: {e}")
+
+        return jobs
+
+    @action(detail=False, methods=['get'], url_path='dashboard/latest-jobs')
+    def latest_jobs(self, request):
+        candidate = self.get_candidate()
+        queryset = self._get_ml_jobs_list(candidate, request)
 
         page = self.paginate_queryset(queryset)
         data = {
@@ -1551,13 +1578,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             return self.get_paginated_response(data)
         return Response({**data, 'count': len(queryset)})
 
-    @action(detail=False, methods=['get'], url_path='dashboard/latest-projects')
-    def latest_projects(self, request):
-        candidate = self.get_candidate()
+    def _get_ml_projects_list(self, candidate, request):
+        """ML-ranked active projects for the candidate. Cached for 5 min. Returns a list."""
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:
-            # Use cached data but update has_applied status from database and format fields
             project_ids = [p['id'] for p in cached if 'id' in p]
             if project_ids:
                 applied_project_ids = set(
@@ -1568,7 +1593,6 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 )
                 for proj in cached:
                     proj['has_applied'] = proj['id'] in applied_project_ids
-                    # Format cached data fields
                     if 'status' in proj:
                         proj['status'] = proj['status'].title()
                     if 'category' in proj:
@@ -1579,68 +1603,72 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         proj['work_style'] = proj['work_style'].replace('-', ' ').title()
                     if 'skills' in proj:
                         proj['skills'] = [skill.title() if isinstance(skill, str) else skill for skill in proj['skills']]
-            queryset = cached
-        else:
-            queryset = []
-            try:
-                ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-                response = requests.get(ml_url)
-                if response.status_code == 200:
-                    data = response.json()
-                    projects = data.get('ranked_projects') or data.get('opportunities') or []
-                    formatted = []
-                    project_ids = []  # Collect IDs for bulk query
+            return cached
 
-                    for item in projects:
-                        pid = item.get('id') or item.get('project_id')
-                        if not pid:
-                            continue
-                        project = Project.objects.filter(
-                            id=pid,
-                            status__in=['active', 'open']
-                        ).select_related('company').first()
-                        if not project:
-                            continue
+        formatted = []
+        try:
+            ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
+            response = requests.get(ml_url)
+            if response.status_code == 200:
+                data = response.json()
+                projects = data.get('ranked_projects') or data.get('opportunities') or []
+                project_ids = []
 
-                        company_name = project.company.company_name if project.company else 'Unknown'
-                        company_id = project.company.id if project.company else None
+                for item in projects:
+                    pid = item.get('id') or item.get('project_id')
+                    if not pid:
+                        continue
+                    project = Project.objects.filter(
+                        id=pid,
+                        status__in=['active', 'open']
+                    ).select_related('company').first()
+                    if not project:
+                        continue
 
-                        project_data = {
-                            'id': project.id,
-                            'title': project.title,
-                            'description': project.description,
-                            'category': self._format_project_category(project.category),
-                            'status': project.status.title(),
-                            'created_at': project.created_at.isoformat(),
-                            'skills': [skill.title() if isinstance(skill, str) else skill for skill in (list(project.skills) if hasattr(project, 'skills') else [])],
-                            'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
-                            'paymentType': project.get_paymentType_display(),
-                            'paymentAmount': project.paymentAmount,
-                            'work_style': project.get_work_style_display(),
-                            'deadline': project.deadline.isoformat() if project.deadline else None,
-                            'company_name': company_name,
-                            'company_id': company_id,
-                            'company_logo': project.company.logo.url if project.company.logo else None,
-                            'has_applied': False  
-                        }
-                        formatted.append(project_data)
-                        project_ids.append(project.id)
+                    company_name = project.company.company_name if project.company else 'Unknown'
+                    company_id = project.company.id if project.company else None
 
-                    # Bulk check for applications
-                    if project_ids:
-                        applied_project_ids = set(
-                            ProjectApplication.objects.filter(
-                                candidate=candidate,
-                                project_id__in=project_ids
-                            ).values_list('project_id', flat=True)
-                        )
-                        for proj in formatted:
-                            proj['has_applied'] = proj['id'] in applied_project_ids
+                    project_data = {
+                        'id': project.id,
+                        'title': project.title,
+                        'description': project.description,
+                        'category': self._format_project_category(project.category),
+                        'status': project.status.title(),
+                        'created_at': project.created_at.isoformat(),
+                        'skills': [skill.title() if isinstance(skill, str) else skill for skill in (list(project.skills) if hasattr(project, 'skills') else [])],
+                        'estimatedHours': project.estimatedHours if hasattr(project, 'estimatedHours') else '1-2 weeks',
+                        'paymentType': project.get_paymentType_display(),
+                        'paymentAmount': project.paymentAmount,
+                        'work_style': project.get_work_style_display(),
+                        'deadline': project.deadline.isoformat() if project.deadline else None,
+                        'company_name': company_name,
+                        'company_id': company_id,
+                        'company_logo': project.company.logo.url if project.company.logo else None,
+                        'has_applied': False
+                    }
+                    formatted.append(project_data)
+                    project_ids.append(project.id)
 
-                    cache.set(cache_key, formatted, timeout=300)
-                    queryset = formatted
-            except Exception as e:
-                logger.warning(f"ML projects fetch failed: {e}")
+                if project_ids:
+                    applied_project_ids = set(
+                        ProjectApplication.objects.filter(
+                            candidate=candidate,
+                            project_id__in=project_ids
+                        ).values_list('project_id', flat=True)
+                    )
+                    for proj in formatted:
+                        proj['has_applied'] = proj['id'] in applied_project_ids
+
+                cache.set(cache_key, formatted, timeout=300)
+        except Exception as e:
+            logger.warning(f"ML projects fetch failed: {e}")
+
+        return formatted
+
+    @action(detail=False, methods=['get'], url_path='dashboard/latest-projects')
+    def latest_projects(self, request):
+        candidate = self.get_candidate()
+        queryset = self._get_ml_projects_list(candidate, request)
 
         class DictSerializer(serializers.Serializer):
             id = serializers.IntegerField()
@@ -1658,7 +1686,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             company_id = serializers.IntegerField(allow_null=True)
             company_logo = serializers.CharField(allow_null=True)
             deadline = serializers.CharField(allow_null=True)
-            has_applied = serializers.BooleanField()  
+            has_applied = serializers.BooleanField()
 
         page = self.paginate_queryset(queryset)
         serializer = DictSerializer(queryset if page is None else page, many=True)
