@@ -1165,17 +1165,35 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         latest_message = self._get_latest_message_summary(user)
         
         # 4. Top Matches (and count)
-        # `top_matches` keeps the existing DB-backed snippets used by the dashboard tiles.
-        # The matched_opportunities count must mirror what the Opportunities page renders
-        # (i.e. the paginated `count` from /dashboard/latest-jobs and /dashboard/latest-projects),
-        # so derive it from the same ML-backed helpers those endpoints use. When the ML
-        # service returns nothing for this candidate, both helpers return [] and the
-        # count is 0 — matching the page.
-        top_matches_jobs = self._get_latest_jobs_data(candidate, limit=5)
-        top_matches_projects = self._get_latest_projects_data(candidate, limit=5)
+        # We now derive top_matches items from the ML-ranked lists to ensure consistency
+        # with the latest-jobs and latest-projects endpoints.
         ml_jobs = self._get_ml_jobs_list(candidate, request)
         ml_projects = self._get_ml_projects_list(candidate, request)
         stats['matched_opportunities_count'] = len(ml_jobs) + len(ml_projects)
+
+        # Process top 5 jobs from ML matches
+        job_ids = [j['id'] for j in ml_jobs[:5]]
+        if job_ids:
+            preserved_jobs = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(job_ids)])
+            top_matches_jobs = JobListSerializer(
+                Job.objects.filter(id__in=job_ids).select_related('company').order_by(preserved_jobs),
+                many=True,
+                context={'request': request}
+            ).data
+        else:
+            top_matches_jobs = []
+
+        # Process top 5 projects from ML matches
+        project_ids = [p['id'] for p in ml_projects[:5]]
+        if project_ids:
+            preserved_projects = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(project_ids)])
+            top_matches_projects = ProjectListSerializer(
+                Project.objects.filter(id__in=project_ids).select_related('company').order_by(preserved_projects),
+                many=True,
+                context={'request': request}
+            ).data
+        else:
+            top_matches_projects = []
 
         return Response({
             'banner_seen': show_banner,
