@@ -374,9 +374,10 @@ class CandidateSerializer(serializers.ModelSerializer):
             "video_transcription", "privacy_completed", "location", "created_at", "updated_at", "user",
             "profile_image", "profile_views", "viewers_count", "profile_views_display",
             "passion_projects", "reference_responses", "portfolio_links", "seniority_level", "is_available",
-            "resume_data", "education", "experience", "achievements", "user_timezone", "flit_status"
+            "resume_data", "education", "experience", "achievements", "user_timezone", "flit_status",
+            "public_share_enabled", "public_share_token",
         ]
-        read_only_fields = ("user", "created_at", "updated_at")
+        read_only_fields = ("user", "created_at", "updated_at", "public_share_token")
     
     def _get_request_user(self):
         """Get the authenticated user from the request context."""
@@ -594,6 +595,102 @@ class CandidateSerializer(serializers.ModelSerializer):
             s = ("{:.1f}".format(v)).rstrip('0').rstrip('.')
             return f"{s}k"
         return str(n)
+
+
+class PublicCandidateProfileSerializer(serializers.ModelSerializer):
+    """Public-safe, allowlist serializer for shareable profiles. No auth context required."""
+
+    profile_image = serializers.SerializerMethodField()
+    resume_url = serializers.SerializerMethodField()
+    video_intro_url = serializers.SerializerMethodField()
+    education = serializers.SerializerMethodField()
+    experience = serializers.SerializerMethodField()
+    achievements = serializers.SerializerMethodField()
+    min_salary = serializers.SerializerMethodField()
+    max_salary = serializers.SerializerMethodField()
+    salary_currency = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Candidate
+        fields = [
+            "id", "full_name", "title", "bio", "location", "seniority_level",
+            "work_style", "availability_type", "is_available",
+            "skills", "superpowers", "preferred_roles", "passion_projects",
+            "portfolio_links", "profile_image", "resume_url", "video_intro_url",
+            "education", "experience", "achievements", "profile_views",
+            "min_salary", "max_salary", "salary_currency", "public_share_token",
+        ]
+
+    def _file_url(self, file_field):
+        if not file_field:
+            return None
+        try:
+            url = file_field.url
+        except Exception:
+            return None
+        request = self.context.get("request") if hasattr(self, "context") else None
+        if request is not None and not url.startswith(("http://", "https://")):
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_profile_image(self, obj):
+        return self._file_url(getattr(obj, "profile_image", None))
+
+    def get_resume_url(self, obj):
+        return self._file_url(getattr(obj, "resume_url", None))
+
+    def get_video_intro_url(self, obj):
+        if obj.video_visibility != "public":
+            return None
+        return self._file_url(getattr(obj, "video_intro_url", None))
+
+    def get_education(self, obj):
+        return [
+            {
+                "id": e.id, "institution": e.institution, "degree": e.get_degree_display(),
+                "field_of_study": e.field_of_study, "start_date": e.start_date,
+                "end_date": e.end_date, "is_current": e.is_current,
+                "grading_system": e.grading_system, "gpa": e.gpa, "grade": e.grade,
+                "description": e.description,
+            }
+            for e in obj.education.all().order_by("-start_date")
+        ]
+
+    def get_experience(self, obj):
+        return [
+            {
+                "id": x.id, "company_name": x.company_name, "position": x.position,
+                "employment_type": x.get_employment_type_display(),
+                "start_date": x.start_date, "end_date": x.end_date,
+                "is_current": x.is_current, "location": x.location,
+                "description": x.description, "skills_used": x.skills_used,
+            }
+            for x in obj.experience.all().order_by("-start_date")
+        ]
+
+    def get_achievements(self, obj):
+        return [
+            {
+                "id": a.id, "title": a.title,
+                "achievement_type": a.get_achievement_type_display(),
+                "description": a.description, "date_achieved": a.date_achieved,
+                "issuer": a.issuer, "url": a.url,
+                "image": self._file_url(a.image) if a.image else None,
+            }
+            for a in obj.achievements.all().order_by("-date_achieved")
+        ]
+
+    def _salary_visible(self, obj):
+        return obj.salary_visibility == "public"
+
+    def get_min_salary(self, obj):
+        return obj.min_salary if self._salary_visible(obj) else None
+
+    def get_max_salary(self, obj):
+        return obj.max_salary if self._salary_visible(obj) else None
+
+    def get_salary_currency(self, obj):
+        return obj.salary_currency if self._salary_visible(obj) else None
 
 
 class CandidateListSerializer(serializers.ModelSerializer):

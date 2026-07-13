@@ -46,7 +46,9 @@ from .serializers import (
     WorkDNAQuestionSerializer,
     DiscoverTalentSerializer,
     AchievementSerializer,
+    PublicCandidateProfileSerializer,
 )
+from rest_framework.views import APIView
 from chat.models import ChatMessage
 from employers.models import CandidateAction
 from employers.serializers import CandidateFlittedCompanySerializer
@@ -95,6 +97,72 @@ class PublicProjectListAPIView(generics.ListAPIView):
         'work_style': ['exact'],
         'collaboration_style': ['exact'],
     }
+
+class PublicShareCandidateProfileView(generics.RetrieveAPIView):
+    """Anonymous, opt-in shareable profile — looked up by unguessable token.
+
+    Anonymous visitors reach a profile only through this token, so a shared
+    link can't be used to enumerate other candidates by changing an id.
+    """
+    permission_classes = [permissions.AllowAny]
+    serializer_class = PublicCandidateProfileSerializer
+    lookup_field = "public_share_token"
+    lookup_url_kwarg = "token"
+
+    def get_queryset(self):
+        return Candidate.objects.filter(
+            public_share_enabled=True,
+            basic_info_completed=True,
+        ).select_related("user")
+
+
+class PublicShareCandidateTrackView(APIView):
+    """Increments the view counter for a shareable profile, keyed by token."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, token):
+        candidate = Candidate.objects.filter(
+            public_share_token=token, public_share_enabled=True, basic_info_completed=True
+        ).only("id").first()
+        if not candidate:
+            return Response({"error": "Profile not found"}, status=404)
+        Candidate.objects.filter(pk=candidate.pk).update(profile_views=F("profile_views") + 1)
+        return Response(
+            {"profile_views": Candidate.objects.values_list("profile_views", flat=True).get(pk=candidate.pk)},
+            status=200,
+        )
+
+
+class PublicCandidateProfileView(generics.RetrieveAPIView):
+    """Opt-in shareable candidate profile, addressed by PK.
+
+    Requires authentication: authenticated employers/candidates browse profiles
+    by id (e.g. from talent discovery). Anonymous access is token-only via
+    PublicShareCandidateProfileView so PKs can't be enumerated.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = PublicCandidateProfileSerializer
+
+    def get_queryset(self):
+        return Candidate.objects.filter(
+            public_share_enabled=True,
+            basic_info_completed=True,
+        ).select_related("user")
+
+
+class PublicCandidateProfileViewTrackView(APIView):
+    """Increments the public view counter for a shareable profile, by PK. Auth required."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        updated = Candidate.objects.filter(
+            pk=pk, public_share_enabled=True, basic_info_completed=True
+        ).update(profile_views=F("profile_views") + 1)
+        if not updated:
+            return Response({"error": "Profile not found"}, status=404)
+        candidate = Candidate.objects.only("profile_views").get(pk=pk)
+        return Response({"profile_views": candidate.profile_views}, status=200)
+
 
 class CandidateRegistrationView(BaseRoleRegistrationView):
     fixed_user_type = "candidate"
@@ -616,7 +684,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     logger.error(f"Failed to delete old file {old_field.name}: {e}")
 
         list_fields = ['skills', 'superpowers', 'preferred_roles', 'portfolio_links']
-        boolean_fields = ['is_available']
+        boolean_fields = ['is_available', 'public_share_enabled']
 
         # Video deletion (keep synchronous — it's just a DB field clear + S3 delete)
         if data.get('remove_old_video') == 'true':
@@ -686,7 +754,8 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         text_fields = [
             'full_name', 'title', 'bio', 'location', 'work_style', 'availability_type', 'is_available',
             'skills', 'superpowers', 'preferred_roles', 'portfolio_links', 'profile_visibility',
-            'min_salary', 'max_salary', 'salary_currency', 'seniority_level', 'passion_projects','candidate_profile_summary'
+            'min_salary', 'max_salary', 'salary_currency', 'seniority_level', 'passion_projects','candidate_profile_summary',
+            'public_share_enabled',
         ]
         for field in text_fields:
             if field in data:
