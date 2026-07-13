@@ -90,6 +90,12 @@ class Candidate(models.Model):
     video_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='public')
     contact_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='limited')
     salary_visibility = models.CharField(max_length=20, choices=PROFILE_VISIBILITY_CHOICES, default='private')
+    # Public shareable profile (LinkedIn-style). ON by default; candidates can opt out.
+    public_share_enabled = models.BooleanField(default=True)
+    # Unguessable token for the public share link. Anonymous visitors reach a
+    # profile only via this token — never the sequential PK — so having one
+    # link can't be used to enumerate other candidates by incrementing an id.
+    public_share_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     profile_views = models.PositiveIntegerField(default=0)
     viewers = models.JSONField(default=list)
     
