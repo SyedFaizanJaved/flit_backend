@@ -461,7 +461,7 @@ Need help? Contact Support: {support_url}
         <div class="card">
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" />
             </div>
 
             <!-- Body -->
@@ -815,7 +815,7 @@ Need help? Contact Support: {support_url}
         <div class="card">
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
 
             <!-- Body -->
@@ -1159,7 +1159,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
         <div class="card">
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
 
             <!-- Body -->
@@ -1513,7 +1513,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
         <div class="card">
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
 
             <!-- Body -->
@@ -1586,7 +1586,7 @@ This is an automated email, so replies won't be seen. If you need help, please c
 def send_verification_email(user, verification_url):
     """
     Send email verification email with a clean, professional styled template
-    matching the Flit brand design guidelines.
+    matching the FLIT brand design guidelines.
     
     Args:
         user: User model instance
@@ -1607,13 +1607,13 @@ def send_verification_email(user, verification_url):
     # Frame icon URL from frontend public folder
     frame_icon_url = f"{base_url}/verified.png"
 
-    subject = 'Verify your Flit email address'
+    subject = 'Verify your FLIT email address'
 
     # Plain text fallback
     text_content = f"""
 Hello {user_name},
 
-Thanks for creating your profile on Flit, {user_name}.
+Thanks for creating your profile on FLIT, {user_name}.
 Click the link below to verify your email and unlock your full profile.
 This link expires in 15 minutes.
 
@@ -1851,7 +1851,7 @@ This is an automated message. Please do not reply directly.
 
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" />
             </div>
 
             <!-- Body -->
@@ -1870,7 +1870,7 @@ This is an automated message. Please do not reply directly.
 
                 <!-- Body copy -->
                 <p class="email-text">
-                    Thanks for creating your profile on Flit,
+                    Thanks for creating your profile on FLIT,
                     <span class="highlight-name">{user_name}</span>.
                     Click below to verify your email and unlock your full profile.
                     This link expires in 15 minutes.
@@ -1976,7 +1976,7 @@ We are excited about the possibility of you joining our team and look forward to
 
 Best regards,
 The {company_name} Team
-(Powered by {getattr(settings, 'SITE_NAME', 'Flit')})
+(Powered by {getattr(settings, 'SITE_NAME', 'FLIT')})
 """
 
     # HTML version
@@ -2230,7 +2230,7 @@ The {company_name} Team
             
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" onerror="this.style.display='none';" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" onerror="this.style.display='none';" />
             </div>
 
             <!-- Body -->
@@ -2435,7 +2435,7 @@ Start Date: {start_date_display}
 Status: {status_text}
 
 Best regards,
-Flit Platform
+FLIT Platform
 """
 
     html_content = f"""
@@ -2718,7 +2718,7 @@ Flit Platform
 def send_password_reset_email(user, reset_url):
     """
     Send password reset email with a clean, professional styled template
-    matching the Flit brand design guidelines.
+    matching the FLIT brand design guidelines.
     
     Args:
         user: User model instance
@@ -2739,7 +2739,7 @@ def send_password_reset_email(user, reset_url):
     # Frame icon URL from frontend public folder (placeholder)
     frame_icon_url = f"{base_url}/security.png"
 
-    subject = 'Reset your Flit password'
+    subject = 'Reset your FLIT password'
 
     # Plain text fallback
     text_content = f"""
@@ -2968,7 +2968,7 @@ This is an automated message. Please do not reply directly.
 
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" />
             </div>
 
             <!-- Body -->
@@ -3291,7 +3291,7 @@ Need help? Contact Support: {support_url}
         <div class="card">
             <!-- Header -->
             <div class="email-header">
-                <img src="{logo_url}" alt="Flit logo" class="logo-img" />
+                <img src="{logo_url}" alt="FLIT logo" class="logo-img" />
             </div>
 
             <!-- Body -->
