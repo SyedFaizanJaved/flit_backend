@@ -29,6 +29,28 @@ import jwt
 logger = logging.getLogger("exceptions")
 
 
+def resend_if_unverified(request):
+    """
+    If the email belongs to an existing but unverified user, resend the
+    verification link and return a Response. Otherwise return None so
+    registration proceeds normally. Shared by all registration endpoints.
+    """
+    email = request.data.get('email')
+    if not email:
+        return None
+    existing = User.objects.filter(email__iexact=email).first()
+    if not (existing and not existing.is_verified):
+        return None
+    serializer = ResendVerificationEmailSerializer(data={'email': email})
+    if serializer.is_valid():
+        serializer.save()
+    return Response({
+        'message': 'This email is already registered but not verified. '
+                   'We have resent your verification link.',
+        'resent': True,
+    }, status=status.HTTP_200_OK)
+
+
 class UserRegistrationView(generics.CreateAPIView):
     """
     User registration endpoint
@@ -36,12 +58,15 @@ class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
     permission_classes = [permissions.AllowAny]
-    
+
     def create(self, request, *args, **kwargs):
+        resent = resend_if_unverified(request)
+        if resent is not None:
+            return resent
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        
+
         return Response({
             'user': UserProfileSerializer(user).data,
             'message': 'User registered successfully'
@@ -67,6 +92,9 @@ class BaseRoleRegistrationView(generics.CreateAPIView):
         return super().get_serializer(*args, **kwargs)
 
     def create(self, request, *args, **kwargs):
+        resent = resend_if_unverified(request)
+        if resent is not None:
+            return resent
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
