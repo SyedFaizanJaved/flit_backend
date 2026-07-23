@@ -29,7 +29,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         model = User
         fields = ('email', 'username', 'role', 'password', 'password_confirm', 'first_name', 'last_name')
         extra_kwargs = {
-            'email': {'required': True},
+            # validators: [] drops the auto UniqueValidator so validate_email() below
+            # is the single gate and can distinguish unverified duplicates.
+            'email': {'required': True, 'validators': []},
             'username': {'required': False},
             'role': {'required': True},
             'first_name': {'required': True},
@@ -54,8 +56,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         if not re.match(r'^[^@]+@[^@.]{3,}\.[^@]{2,}$', value):
              raise serializers.ValidationError('Invalid email format. Domain must be more than 2 characters and extension must be at least 2 characters (e.g., example@domain.com).')
 
-        if User.objects.filter(email=value).exists():
-             raise serializers.ValidationError('A user with this email already exists.')
+        existing = User.objects.filter(email=value).first()
+        if existing:
+            if not existing.is_verified:
+                # ponytail: stringly-typed signal — register.tsx matches "not verified"
+                # to route the user to the existing resend-verification screen.
+                raise serializers.ValidationError(
+                    'This email is registered but not verified. Please verify it, you can resend the link.'
+                )
+            raise serializers.ValidationError('A user with this email already exists.')
         return value
 
     def validate_username(self, value):
