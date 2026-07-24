@@ -324,6 +324,12 @@ class ProjectApplicationViewSet(viewsets.ModelViewSet):
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def apply_to_job(request, job_id):
+    user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+    if user_role != "candidate":
+        return Response(
+            {"error": "Only candidates can apply"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     try:
         job = Job.objects.get(id=job_id, status="active")
 
@@ -368,6 +374,12 @@ def apply_to_job(request, job_id):
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def apply_to_project(request, project_id):
+    user_role = getattr(getattr(request.user, 'role', None), 'name', None)
+    if user_role != "candidate":
+        return Response(
+            {"error": "Only candidates can apply"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     try:
         project = Project.objects.get(id=project_id, status="active")
 
