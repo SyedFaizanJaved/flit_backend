@@ -134,18 +134,19 @@ class PublicShareCandidateTrackView(APIView):
 
 
 class PublicCandidateProfileView(generics.RetrieveAPIView):
-    """Opt-in shareable candidate profile, addressed by PK.
+    """In-platform candidate profile, addressed by PK.
 
-    Requires authentication: authenticated employers/candidates browse profiles
-    by id (e.g. from talent discovery). Anonymous access is token-only via
-    PublicShareCandidateProfileView so PKs can't be enumerated.
+    Requires authentication: any logged-in user (employers/candidates) browses
+    profiles by id (e.g. from talent discovery). The public_share_enabled toggle
+    only gates the anonymous shared link (PublicShareCandidateProfileView), NOT
+    visibility inside FLIT, so it is intentionally not filtered here. Anonymous
+    access is token-only so PKs can't be enumerated.
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = PublicCandidateProfileSerializer
 
     def get_queryset(self):
         return Candidate.objects.filter(
-            public_share_enabled=True,
             basic_info_completed=True,
         ).select_related("user")
 
@@ -156,7 +157,7 @@ class PublicCandidateProfileViewTrackView(APIView):
 
     def post(self, request, pk):
         updated = Candidate.objects.filter(
-            pk=pk, public_share_enabled=True, basic_info_completed=True
+            pk=pk, basic_info_completed=True
         ).update(profile_views=F("profile_views") + 1)
         if not updated:
             return Response({"error": "Profile not found"}, status=404)
