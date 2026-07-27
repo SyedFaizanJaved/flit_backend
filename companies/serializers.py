@@ -9,9 +9,6 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Per-file gallery image cap. Mirrors FILE_UPLOAD_MAX_MEMORY_SIZE so a single
-# image can never silently exceed Django's per-file in-memory threshold.
-GALLERY_IMAGE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 GALLERY_IMAGE_MAX_COUNT = 15  # matches CompanyImageBulkUploadSerializer.max_length
 
 
@@ -19,18 +16,11 @@ GALLERY_IMAGE_MAX_COUNT = 15  # matches CompanyImageBulkUploadSerializer.max_len
 
 def _validate_gallery_images(images, existing_count):
     """
-    Shared validator for `uploaded_images`:
-      - bound the per-file size at GALLERY_IMAGE_MAX_BYTES
-      - bound total gallery size (existing + new) at GALLERY_IMAGE_MAX_COUNT
+    Shared validator for `uploaded_images`: bound total gallery size
+    (existing + new) at GALLERY_IMAGE_MAX_COUNT.
     """
     if not images:
         return images
-    for img in images:
-        size = getattr(img, 'size', None)
-        if size is not None and size > GALLERY_IMAGE_MAX_BYTES:
-            raise serializers.ValidationError(
-                f"Each gallery image must be {GALLERY_IMAGE_MAX_BYTES // (1024 * 1024)} MB or smaller."
-            )
     total = (existing_count or 0) + len(images)
     if total > GALLERY_IMAGE_MAX_COUNT:
         raise serializers.ValidationError(
