@@ -4,10 +4,13 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 from . import views
+from .social import social_auth, social_providers
 
 urlpatterns = [
     # Authentication
     path('register/', views.UserRegistrationView.as_view(), name='user-register'),
+    path('social/providers/', social_providers, name='social-providers'),
+    path('social/<str:provider>/', social_auth, name='social-auth'),
     path('verify-email/', views.verify_email, name='verify-email'),
     path('resend-verification-email/', views.resend_verification_email, name='resend-verification-email'),
     path('login/', views.user_login, name='user-login'),

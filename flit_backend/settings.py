@@ -293,6 +293,16 @@ AUTH_URI = config('AUTH_URI')
 TOKEN_URI = config('TOKEN_URI')
 GOOGLE_SCOPES = config('GOOGLE_SCOPES')
 
+# Social sign-in (distinct from the VR-Meet Google Calendar OAuth above).
+# Empty defaults keep boot working; unconfigured providers 400 with provider_not_configured.
+SOCIAL_OAUTH = {
+    p: {
+        'client_id': config(f'SOCIAL_{p.upper()}_CLIENT_ID', default=''),
+        'client_secret': config(f'SOCIAL_{p.upper()}_CLIENT_SECRET', default=''),
+    }
+    for p in ('google', 'microsoft', 'github', 'linkedin')
+}
+
 # Logging Configuration
 # Logging Configuration
 import os

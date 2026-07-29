@@ -115,58 +115,9 @@ def user_login(request):
     if serializer.is_valid():
         user = serializer.validated_data['user']
         login(request, user)
-        
-        # Issue JWT tokens
-        refresh = RefreshToken.for_user(user)
-        # Determine unified profile completion flag by role
-        user_role = getattr(getattr(user, 'role', None), 'name', None)
-        profile_completed = False
-        employer_company_completed = False
-        banner_seen = False
-        try:
-            # Fast path: if employer profile exists and is linked to a company, treat as completed
-            if hasattr(user, 'employer_profile') and getattr(user.employer_profile, 'company_id', None):
-                employer_company_completed = True
-            else:
-                # Fallback: check completed companies created by the user
-                employer_company_completed = Company.objects.filter(
-                    created_by=user, is_active=True, is_completed=True
-                ).exists()
-        except Exception as e:
-            logger.exception(e)
-            employer_company_completed = Company.objects.filter(
-                created_by=user, is_active=True, is_completed=True
-            ).exists()
 
-        if user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer') or (user_role is None and employer_company_completed):
-            profile_completed = employer_company_completed
-            try:
-                employer_profile = user.employer_profile
-                banner_seen = employer_profile.banner_seen
-            except Employer.DoesNotExist:
-                logger.error('Employer.DoesNotExist: Employer profile does not exist')
-        elif user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate') or (user_role is None and hasattr(user, 'candidate_profile')):
-            try:
-                candidate_profile = user.candidate_profile
-                profile_completed = candidate_profile.is_profile_complete
-                banner_seen = candidate_profile.banner_seen
-            except Candidate.DoesNotExist:
-                logger.error('Candidate.DoesNotExist: Candidate profile does not exist')
-                profile_completed = False
-
-        # Persist the latest computed state on the user for quick access elsewhere
-        if user.profile_completed != profile_completed:
-            user.profile_completed = profile_completed
-            user.save(update_fields=['profile_completed'])
-
-        return Response({
-            'user': UserProfileSerializer(user).data,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'message': 'Login successful',
-            'profile_completed': profile_completed,
-            'banner_seen': banner_seen,
-        }, status=status.HTTP_200_OK)
+        from accounts.services import build_auth_response
+        return Response(build_auth_response(user), status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
