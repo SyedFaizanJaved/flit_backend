@@ -107,19 +107,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         
         # Auto-generate username if not provided
         if 'username' not in validated_data or not validated_data['username']:
-            email = validated_data.get('email')
-            base_username = email.split('@')[0]
-            # Sanitize username to be alphanumeric
-            base_username = re.sub(r'[^a-zA-Z0-9]', '', base_username)
-            if not base_username:
-                base_username = 'user'
-                
-            username = base_username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{base_username}{counter}"
-                counter += 1
-            validated_data['username'] = username
+            from accounts.services import generate_unique_username
+            validated_data['username'] = generate_unique_username(validated_data.get('email'))
 
         # Role can be provided as id or name via nested representation
         role_value = validated_data.pop('role', None)
@@ -143,32 +132,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         user = User.objects.create_user(**validated_data, role=role_obj)
 
         # Create related profile based on role using safe defaults
-        user_role = (user.role.name if user.role_id else None)
-        try:
-            if user_role == getattr(settings, 'USER_ROLE_CANDIDATE', 'candidate'):
-                # Lazy import to avoid circular deps at import time
-                from candidates.models import Candidate
-                full_name = f"{user.first_name} {user.last_name}".strip() or user.get_short_name()
-                # Title is required at model level (blank not allowed). Use a safe default.
-                Candidate.objects.get_or_create(
-                    user=user,
-                    defaults={
-                        'full_name': full_name or user.email.split('@')[0],
-                        'title': 'Candidate',
-                    }
-                )
-            elif user_role == getattr(settings, 'USER_ROLE_EMPLOYER', 'employer'):
-                from employers.models import Employer
-                Employer.objects.get_or_create(
-                    user=user,
-                    defaults={
-                        'first_name': user.first_name or user.get_short_name(),
-                        'last_name': user.last_name or '',
-                    }
-                )
-        except Exception:
-            # Do not block user creation if profile creation fails
-            pass
+        from accounts.services import create_role_profile
+        create_role_profile(user)
 
         # Send verification email
         try:
