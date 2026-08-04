@@ -333,6 +333,15 @@ def apply_to_job(request, job_id):
     try:
         job = Job.objects.get(id=job_id, status="active")
 
+        # Applications close when the deadline day ends. Hiding expired postings from
+        # the lists is not enough on its own -- a stale tab, a bookmarked link or an
+        # AI-matching result would otherwise still let an application through.
+        if job.is_expired:
+            return Response(
+                {"error": "Applications for this job have closed. The deadline has passed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if JobApplication.objects.filter(candidate__user=request.user, job=job).exists():
             return Response(
                 {"error": "You have already applied for this job"},
@@ -382,6 +391,13 @@ def apply_to_project(request, project_id):
         )
     try:
         project = Project.objects.get(id=project_id, status="active")
+
+        # See apply_to_job: the list filter is not a security boundary, this is.
+        if project.is_expired:
+            return Response(
+                {"error": "Applications for this project have closed. The deadline has passed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if ProjectApplication.objects.filter(candidate__user=request.user, project=project).exists():
             return Response(

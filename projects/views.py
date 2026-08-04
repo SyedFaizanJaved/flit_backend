@@ -112,13 +112,11 @@ class PublicProjectViewSet(ProjectMLMixin, mixins.ListModelMixin, mixins.Retriev
     pagination_class = CustomPagination
 
     def get_queryset(self):
-        # Auto-close moved to `manage.py close_expired_projects` (Bug #23).
-        # Public list filters by deadline >= today, so expired rows are already
-        # excluded here without mutating them.
-        queryset = super().get_queryset().filter(
-            status='active',
-            deadline__gte=timezone.now().date()
-        )
+        # Auto-close moved to `manage.py close_expired_projects` (Bug #23), so this
+        # filters expired rows out without mutating them. The rule itself lives in
+        # ProjectQuerySet.open() so this, the apply guard, the serializers and the
+        # command can't drift apart.
+        queryset = Project.objects.open()
 
         # Apply search with partial word matching
         search = self.request.query_params.get('search', None)
@@ -195,9 +193,11 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
                 if term:
                     queryset = queryset.filter(title__icontains=term)
 
-        # Only filter by active status for list view
+        # Browsing lists show only open projects. `retrieve` deliberately stays
+        # unfiltered above so a candidate can still view a posting they applied to
+        # after its deadline.
         if self.action == 'list':
-            queryset = queryset.filter(status='active')
+            queryset = queryset.filter(pk__in=Project.objects.open().values('pk'))
             queryset = queryset.prefetch_related('applications__candidate')
 
         return queryset.distinct()

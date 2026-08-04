@@ -68,7 +68,12 @@ class CandidateAccessMixin:
 
 
 class PublicJobListAPIView(generics.ListAPIView):
-    queryset = Job.objects.filter(status='active')
+    # get_queryset(), not a class attribute: open() resolves today's date when it is
+    # called, and a class attribute is built once at import -- which would freeze the
+    # cutoff at process start and stop honouring deadlines after the first midnight.
+    def get_queryset(self):
+        return Job.objects.open()
+
     serializer_class = JobListSerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = CustomPagination  
@@ -84,7 +89,10 @@ class PublicJobListAPIView(generics.ListAPIView):
 
 
 class PublicProjectListAPIView(generics.ListAPIView):
-    queryset = Project.objects.filter(status='active')
+    # See PublicJobListAPIView: must be a method so the date is per-request.
+    def get_queryset(self):
+        return Project.objects.open()
+
     serializer_class = ProjectListSerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = CustomPagination  
@@ -1501,11 +1509,11 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         }
 
     def _get_latest_jobs_data(self, candidate, limit=5):
-        jobs = Job.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
+        jobs = Job.objects.open().select_related('company').order_by('-created_at')[:limit]
         return JobListSerializer(jobs, many=True, context={'request': self.request}).data
 
     def _get_latest_projects_data(self, candidate, limit=5):
-        projects = Project.objects.filter(status='active').select_related('company').order_by('-created_at')[:limit]
+        projects = Project.objects.open().select_related('company').order_by('-created_at')[:limit]
         return ProjectListSerializer(projects, many=True, context={'request': self.request}).data
 
     def _format_category(self, category):
@@ -1596,11 +1604,12 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     if not job_id:
                         continue
 
-                    # Authoritative active-status check via DB (mirrors latest_projects).
-                    # The ML payload's `status` field is not reliable across services.
-                    job = Job.objects.filter(
-                        id=job_id,
-                        status='active'
+                    # Authoritative open-status check via DB (mirrors latest_projects).
+                    # The ML payload's `status` field is not reliable across services,
+                    # and the ML service knows nothing about application deadlines, so
+                    # expired postings must be filtered out here after it responds.
+                    job = Job.objects.open().filter(
+                        id=job_id
                     ).select_related('company').first()
                     if not job:
                         continue

@@ -8,6 +8,15 @@ Schedule via cron / Celery beat / systemd timer:
 
     python manage.py close_expired_projects
     python manage.py close_expired_projects --dry-run   # preview only
+
+Scheduling: expiry is date-granular (see ProjectQuerySet), so state only changes at
+00:00 UTC and a single daily run is sufficient. Add to the server crontab:
+
+    5 0 * * * cd /path/to/flit_backend && /path/to/venv/bin/python manage.py close_expired_projects
+
+This is housekeeping, not the mechanism: candidate-facing lists and the apply guard
+read ProjectQuerySet.open() live, so deadlines are honoured even if this never runs.
+All this does is bring the stored `status` into line and notify the ML service.
 """
 
 import logging
@@ -39,9 +48,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
-        today = timezone.now().date()
 
-        expired = Project.objects.filter(status='active', deadline__lt=today)
+        # Read through the shared rule rather than repeating the lookup, so this
+        # command and the live ProjectQuerySet.open() filter can never disagree.
+        expired = Project.objects.expired()
         count = expired.count()
         self.stdout.write(self.style.NOTICE(
             f"[{timezone.now():%Y-%m-%d %H:%M:%S}] Found {count} expired active project(s) "

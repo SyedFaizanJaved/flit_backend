@@ -123,14 +123,13 @@ class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMi
     ordering = ['-created_at']
 
     def get_queryset(self):
-        # Auto-close moved to `manage.py close_expired_jobs` (Bug #23).
-        # Public list filters by applicationDeadline >= today (or null),
-        # so expired rows are already excluded here without mutating them.
-        queryset = super().get_queryset().filter(
-            models.Q(applicationDeadline__date__gte=timezone.now().date()) |
-            models.Q(applicationDeadline__isnull=True)
-        )
-    
+        # Auto-close moved to `manage.py close_expired_jobs` (Bug #23), so this
+        # filters expired rows out without mutating them. The rule itself lives in
+        # JobQuerySet.open() so this, the apply guard, the serializers and the
+        # command can't drift apart.
+        queryset = Job.objects.open().select_related('company')
+
+
         search = self.request.query_params.get('search', None)
         if search:
             search_terms = search.strip().split()
@@ -200,7 +199,10 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
                 )
 
         if self.action == 'list':
-            qs = qs.filter(status='active')
+            # Browsing lists show only open jobs. `retrieve` deliberately stays
+            # unfiltered above so a candidate can still view a posting they applied to
+            # after its deadline.
+            qs = qs.filter(pk__in=Job.objects.open().values('pk'))
 
         search = self.request.query_params.get('search', None)
         if search:
