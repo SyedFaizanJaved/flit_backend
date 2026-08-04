@@ -603,6 +603,7 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
     profile_image = serializers.SerializerMethodField()
     resume_url = serializers.SerializerMethodField()
     video_intro_url = serializers.SerializerMethodField()
+    video_transcription = serializers.SerializerMethodField()
     education = serializers.SerializerMethodField()
     experience = serializers.SerializerMethodField()
     achievements = serializers.SerializerMethodField()
@@ -617,6 +618,7 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
             "work_style", "availability_type", "is_available",
             "skills", "superpowers", "preferred_roles", "passion_projects",
             "portfolio_links", "profile_image", "resume_url", "video_intro_url",
+            "video_transcription",
             "education", "experience", "achievements", "profile_views",
             "min_salary", "max_salary", "salary_currency", "public_share_token",
         ]
@@ -643,6 +645,13 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
         if obj.video_visibility != "public":
             return None
         return self._file_url(getattr(obj, "video_intro_url", None))
+
+    def get_video_transcription(self, obj):
+        # The transcription is the video's content as text, so it follows the same
+        # visibility setting — otherwise a private video leaks through its transcript.
+        if obj.video_visibility != "public":
+            return None
+        return obj.video_transcription
 
     def get_education(self, obj):
         return [
