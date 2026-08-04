@@ -111,18 +111,32 @@ class JobListSerializer(serializers.ModelSerializer):
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    effective_status = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
     timezone = TimeZoneSerializerField(read_only=True)
     deadline = serializers.DateTimeField(source='applicationDeadline', read_only=True)
-    
+
     class Meta:
         model = Job
         fields = (
             'id', 'description', 'title', 'company_name', 'company_id','company_logo', 'location', 'workStyle',
             'category', 'experienceLevel', 'employmentType', 'salaryRangeMin', 'salaryRangeMax',
-            'salary_currency', 'status', 'created_at', 'skills', 'is_applied', 'application_details',
+            'salary_currency', 'status', 'is_expired', 'effective_status',
+            'created_at', 'skills', 'is_applied', 'application_details',
             'application_count', 'hasTemporaryOption', 'temporaryDuration', 'timezone', 'applicationDeadline', 'deadline'
         )
+
+    def get_effective_status(self, obj):
+        """What the employer should see now.
+
+        `status` stays the stored value because the edit form writes back to it; this
+        is the display value, reflecting expiry immediately rather than waiting for
+        close_expired_jobs to run.
+        """
+        if obj.status == 'active' and obj.is_expired:
+            return 'Closed'
+        return obj.get_status_display()
     
     def get_skills(self, obj):
         """Return skills with first letter capitalized"""

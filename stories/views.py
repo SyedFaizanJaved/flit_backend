@@ -691,11 +691,8 @@ class ProjectListView(generics.ListAPIView):
         # The `deadline__gte=today` filter below already excludes expired rows
         # without needing to mutate them on read.
 
-        # Only show active and non-expired projects in storyline
-        queryset = Project.objects.select_related('company').filter(
-            status='active',
-            deadline__gte=timezone.now().date()
-        )
+        # Only show open projects in the storyline, via the shared rule.
+        queryset = Project.objects.open().select_related('company')
         if search_query:
             queryset = queryset.filter(
                 Q(title__istartswith=search_query) |
@@ -732,17 +729,12 @@ class JobListView(generics.ListAPIView):
 
         search_query = self.request.query_params.get('search')
         
-        # Auto-close expired jobs
-        Job.objects.filter(
-            status='active',
-            applicationDeadline__lt=timezone.now()
-        ).update(status='closed')
-
-        # Only show active and non-expired jobs in storyline
-        queryset = Job.objects.select_related('company').filter(
-            Q(status='active') &
-            (Q(applicationDeadline__gte=timezone.now()) | Q(applicationDeadline__isnull=True))
-        )
+        # The auto-close that used to run here has been removed: it mutated rows on
+        # every read (the Bug #23 pattern) and compared against a datetime, so a job
+        # with a 10 Aug deadline was closed at 00:00 ON 10 Aug -- a day early, and
+        # inconsistent with close_expired_jobs. Closing is the command's job; this
+        # endpoint only filters, through the shared rule.
+        queryset = Job.objects.open().select_related('company')
         if search_query:
             queryset = queryset.filter(
                 Q(title__istartswith=search_query) |

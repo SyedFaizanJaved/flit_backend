@@ -11,6 +11,32 @@ def get_default_deadline():
     return timezone.now().date() + timedelta(days=30)
 
 
+class ProjectQuerySet(models.QuerySet):
+    """Single definition of whether a project is still accepting applications.
+
+    A project is OPEN when it is active and its deadline day has not yet ended.
+    The deadline day is inclusive and evaluated against the current UTC date, so a
+    project with a 10 Aug deadline stays open for all of 10 Aug and closes at
+    00:00 UTC on 11 Aug.
+
+    `deadline` is the field the UI labels "Application Deadline"; the separate
+    `application_deadline` column is unused by the product. `deadline` is a
+    DateField with a default, so it is never null -- unlike Job.applicationDeadline.
+
+    `open()` and `expired()` are exact complements within status='active', and
+    everything reads through them so the live filter and the stored status can
+    never disagree.
+    """
+
+    def open(self):
+        return self.filter(status='active').exclude(
+            deadline__lt=timezone.now().date()
+        )
+
+    def expired(self):
+        return self.filter(status='active', deadline__lt=timezone.now().date())
+
+
 class Project(models.Model):
     """
     Project posting model
@@ -164,7 +190,23 @@ class Project(models.Model):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
+    objects = ProjectQuerySet.as_manager()
+
+    @property
+    def is_expired(self) -> bool:
+        """Deadline day has ended. Mirrors ProjectQuerySet.open()/expired()."""
+        if not self.deadline:
+            return False
+        return self.deadline < timezone.now().date()
+
+    @property
+    def effective_status(self) -> str:
+        """Status as users should see it, without waiting for close_expired_projects."""
+        if self.status == 'active' and self.is_expired:
+            return 'closed'
+        return self.status
+
     class Meta:
         db_table = 'projects'
         verbose_name = 'Project'

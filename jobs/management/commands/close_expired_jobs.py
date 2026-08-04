@@ -4,10 +4,17 @@ Management command: close_expired_jobs
 Auto-close active Job rows whose applicationDeadline has passed. Replaces the
 former read-side-effect inside JobViewSet.get_queryset() (Bug #23).
 
-Schedule via cron / Celery beat / systemd timer:
-
     python manage.py close_expired_jobs
     python manage.py close_expired_jobs --dry-run   # preview only
+
+Scheduling: expiry is date-granular (see JobQuerySet), so state only changes at
+00:00 UTC and a single daily run is sufficient. Add to the server crontab:
+
+    5 0 * * * cd /path/to/flit_backend && /path/to/venv/bin/python manage.py close_expired_jobs
+
+This is housekeeping, not the mechanism: candidate-facing lists and the apply guard
+read JobQuerySet.open() live, so deadlines are honoured even if this never runs. All
+this does is bring the stored `status` into line and notify the ML service.
 """
 
 import logging
@@ -39,9 +46,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
-        today = timezone.now().date()
 
-        expired = Job.objects.filter(status='active', applicationDeadline__date__lt=today)
+        # Read through the shared rule rather than repeating the lookup, so this
+        # command and the live JobQuerySet.open() filter can never disagree.
+        expired = Job.objects.expired()
         count = expired.count()
         self.stdout.write(self.style.NOTICE(
             f"[{timezone.now():%Y-%m-%d %H:%M:%S}] Found {count} expired active job(s) "

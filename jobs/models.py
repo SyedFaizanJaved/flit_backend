@@ -1,8 +1,35 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
 from timezone_field import TimeZoneField
 from utils.currency_choices import CURRENCY_CHOICES
+
+
+class JobQuerySet(models.QuerySet):
+    """Single definition of whether a job is still accepting applications.
+
+    A job is OPEN when it is active and its application deadline day has not yet
+    ended. The deadline day is inclusive and evaluated against the current UTC
+    date, so a job with a 10 Aug deadline stays open for all of 10 Aug and closes
+    at 00:00 UTC on 11 Aug. A job with no deadline never expires.
+
+    `open()` and `expired()` are exact complements within status='active'.
+    Everything reads through these -- the candidate-facing lists, the apply guard,
+    the serializers and the close_expired_jobs command -- so the live filter and
+    the stored status can never disagree.
+    """
+
+    def open(self):
+        return self.filter(status='active').exclude(
+            applicationDeadline__date__lt=timezone.now().date()
+        )
+
+    def expired(self):
+        return self.filter(
+            status='active',
+            applicationDeadline__date__lt=timezone.now().date(),
+        )
 
 
 class Job(models.Model):
@@ -146,7 +173,23 @@ class Job(models.Model):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
+    objects = JobQuerySet.as_manager()
+
+    @property
+    def is_expired(self) -> bool:
+        """Deadline day has ended. Mirrors JobQuerySet.open()/expired()."""
+        if not self.applicationDeadline:
+            return False
+        return timezone.localtime(self.applicationDeadline, timezone.utc).date() < timezone.now().date()
+
+    @property
+    def effective_status(self) -> str:
+        """Status as users should see it, without waiting for close_expired_jobs."""
+        if self.status == 'active' and self.is_expired:
+            return 'closed'
+        return self.status
+
     class Meta:
         db_table = 'jobs'
         verbose_name = 'Job'

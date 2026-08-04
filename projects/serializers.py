@@ -93,15 +93,29 @@ class ProjectListSerializer(serializers.ModelSerializer):
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    effective_status = serializers.SerializerMethodField()
     project_timezone = TimeZoneSerializerField(read_only=True)
     education_level = serializers.CharField(source='get_education_level_display', read_only=True)
-    
+
     class Meta:
         model = Project
-        fields = ('id', 'title', 'description', 'company_name', 'company_id','company_logo', 'category', 
-                 'estimatedHours', 'paymentType', 'paymentAmount', 'payment_currency', 'deadline', 'status', 
+        fields = ('id', 'title', 'description', 'company_name', 'company_id','company_logo', 'category',
+                 'estimatedHours', 'paymentType', 'paymentAmount', 'payment_currency', 'deadline', 'status',
+                 'is_expired', 'effective_status',
                  'work_style', 'education_level', 'created_at', 'skills', 'is_applied', 'application_details',
                  'application_count', 'hasTemporaryOption', 'temporaryDuration', 'project_timezone')
+
+    def get_effective_status(self, obj):
+        """What the employer should see now.
+
+        `status` is left as the stored value because the edit form writes back to it;
+        this is the display value, which reflects expiry immediately rather than
+        waiting for close_expired_projects to run.
+        """
+        if obj.status == 'active' and obj.is_expired:
+            return 'Closed'
+        return obj.get_status_display()
     
     def get_skills(self, obj):
         # Get skills from ProjectSkill model and capitalize first letter
