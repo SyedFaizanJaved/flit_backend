@@ -73,8 +73,8 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
 
         search = self.request.query_params.get('search', '').strip()
         if search:
-            # candidate_id is a CharField that may hold a Candidate id or user id,
-            # so match against both for candidates whose name or title matches
+            # candidate_id is a CharField holding either a Candidate id or a user id,
+            # so match candidates by name/title and filter against both forms.
             matches = Candidate.objects.filter(
                 Q(full_name__icontains=search) | Q(title__icontains=search)
             ).values_list('id', 'user_id')
