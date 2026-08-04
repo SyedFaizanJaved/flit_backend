@@ -66,10 +66,22 @@ class CandidateActionViewSet(viewsets.ModelViewSet):
         return CandidateActionSerializer
         
     def get_queryset(self):
-        return CandidateAction.objects.filter(
+        qs = CandidateAction.objects.filter(
             employer__user=self.request.user,
             action='pass'
         ).select_related('employer').order_by('-created_at')
+
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            # candidate_id is a CharField holding either a Candidate id or a user id,
+            # so match candidates by name/title and filter against both forms.
+            matches = Candidate.objects.filter(
+                Q(full_name__icontains=search) | Q(title__icontains=search)
+            ).values_list('id', 'user_id')
+            ids = {str(value) for pair in matches for value in pair}
+            qs = qs.filter(candidate_id__in=ids)
+
+        return qs
 
     def create(self, request, *args, **kwargs):
         employer = request.user.employer_profile
