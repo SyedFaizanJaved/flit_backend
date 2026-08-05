@@ -123,6 +123,56 @@ class PublicShareCandidateProfileView(generics.RetrieveAPIView):
             basic_info_completed=True,
         ).select_related("user")
 
+    def retrieve(self, request, *args, **kwargs):
+        """Say WHY the profile can't be shown.
+
+        Filtering these conditions in get_queryset() collapsed three different
+        situations into one DRF 404 whose body reads "No Candidate matches the given
+        query" -- internal phrasing that reached real visitors, and which made a
+        candidate switching sharing off look like a broken link.
+
+        Distinguishing them is safe: public_share_token is unguessable, so only
+        someone who already holds the link can see these responses. It reveals
+        nothing that enables enumeration.
+        """
+        token = self.kwargs.get(self.lookup_url_kwarg)
+        candidate = (
+            Candidate.objects.select_related("user")
+            .filter(public_share_token=token)
+            .first()
+        )
+
+        if candidate is None:
+            return Response(
+                {
+                    "detail": "This profile link isn't valid. Check that you copied the "
+                              "whole link, or ask for a new one.",
+                    "code": "invalid_link",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not candidate.public_share_enabled:
+            return Response(
+                {
+                    "detail": "This profile is no longer shared publicly. The candidate "
+                              "has turned off their shareable link.",
+                    "code": "sharing_disabled",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not candidate.basic_info_completed:
+            return Response(
+                {
+                    "detail": "This profile isn't ready to view yet.",
+                    "code": "profile_incomplete",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(self.get_serializer(candidate).data)
+
 
 class PublicShareCandidateTrackView(APIView):
     """Increments the view counter for a shareable profile, keyed by token."""
