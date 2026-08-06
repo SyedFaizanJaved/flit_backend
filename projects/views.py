@@ -4,7 +4,8 @@ import time
 import re  
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q
+from applications.models import ProjectApplication
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, permissions, mixins
 from rest_framework.authentication import BaseAuthentication
@@ -116,7 +117,37 @@ class PublicProjectViewSet(ProjectMLMixin, mixins.ListModelMixin, mixins.Retriev
         # filters expired rows out without mutating them. The rule itself lives in
         # ProjectQuerySet.open() so this, the apply guard, the serializers and the
         # command can't drift apart.
-        queryset = Project.objects.open()
+        # ponytail: select_related('company') — the jobs equivalent had it, this
+        # didn't, so company_name/company_logo cost a query per row.
+        queryset = Project.objects.open().select_related('company')
+
+        # ponytail: ProjectListSerializer asked the DB per row (is_applied,
+        # application_count, application_details). These annotations answer them up
+        # front, so the query count stops scaling with page size.
+        queryset = queryset.annotate(
+            active_application_count=Count(
+                'applications', filter=Q(applications__is_withdrawn=False)
+            )
+        ).prefetch_related(
+            # ponytail: get_skills read required_skills per row. order_by keeps the
+            # output stable; ProjectSkill has no Meta.ordering.
+            Prefetch('required_skills', queryset=ProjectSkill.objects.order_by('id'))
+        )
+        user = self.request.user
+        if user.is_authenticated and hasattr(user, 'candidate_profile'):
+            candidate = user.candidate_profile
+            mine = ProjectApplication.objects.filter(
+                candidate=candidate, is_withdrawn=False
+            )
+            queryset = queryset.annotate(
+                is_applied_annotated=Exists(mine.filter(project=OuterRef('pk')))
+            ).prefetch_related(
+                Prefetch(
+                    'applications',
+                    queryset=mine.select_related('candidate__user'),
+                    to_attr='my_applications',
+                )
+            )
 
         # Apply search with partial word matching
         search = self.request.query_params.get('search', None)

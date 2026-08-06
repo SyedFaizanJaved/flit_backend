@@ -38,8 +38,10 @@ class CombinedApplicationsView(generics.ListAPIView):
         project_id = self.request.query_params.get('project_id')
         
         # Base querysets with select_related/prefetch_related for performance
-        job_apps = JobApplication.objects.select_related('job', 'candidate__user')
-        project_apps = ProjectApplication.objects.select_related('project', 'candidate__user')
+        # ponytail: 'company' added — both list serializers read company.name, which
+        # cost one query per application (87 of the 94 on a real employer's page).
+        job_apps = JobApplication.objects.select_related('job', 'candidate__user', 'company')
+        project_apps = ProjectApplication.objects.select_related('project', 'candidate__user', 'company')
         
         # Filter by specific Job or Project
         if job_id:
