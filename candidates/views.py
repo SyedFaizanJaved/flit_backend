@@ -56,6 +56,12 @@ from employers.serializers import CandidateFlittedCompanySerializer
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
 
+# ponytail: these ML calls had no timeout, so a hung FLIT_AI service pinned the
+# worker indefinitely. Observed responses run 2.6-4.2s; 15s leaves headroom.
+# Mirrors REQUEST_TIMEOUT in accounts/social.py. The resume-parse and video-analysis
+# uploads keep their own longer explicit timeouts.
+ML_REQUEST_TIMEOUT = 30
+
 
 class CandidateAccessMixin:
     def get_candidate(self):
@@ -561,11 +567,11 @@ def _process_files_and_ml_in_background(
                 update_url = f"{settings.FLIT_AI_URL}/update_candidate_data/{candidate_id}"
                 create_url = f"{settings.FLIT_AI_URL}/create_candidates/{candidate_id}"
 
-                resp = requests.patch(update_url, json=ml_payload, headers=headers)
+                resp = requests.patch(update_url, json=ml_payload, headers=headers, timeout=ML_REQUEST_TIMEOUT)
 
                 if resp.status_code == 404:
                     logger.info(f"[BG] Candidate {candidate_id} not in ML, creating new")
-                    resp = requests.post(create_url, json=ml_payload, headers=headers)
+                    resp = requests.post(create_url, json=ml_payload, headers=headers, timeout=ML_REQUEST_TIMEOUT)
 
                 if resp.status_code not in (200, 201):
                     logger.error(f"[BG] ML sync failed: {resp.status_code} - {resp.text[:500]}")
@@ -1638,7 +1644,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         jobs = []
         try:
             ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_jobs_for_candidate/{candidate.id}"
-            response = requests.get(ml_url)
+            response = requests.get(ml_url, timeout=ML_REQUEST_TIMEOUT)
             if response.status_code == 200:
                 payload = response.json()
                 ranked = (
@@ -1649,18 +1655,28 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     or []
                 )
                 job_ids = []
+                # ponytail: one query for the whole ranked list instead of one per
+                # item — same id__in batching already used by ai_matching below.
+                ranked_ids = []
                 for item in ranked:
-                    job_id = item.get('job_id') or item.get('id')
-                    if not job_id:
+                    try:
+                        ranked_ids.append(int(item.get('job_id') or item.get('id')))
+                    except (TypeError, ValueError):
                         continue
 
-                    # Authoritative open-status check via DB (mirrors latest_projects).
-                    # The ML payload's `status` field is not reliable across services,
-                    # and the ML service knows nothing about application deadlines, so
-                    # expired postings must be filtered out here after it responds.
-                    job = Job.objects.open().filter(
-                        id=job_id
-                    ).select_related('company').first()
+                # Authoritative open-status check via DB (mirrors latest_projects).
+                # The ML payload's `status` field is not reliable across services,
+                # and the ML service knows nothing about application deadlines, so
+                # expired postings must be filtered out here after it responds.
+                jobs_by_id = {
+                    j.id: j
+                    for j in Job.objects.open()
+                    .filter(id__in=ranked_ids)
+                    .select_related('company')
+                }
+
+                for ranked_id in ranked_ids:
+                    job = jobs_by_id.get(ranked_id)
                     if not job:
                         continue
 
@@ -1755,20 +1771,29 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         formatted = []
         try:
             ml_url = f"{settings.FLIT_AI_URL.rstrip('/')}/show_projects_for_candidate/{candidate.id}"
-            response = requests.get(ml_url)
+            response = requests.get(ml_url, timeout=ML_REQUEST_TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
                 projects = data.get('ranked_projects') or data.get('opportunities') or []
                 project_ids = []
 
+                # ponytail: one query for the whole ranked list instead of one per item.
+                ranked_ids = []
                 for item in projects:
-                    pid = item.get('id') or item.get('project_id')
-                    if not pid:
+                    try:
+                        ranked_ids.append(int(item.get('id') or item.get('project_id')))
+                    except (TypeError, ValueError):
                         continue
-                    project = Project.objects.filter(
-                        id=pid,
-                        status__in=['active', 'open']
-                    ).select_related('company').first()
+
+                projects_by_id = {
+                    p.id: p
+                    for p in Project.objects.filter(
+                        id__in=ranked_ids, status__in=['active', 'open']
+                    ).select_related('company')
+                }
+
+                for ranked_id in ranked_ids:
+                    project = projects_by_id.get(ranked_id)
                     if not project:
                         continue
 
@@ -1863,22 +1888,27 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         unread_count = actions_qs.filter(is_read=False).count()
         if unread_count > 0:
             actions_qs.filter(is_read=False).update(is_read=True)
-            
+
+        # ponytail: computed once. This used to run twice on a cold request (once for
+        # the broadcast, once for the response body) and it costs 7 COUNT queries.
+        # Must come after the update above so the broadcast sends post-read counts.
+        unread_counts = get_candidate_unread_counts(request.user)
+
+        if unread_count > 0:
             # Broadcast update via WebSocket
             from utils.broadcaster import broadcast_count_update
             broadcast_count_update(
                 user_id=request.user.id,
                 count_type="flit_list",
-                unread_count=get_candidate_unread_counts(request.user)
+                unread_count=unread_counts
             )
-        
-        employers = [action.employer for action in actions_qs]
 
-        
-        # Paginate results
-        page = self.paginate_queryset(employers)
+        # ponytail: paginate the queryset, not a fully-materialised list — this used
+        # to load every flit the candidate has ever received just to show one page.
+        page = self.paginate_queryset(actions_qs)
         if page is not None:
-            serializer = CandidateFlittedCompanySerializer(page, many=True, context={'request': request})
+            employers = [action.employer for action in page]
+            serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
             
             # Manually construct response to control field order
             return Response({
@@ -1889,15 +1919,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 'total_pages': self.paginator.page.paginator.num_pages,
                 'current_page': self.paginator.page.number,
                 'results': serializer.data,
-                'unread_counts': get_candidate_unread_counts(request.user)
+                'unread_counts': unread_counts
             })
-        
+
+        employers = [action.employer for action in actions_qs]
         serializer = CandidateFlittedCompanySerializer(employers, many=True, context={'request': request})
         return Response({
             'count': len(employers),
             'unread_count': 0,
             'results': serializer.data,
-            'unread_counts': get_candidate_unread_counts(request.user)
+            'unread_counts': unread_counts
         })
 
 
@@ -1962,7 +1993,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         total = request.query_params.get('total')
         params = {'total': total} if total else {}
         try:
-            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params)
+            resp = requests.get(f"{settings.FLIT_AI_URL}/ai_matching/{candidate_id}", params=params, timeout=ML_REQUEST_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
 
@@ -2052,7 +2083,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 return Response(WorkDNAQuestionSerializer(work_dna).data)
 
             try:
-                resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}")
+                resp = requests.get(f"{settings.FLIT_AI_URL}/generate_work_dna_questions/{candidate.id}", timeout=ML_REQUEST_TIMEOUT)
                 if resp.status_code == 200:
                     questions = resp.json().get('questions', [])
                     work_dna = WorkDNAQuestion.objects.create(
@@ -2090,7 +2121,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             if not work_dna.answers:
                 return Response({'error': 'No answers'}, status=400)
 
-            resp = requests.get(f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}")
+            resp = requests.get(f"{settings.FLIT_AI_URL}/evaluate_work_dna_questions/{candidate.id}", timeout=ML_REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 result = resp.json()
                 work_dna.evaluation_result = result

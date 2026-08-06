@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+from datetime import UTC
 from timezone_field import TimeZoneField
 from utils.currency_choices import CURRENCY_CHOICES
 
@@ -181,7 +182,9 @@ class Job(models.Model):
         """Deadline day has ended. Mirrors JobQuerySet.open()/expired()."""
         if not self.applicationDeadline:
             return False
-        return timezone.localtime(self.applicationDeadline, timezone.utc).date() < timezone.now().date()
+        # ponytail: datetime.UTC, not timezone.utc — django.utils.timezone.utc was
+        # removed in Django 5.0 and this raised AttributeError on every job list.
+        return timezone.localtime(self.applicationDeadline, UTC).date() < timezone.now().date()
 
     @property
     def effective_status(self) -> str:

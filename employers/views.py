@@ -5,7 +5,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.urls import reverse as drf_reverse
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from rest_framework import viewsets, generics, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -43,6 +43,9 @@ User = get_user_model()
 from .utils import get_employer_unread_counts
 logger = logging.getLogger(__name__)
 exception_logger = logging.getLogger("exceptions")
+
+# ponytail: see candidates/views.py — this ML call had no timeout either.
+ML_REQUEST_TIMEOUT = 30
 
 
 class EmployerDashboardBaseView(APIView):
@@ -419,14 +422,31 @@ class EmployerViewSet(viewsets.ViewSet):
             project_qs = Project.objects.filter(employer=user)
             job_qs = Job.objects.filter(employer=user)
 
+        # ponytail: 8 separate COUNT round trips collapsed into 3 via conditional
+        # aggregation. distinct=True on the application counts is required — the two
+        # LEFT JOINs would otherwise multiply each other's rows.
+        project_stats = project_qs.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status='active')),
+            completed=Count('id', filter=Q(status='completed')),
+        )
+        job_stats = job_qs.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status='active')),
+            completed=Count('id', filter=Q(status='completed')),
+        )
+        application_stats = User.objects.filter(pk=user.pk).aggregate(
+            jobs=Count('received_job_applications', distinct=True),
+            projects=Count('received_project_applications', distinct=True),
+        )
+
         stats = {
-            'total_projects': project_qs.count(),
-            'active_projects': project_qs.filter(status='active').count(),
-            'total_jobs': job_qs.count(),
-            'active_jobs': job_qs.filter(status='active').count(),
-            'total_applications': user.received_job_applications.count() + user.received_project_applications.count(),
-            'completed': job_qs.filter(status='completed').count()
-                         + project_qs.filter(status='completed').count(),
+            'total_projects': project_stats['total'],
+            'active_projects': project_stats['active'],
+            'total_jobs': job_stats['total'],
+            'active_jobs': job_stats['active'],
+            'total_applications': application_stats['jobs'] + application_stats['projects'],
+            'completed': job_stats['completed'] + project_stats['completed'],
         }
 
         # 3. Meet & Greet (Latest 2 each)
@@ -443,14 +463,28 @@ class EmployerViewSet(viewsets.ViewSet):
         ).select_related('candidate').order_by('-start_time')[:2]
 
         # 4. Posting (Latest 2 each)
-        latest_jobs = Job.objects.filter(employer=user).order_by('-created_at')[:2]
-        latest_projects = Project.objects.filter(employer=user).order_by('-created_at')[:2]
+        # ponytail: company + the application-count annotation the list serializers
+        # already look for, so each posting stops costing its own handful of queries.
+        latest_jobs = Job.objects.filter(employer=user).select_related('company').annotate(
+            active_application_count=Count(
+                'applications', filter=Q(applications__is_withdrawn=False)
+            )
+        ).order_by('-created_at')[:2]
+        latest_projects = Project.objects.filter(employer=user).select_related('company').annotate(
+            active_application_count=Count(
+                'applications', filter=Q(applications__is_withdrawn=False)
+            )
+        ).prefetch_related('required_skills').order_by('-created_at')[:2]
 
         # 5. Hired Candidates (Latest 5 accepted offers)
+        # ponytail: meeting__job / meeting__project — OfferSerializer.to_representation
+        # reads both, which cost two lazy loads per offer.
         hired_candidates = Offer.objects.filter(
             employer=user,
             status__in=['accepted', 'hired']
-        ).select_related('candidate', 'meeting').order_by('-updated_at')[:5]
+        ).select_related(
+            'candidate', 'meeting', 'meeting__job', 'meeting__project'
+        ).order_by('-updated_at')[:5]
 
         # 6. Latest Messages with sender images
         latest_msgs = ChatMessage.objects.filter(recipient=user).select_related('sender').order_by('-created_at')[:4]
@@ -620,7 +654,7 @@ def get_flitpass_data(request, company_id):
         ml_api_url = f"{settings.FLIT_AI_URL}/flitpass/{company_id}"
         
         # Make a single request 
-        response = requests.get(ml_api_url)
+        response = requests.get(ml_api_url, timeout=ML_REQUEST_TIMEOUT)
         response.raise_for_status()
         
         data = response.json()

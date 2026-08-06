@@ -156,7 +156,13 @@ class JobListSerializer(serializers.ModelSerializer):
             
         if not hasattr(request.user, 'candidate_profile'):
             return False
-            
+
+        # ponytail: PublicJobViewSet annotates this so a 24-job page costs 0 queries
+        # here instead of 24. Other call sites don't annotate and fall through.
+        annotated = getattr(obj, 'is_applied_annotated', None)
+        if annotated is not None:
+            return annotated
+
         # Check if candidate has an active application for this job
         return obj.applications.filter(
             candidate=request.user.candidate_profile,
@@ -167,6 +173,10 @@ class JobListSerializer(serializers.ModelSerializer):
         """
         Return the total count of non-withdrawn applications for this job.
         """
+        # ponytail: annotated by PublicJobViewSet; falls back for other call sites.
+        annotated = getattr(obj, 'active_application_count', None)
+        if annotated is not None:
+            return annotated
         return obj.applications.filter(is_withdrawn=False).count()
     
     def get_company_logo(self, obj):
@@ -189,6 +199,22 @@ class JobListSerializer(serializers.ModelSerializer):
         # For candidates - show their own application
         if hasattr(request.user, 'candidate_profile'):
             candidate = request.user.candidate_profile
+            # ponytail: PublicJobViewSet prefetches this candidate's own non-withdrawn
+            # applications into `my_applications` (at most one per job), so this costs
+            # 0 queries there. Other call sites have no such attribute and fall through.
+            prefetched = getattr(obj, 'my_applications', None)
+            if prefetched is not None:
+                if not prefetched:
+                    return None
+                application = prefetched[0]
+                return {
+                    'application_id': application.id,
+                    'candidate_name': application.candidate.full_name,
+                    'status': application.status,
+                    'user_id': request.user.id,
+                    'candidate_id': application.candidate.id,
+                    'profile_image': request.build_absolute_uri(application.candidate.profile_image.url) if application.candidate.profile_image else None
+                }
             try:
                 application = obj.applications.get(
                     candidate=candidate,

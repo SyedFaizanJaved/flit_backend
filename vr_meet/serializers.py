@@ -85,22 +85,34 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
         return None
 
     def get_employer_company(self, obj):
-        try:
-            from employers.models import Employer
-            employer = Employer.objects.get(user=obj.employer)
-            if employer.company:
-                return {
-                    'id': employer.company.id,
-                    'name': employer.company.company_name,
-                    'logo': employer.company.logo.url if employer.company.logo else None
-                }
-        except Exception as e:
-            print(f"Error getting employer company: {str(e)}")
-        return None
+        # ponytail: memoised per employer id. This ran Employer.objects.get() once
+        # per meeting room, and a meeting list is usually all one employer.
+        if not hasattr(self, '_employer_company_cache'):
+            self._employer_company_cache = {}
+        employer_id = obj.employer_id
+        if employer_id not in self._employer_company_cache:
+            result = None
+            try:
+                from employers.models import Employer
+                employer = Employer.objects.select_related('company').get(user_id=employer_id)
+                if employer.company:
+                    result = {
+                        'id': employer.company.id,
+                        'name': employer.company.company_name,
+                        'logo': employer.company.logo.url if employer.company.logo else None
+                    }
+            except Exception as e:
+                print(f"Error getting employer company: {str(e)}")
+            self._employer_company_cache[employer_id] = result
+        return self._employer_company_cache[employer_id]
 
     def get_offer_status(self, obj):
         """Return the latest offer status for this meeting. Defaults to 'pending' if no offer exists."""
-        offer = obj.offers.order_by('-created_at').first()
+        # ponytail: picking the newest in Python uses the view's prefetch when there
+        # is one and costs a single query when there isn't — .order_by().first()
+        # always re-queried, once per row. Same row either way.
+        offers = list(obj.offers.all())
+        offer = max(offers, key=lambda o: o.created_at) if offers else None
         if offer:
             return {
                 'id': offer.id,
@@ -238,31 +250,30 @@ class OfferSerializer(serializers.ModelSerializer):
         if opportunity_type == 'unknown' and instance.candidate and instance.employer:
             from applications.models import JobApplication, ProjectApplication
             
-            # Check for project applications
-            p_apps = ProjectApplication.objects.filter(candidate__user=instance.candidate, employer=instance.employer)
-            has_project_apps = p_apps.exists()
-            
-            # Check for job applications
-            j_apps = JobApplication.objects.filter(candidate__user=instance.candidate, employer=instance.employer)
-            has_job_apps = j_apps.exists()
-            
+            # ponytail: was exists() + first() + a lazy .job/.project load per offer —
+            # 4 queries where 2 do the same work. first() is None exactly when
+            # exists() was False, and select_related pulls the job/project with it.
+            p_app = ProjectApplication.objects.filter(
+                candidate__user=instance.candidate, employer=instance.employer
+            ).select_related('project').first()
+            has_project_apps = p_app is not None
+
+            j_app = JobApplication.objects.filter(
+                candidate__user=instance.candidate, employer=instance.employer
+            ).select_related('job').first()
+            has_job_apps = j_app is not None
+
             if has_job_apps and not has_project_apps:
                 opportunity_type = 'job'
-                j_app = j_apps.first()
-                if j_app:
-                    data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
+                data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
             elif has_project_apps and not has_job_apps:
                 opportunity_type = 'project'
-                p_app = p_apps.first()
-                if p_app:
-                    data['project'] = {'id': p_app.project.id, 'title': p_app.project.title, 'type': 'project'}
+                data['project'] = {'id': p_app.project.id, 'title': p_app.project.title, 'type': 'project'}
             elif has_job_apps and has_project_apps:
                 # If both exist, try to match by title (brittle but better than nothing)
                 # For now just default to job
                 opportunity_type = 'job'
-                j_app = j_apps.first()
-                if j_app:
-                    data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
+                data['job'] = {'id': j_app.job.id, 'title': j_app.job.title, 'type': 'job'}
 
         data['opportunity_type'] = opportunity_type
                 
@@ -275,14 +286,23 @@ class OfferSerializer(serializers.ModelSerializer):
         return obj.employer.get_full_name() or obj.employer.email
 
     def get_company_logo(self, obj):
-        try:
-            from employers.models import Employer
-            profile = Employer.objects.get(user=obj.employer)
-            if profile.company and profile.company.logo:
-                return profile.company.logo.url
-        except Exception:
-            pass
-        return None
+        # ponytail: memoised per employer id. This ran Employer.objects.get() once
+        # per offer, and on an employer's dashboard every offer shares the same
+        # employer — 5 identical queries for one logo.
+        if not hasattr(self, '_company_logo_cache'):
+            self._company_logo_cache = {}
+        employer_id = obj.employer_id
+        if employer_id not in self._company_logo_cache:
+            logo = None
+            try:
+                from employers.models import Employer
+                profile = Employer.objects.select_related('company').get(user_id=employer_id)
+                if profile.company and profile.company.logo:
+                    logo = profile.company.logo.url
+            except Exception:
+                pass
+            self._company_logo_cache[employer_id] = logo
+        return self._company_logo_cache[employer_id]
 
     def validate_meeting(self, meeting):
         """Ensure the meeting exists and is not deleted."""

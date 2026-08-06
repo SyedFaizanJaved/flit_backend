@@ -137,26 +137,40 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         # Return seniority level in the same format as the detailed view
         return obj.seniority_level if hasattr(obj, 'seniority_level') else None
 
+    @property
+    def _flit_actions(self):
+        """{candidate_id: action} for the requesting employer, fetched once per response.
+
+        ponytail: this used to run Employer.objects.get() plus a CandidateAction
+        lookup per row — 48 of the 50 queries on a 24-row discover-talent page, and
+        the employer lookup returned the same row every time. Employer.user is a
+        OneToOneField, so filtering on employer__user is equivalent to the old .get().
+
+        Ceiling: loads every action this employer has taken. unique_together(employer,
+        candidate_id) bounds it to one row per candidate acted on; narrow it to the
+        page's candidate ids if that ever gets large.
+        """
+        if not hasattr(self, '_flit_actions_cache'):
+            # Use late import to avoid circular dependency
+            from employers.models import CandidateAction
+            request = self.context.get('request')
+            if request and request.user.is_authenticated:
+                self._flit_actions_cache = dict(
+                    CandidateAction.objects
+                    .filter(employer__user=request.user)
+                    .values_list('candidate_id', 'action')
+                )
+            else:
+                self._flit_actions_cache = {}
+        return self._flit_actions_cache
+
     def get_flit_status(self, obj):
         """Check the status of employer actions for this candidate."""
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            try:
-                # Use late import to avoid circular dependency
-                from employers.models import Employer, CandidateAction
-                employer = Employer.objects.get(user=request.user)
-                action_obj = CandidateAction.objects.filter(
-                    employer=employer, 
-                    candidate_id=str(obj.id)
-                ).first()
-                
-                if action_obj:
-                    if action_obj.action == 'pass':
-                        return 'flitted'
-                    elif action_obj.action == 'reject':
-                        return 'passed'
-            except (Employer.DoesNotExist, Exception):
-                pass
+        action = self._flit_actions.get(str(obj.id))
+        if action == 'pass':
+            return 'flitted'
+        elif action == 'reject':
+            return 'passed'
         return None
 
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):

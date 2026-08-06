@@ -5,6 +5,8 @@ import re
 from rest_framework import permissions
 from django.conf import settings
 from django.db import models
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q
+from applications.models import JobApplication
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status, permissions, mixins
@@ -129,6 +131,29 @@ class PublicJobViewSet(JobMLMixin, mixins.ListModelMixin, mixins.RetrieveModelMi
         # command can't drift apart.
         queryset = Job.objects.open().select_related('company')
 
+        # ponytail: JobListSerializer asked the DB three times per row (is_applied,
+        # application_count, application_details). These annotations answer all three
+        # up front, so the query count stops scaling with page size.
+        queryset = queryset.annotate(
+            active_application_count=Count(
+                'applications', filter=Q(applications__is_withdrawn=False)
+            )
+        )
+        user = self.request.user
+        if user.is_authenticated and hasattr(user, 'candidate_profile'):
+            candidate = user.candidate_profile
+            mine = JobApplication.objects.filter(
+                candidate=candidate, is_withdrawn=False
+            )
+            queryset = queryset.annotate(
+                is_applied_annotated=Exists(mine.filter(job=OuterRef('pk')))
+            ).prefetch_related(
+                Prefetch(
+                    'applications',
+                    queryset=mine.select_related('candidate__user'),
+                    to_attr='my_applications',
+                )
+            )
 
         search = self.request.query_params.get('search', None)
         if search:

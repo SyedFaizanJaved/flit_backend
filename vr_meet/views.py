@@ -214,7 +214,13 @@ class MeetingRoomListView(generics.ListAPIView):
     """
     def get_queryset(self):
         user = self.request.user
-        return MeetingRoom.objects.filter(Q(is_deleted=False) & (Q(employer=user) | Q(privacy='public') | Q(candidate=user))).distinct()
+        # ponytail: the serializer reads candidate, candidate_profile (logo), job,
+        # project and offers on every row — ~6 queries each, 126 for a 20-row page.
+        return MeetingRoom.objects.filter(
+            Q(is_deleted=False) & (Q(employer=user) | Q(privacy='public') | Q(candidate=user))
+        ).select_related(
+            'candidate', 'candidate__candidate_profile', 'employer', 'job', 'project'
+        ).prefetch_related('offers').distinct()
     
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -841,12 +847,12 @@ class OfferListView(generics.ListAPIView):
 
         if role_name == settings.USER_ROLE_EMPLOYER:
             return Offer.objects.filter(employer=user).select_related(
-                'meeting', 'candidate', 'employer'
+                'meeting', 'candidate', 'employer', 'meeting__job', 'meeting__project'
             )
         else:
             # Candidates or any other role see received offers
             return Offer.objects.filter(candidate=user).select_related(
-                'meeting', 'candidate', 'employer'
+                'meeting', 'candidate', 'employer', 'meeting__job', 'meeting__project'
             )
 
     def list(self, request, *args, **kwargs):
@@ -1073,10 +1079,12 @@ class CandidateOfferListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        # ponytail: meeting__job / meeting__project are read by
+        # OfferSerializer.to_representation on every row.
         return Offer.objects.filter(
             candidate=self.request.user,
             status__in=['hired', 'accepted', 'declined']
-        ).select_related('meeting', 'candidate', 'employer')
+        ).select_related('meeting', 'candidate', 'employer', 'meeting__job', 'meeting__project')
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
