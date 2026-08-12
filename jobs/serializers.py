@@ -38,19 +38,26 @@ class JobSerializer(serializers.ModelSerializer):
     experienceLevel = serializers.CharField(source='get_experienceLevel_display', read_only=True)
     employmentType = serializers.CharField(source='get_employmentType_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    effective_status = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
     timezone = TimeZoneSerializerField()
     deadline = serializers.DateTimeField(source='applicationDeadline', read_only=True)
-    
+
     class Meta:
         model = Job
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'workStyle', 'category',
             'experienceLevel', 'employmentType', 'skills', 'salaryRangeMin',
             'salaryRangeMax', 'salary_currency', 'benefits', 'applicationDeadline', 'hasTemporaryOption','temporaryDuration',
-            'status', 'created_at', 'updated_at', 'is_applied', 'timezone', 'deadline'
+            'status', 'is_expired', 'effective_status', 'created_at', 'updated_at', 'is_applied', 'timezone', 'deadline'
         )
-    
+
+    def get_effective_status(self, obj):
+        """Display value that reflects a passed deadline immediately — see JobListSerializer."""
+        return 'Closed' if obj.effective_status == 'closed' else obj.get_status_display()
+
+
     def get_skills(self, obj):
         """Return skills with first letter capitalized"""
         skills = obj.skills or []

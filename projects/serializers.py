@@ -37,18 +37,25 @@ class ProjectSerializer(serializers.ModelSerializer):
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
     work_style = serializers.CharField(source='get_work_style_display', read_only=True)
     status = serializers.CharField(source='get_status_display', read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    effective_status = serializers.SerializerMethodField()
     education_level = serializers.CharField(source='get_education_level_display', read_only=True)
     project_timezone = TimeZoneSerializerField()
-    
+
     class Meta:
         model = Project
         fields = (
             'id', 'title', 'description', 'company_name', 'company_id', 'category', 'estimatedHours',
             'paymentType', 'paymentAmount', 'payment_currency', 'skills', 'deadline', 'required_skills',
-            'status', 'work_style', 'education_level', 'created_at', 'updated_at', 'is_applied',
+            'status', 'is_expired', 'effective_status',
+            'work_style', 'education_level', 'created_at', 'updated_at', 'is_applied',
             'hasTemporaryOption', 'temporaryDuration', 'project_timezone'
         )
         read_only_fields = ('employer', 'created_at', 'updated_at', 'slug')
+
+    def get_effective_status(self, obj):
+        """Display value that reflects a passed deadline immediately — see ProjectListSerializer."""
+        return 'Closed' if obj.effective_status == 'closed' else obj.get_status_display()
     
     def get_is_applied(self, obj):
         """
