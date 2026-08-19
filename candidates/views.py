@@ -421,8 +421,12 @@ def _process_files_and_ml_in_background(
                 logger.error(f"[BG] Failed to delete old file {file_path}: {e}")
 
     try:
-        # Mark as processing in cache (10 min TTL)
-        cache.set(cache_key, {'status': 'processing', 'error': None}, timeout=600)
+        # Mark as processing in cache (10 min TTL). A cache failure must not abort
+        # the uploads below, so it is swallowed rather than hitting the outer except.
+        try:
+            cache.set(cache_key, {'status': 'processing', 'error': None}, timeout=600)
+        except Exception as e:
+            logger.warning(f"[BG] Could not record processing status for candidate {candidate_id}: {e}")
 
         # ---------- STEP 1: S3 File Uploads ----------
 
@@ -1161,7 +1165,12 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         """
         candidate = self.get_candidate()
         cache_key = f"candidate_processing_{candidate.id}"
-        cached = cache.get(cache_key)
+        try:
+            cached = cache.get(cache_key)
+        except Exception as e:
+            # A polling endpoint must not 500 because the cache is unreachable.
+            logger.warning(f"Processing status cache unavailable: {e}")
+            cached = None
 
         if cached:
             status = cached.get('status', 'idle')
