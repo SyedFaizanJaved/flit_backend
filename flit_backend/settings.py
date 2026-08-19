@@ -91,6 +91,21 @@ CHANNEL_LAYERS = {
     },
 }
 
+# A cross-worker cache is opt-in via CACHE_URL, so local dev needs no Redis.
+# Set it in production (e.g. CACHE_URL=$REDIS_URL) so the background upload status
+# written by one worker is readable by the worker serving
+# /candidates/processing-status/. Without it Django's per-process default is used,
+# which reports reliably only from a single-worker deployment.
+# NOTE: this cache also backs DRF login throttling — an unreachable cache 500s login.
+CACHE_URL = config('CACHE_URL', default='')
+if CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': CACHE_URL,
+        },
+    }
+
 
 
 
