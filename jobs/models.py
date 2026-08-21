@@ -97,7 +97,10 @@ class Job(models.Model):
     # Basic Information
     title = models.CharField(max_length=200)
     description = models.TextField(max_length=2000)
-    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='jobs')
+    # Nullable: an employer can post before finishing company setup. Such a
+    # posting shows as 'Anonymous Company' and is adopted automatically when
+    # they later create one (companies/serializers.py).
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='jobs', blank=True, null=True)
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_jobs')
     
     # Job Details (matching JobPostingFields)
@@ -213,7 +216,7 @@ class Job(models.Model):
             import uuid
             
             # First try with just title and company
-            base_slug = slugify(f"{self.title}-{self.company.company_name}")
+            base_slug = slugify(f"{self.title}-{self.company.company_name if self.company else 'anonymous'}")
             self.slug = base_slug
             
             # If this is a new instance or the slug is being changed
