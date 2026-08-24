@@ -7,14 +7,16 @@ former read-side-effect inside JobViewSet.get_queryset() (Bug #23).
     python manage.py close_expired_jobs
     python manage.py close_expired_jobs --dry-run   # preview only
 
-Scheduling: expiry is date-granular (see JobQuerySet), so state only changes at
-00:00 UTC and a single daily run is sufficient. Add to the server crontab:
+Scheduled by `manage.py run_expiry_scheduler`, which runs as its own systemd
+service (deploy/flit-expiry-scheduler.service) and sweeps hourly. Run it directly for
+a manual backfill:
 
-    5 0 * * * cd /path/to/flit_backend && /path/to/venv/bin/python manage.py close_expired_jobs
+    python manage.py close_expired_jobs
 
 This is housekeeping, not the mechanism: candidate-facing lists and the apply guard
 read JobQuerySet.open() live, so deadlines are honoured even if this never runs. All
-this does is bring the stored `status` into line and notify the ML service.
+this does is bring the stored `status` into line and drop the posting from the
+ML vector store so it stops being ranked.
 """
 
 import logging
@@ -69,11 +71,21 @@ class Command(BaseCommand):
                 with transaction.atomic():
                     job.status = 'closed'
                     job.save(update_fields=['status'])
+                # Drop it from the ML vector store. Updating metadata is not enough:
+                # the record stays indexed and keeps getting ranked, which is what had
+                # closed jobs still being recommended to candidates. Best-effort --
+                # the row is already closed, and candidate-facing reads filter on
+                # JobQuerySet.open() regardless, so a failure here costs a wasted
+                # ranking slot, not a wrong result.
                 try:
-                    notifier._call_ml_metadata_api(job)
+                    ok, error = notifier._call_ml_delete_api(job)
+                    if not ok:
+                        logger.error(
+                            "ML delete failed for job %s: %s", job.id, error
+                        )
                 except Exception as e:
                     logger.exception(
-                        "ML metadata notify failed for job %s: %s", job.id, e
+                        "ML delete raised for job %s: %s", job.id, e
                     )
                 closed += 1
             except Exception as e:

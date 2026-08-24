@@ -19,6 +19,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
 from utils.email_service import send_shortlist_notification, send_rejection_notification
+from utils.ml_client import delete_from_ml_index
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Job, JobSkill, JobLanguage
 from .serializers import (
@@ -43,7 +44,17 @@ class JobMLMixin:
         return self._call_ml_api(f"{settings.FLIT_AI_URL}/create_jobs/{job.id}", job, is_create=True)
 
     def _call_ml_update_api(self, job):
-        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_job_data/{job.id}", job, is_create=False)
+        # PATCH first, create on 404. Closing a posting now removes it from the ML
+        # index, so an employer who reopens or edits a closed one would otherwise be
+        # PATCHing a record that no longer exists -- it would never be re-indexed and
+        # could never be recommended again. Same fallback as the candidate sync in
+        # candidates/views.py.
+        return self._call_ml_api(
+            f"{settings.FLIT_AI_URL}/update_job_data/{job.id}",
+            job,
+            is_create=False,
+            create_url=f"{settings.FLIT_AI_URL}/create_jobs/{job.id}",
+        )
 
     def _call_ml_metadata_api(self, job):
         """
@@ -51,7 +62,16 @@ class JobMLMixin:
         """
         return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_job_metadata/{job.id}", job, is_create=False)
 
-    def _call_ml_api(self, url, job, is_create=True):
+    def _call_ml_delete_api(self, job):
+        """Drop the job from the ML vector store. Returns (ok, error).
+
+        Called when a posting closes. Updating its metadata is not enough -- the record
+        stays in the index and keeps getting ranked, which is why closed jobs went on
+        being recommended. Removing it is what actually stops that.
+        """
+        return delete_from_ml_index(f"/delete_job/{job.id}")
+
+    def _call_ml_api(self, url, job, is_create=True, create_url=None):
         payload = {
             "title": job.title,
             "description": job.description,
@@ -82,6 +102,10 @@ class JobMLMixin:
                 time.sleep(1)
             except requests.exceptions.RequestException as e:
                 return False, None, [], f"ML API request failed: {str(e)}"
+
+        if ml_response.status_code == 404 and create_url:
+            # Not in the index (deleted on close). Put it back rather than failing.
+            return self._call_ml_api(create_url, job, is_create=True)
 
         if ml_response.status_code in (200, 201):
             try:
@@ -428,6 +452,20 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
             return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
         job.status = new_status
         job.save()
+
+        # Keep the ML index in step with the employer's choice. This action used to call
+        # ML not at all, so manually closed postings stayed indexed and went on being
+        # recommended -- the same staleness the deadline sweep fixes, through a different
+        # door. Re-index only when the posting is genuinely open: reactivating one whose
+        # deadline has already passed must not put it back in front of candidates.
+        # Best-effort; candidate reads filter on JobQuerySet.open() either way.
+        try:
+            if job.status == 'active' and not job.is_expired:
+                self._call_ml_update_api(job)
+            else:
+                self._call_ml_delete_api(job)
+        except Exception:
+            logger.exception("ML index sync failed after status change for job %s", job.id)
         return Response({'message': 'Job status updated successfully', 'job': JobSerializer(job).data})
 
     @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/shortlist')
