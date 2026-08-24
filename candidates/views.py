@@ -63,6 +63,35 @@ exception_logger = logging.getLogger("exceptions")
 ML_REQUEST_TIMEOUT = 30
 
 
+def _ml_match_ref(item):
+    """Resolve one ai_matching row to ('job'|'project', id), or None if it has no id.
+
+    The ML payload is inconsistent about how it names the id -- `job_id`, `project_id`,
+    or a bare `id` plus a `type` discriminator. ai_matching needed this resolution three
+    times over (collect ids, look rows up, attach logos); doing it once here is what
+    lets that method filter and enrich in a single pass.
+    """
+    if not isinstance(item, dict):
+        return None
+    if item.get('job_id'):
+        kind, raw = 'job', item['job_id']
+    elif item.get('project_id'):
+        kind, raw = 'project', item['project_id']
+    elif item.get('id'):
+        # Anything that isn't explicitly a project is a job, as before.
+        kind = 'project' if item.get('type', 'job').lower() == 'project' else 'job'
+        raw = item['id']
+    else:
+        return None
+    try:
+        # ML sends ids as ints or strings depending on the endpoint; normalise so
+        # these compare equal to the pk coming back from the DB. Same int() coercion
+        # _get_ml_jobs_list already does on its ranked list.
+        return kind, int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 class CandidateAccessMixin:
     def get_candidate(self):
         try:
@@ -1628,7 +1657,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
     
         if cached and cached.get('ml_success'):
             jobs = cached.get('jobs', [])
-            job_ids = [j['id'] for j in jobs if 'id' in j]
+            cached_ids = [j['id'] for j in jobs if 'id' in j]
+            # The cache outlives deadlines: a list cached at 00:03 is still served at
+            # 00:07, after close_expired_jobs ran. Re-check through the same rule the
+            # live branch below uses, so a cache hit can't serve an expired posting.
+            open_ids = set(
+                Job.objects.open().filter(id__in=cached_ids).values_list('id', flat=True)
+            ) if cached_ids else set()
+            jobs = [j for j in jobs if j.get('id') in open_ids]
+
+            job_ids = [j['id'] for j in jobs]
             if job_ids:
                 applied_job_ids = set(
                     Application.objects.filter(
@@ -1755,7 +1793,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         cache_key = f'candidate_{candidate.id}_latest_projects'
         cached = cache.get(cache_key)
         if cached:
-            project_ids = [p['id'] for p in cached if 'id' in p]
+            cached_ids = [p['id'] for p in cached if 'id' in p]
+            # Same staleness window as the jobs cache above.
+            open_ids = set(
+                Project.objects.open().filter(id__in=cached_ids).values_list('id', flat=True)
+            ) if cached_ids else set()
+            cached = [p for p in cached if p.get('id') in open_ids]
+
+            project_ids = [p['id'] for p in cached]
             if project_ids:
                 applied_project_ids = set(
                     ProjectApplication.objects.filter(
@@ -1794,11 +1839,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                     except (TypeError, ValueError):
                         continue
 
+                # Authoritative open-status check via DB (mirrors _get_ml_jobs_list).
+                # This used to filter on status__in=['active', 'open'] -- 'open' is not
+                # in Project.STATUS_CHOICES, and neither value looks at `deadline`, so
+                # expired-but-active projects came straight through. ProjectQuerySet.open()
+                # is the same rule the apply guard and serializers read.
                 projects_by_id = {
                     p.id: p
-                    for p in Project.objects.filter(
-                        id__in=ranked_ids, status__in=['active', 'open']
-                    ).select_related('company')
+                    for p in Project.objects.open()
+                    .filter(id__in=ranked_ids)
+                    .select_related('company')
                 }
 
                 for ranked_id in ranked_ids:
@@ -2017,64 +2067,44 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 matches = []
 
             if matches and isinstance(matches, list):
-                # 1. Collect all job and project IDs to perform bulk lookups
-                job_ids = []
-                project_ids = []
-                for item in matches:
-                    if not isinstance(item, dict): continue
-                    
-                    # Try to determine if it's a job or project
-                    # ML service usually provides 'type' or use specific ID keys
-                    item_type = item.get('type', 'job').lower()
-                    jid = item.get('job_id')
-                    pid = item.get('project_id')
-                    oid = item.get('id')
+                refs = [_ml_match_ref(item) for item in matches]
+                resolved = [r for r in refs if r]
 
-                    if jid:
-                        job_ids.append(jid)
-                    elif pid:
-                        project_ids.append(pid)
-                    elif oid:
-                        if item_type == 'project':
-                            project_ids.append(oid)
-                        else:
-                            job_ids.append(oid)
+                # The ML service ranks from its own index and knows nothing about
+                # application deadlines, so a posting that closed here can still come
+                # back ranked -- that is the whole reason expired jobs and projects were
+                # reaching this feed. open() is the same rule the dashboard lists, the
+                # apply guard and close_expired_* all read, so they cannot disagree.
+                # Ids with no row at all (deleted, or ML index drift) drop out too: a
+                # card that 404s when the candidate taps it is worse than a shorter list.
+                open_rows = {
+                    ('job', j.id): j
+                    for j in Job.objects.open()
+                    .filter(id__in=[i for k, i in resolved if k == 'job'])
+                    .select_related('company')
+                }
+                open_rows.update({
+                    ('project', p.id): p
+                    for p in Project.objects.open()
+                    .filter(id__in=[i for k, i in resolved if k == 'project'])
+                    .select_related('company')
+                })
 
-                # 2. Bulk fetch logos from database
-                logo_map = {} # Map ID -> Logo URL
-                
-                if job_ids:
-                    jobs = Job.objects.filter(id__in=job_ids).select_related('company')
-                    for job in jobs:
-                        if job.company and job.company.logo:
-                            logo_map[f"job_{job.id}"] = request.build_absolute_uri(job.company.logo.url)
-                
-                if project_ids:
-                    projects = Project.objects.filter(id__in=project_ids).select_related('company')
-                    for project in projects:
-                        if project.company and project.company.logo:
-                            logo_map[f"project_{project.id}"] = request.build_absolute_uri(project.company.logo.url)
+                # One pass: drop what is no longer open, enrich what survives.
+                kept = []
+                for item, ref in zip(matches, refs):
+                    row = open_rows.get(ref) if ref else None
+                    if row is None:
+                        continue
+                    logo = row.company.logo if row.company else None
+                    # Field name as requested by Team Lead.
+                    item['company_image'] = request.build_absolute_uri(logo.url) if logo else None
+                    kept.append(item)
 
-                # 3. Inject company_image into the response items
-                for item in matches:
-                    if not isinstance(item, dict): continue
-                    
-                    item_type = item.get('type', 'job').lower()
-                    jid = item.get('job_id')
-                    pid = item.get('project_id')
-                    oid = item.get('id')
-                    
-                    logo_url = None
-                    if jid and f"job_{jid}" in logo_map:
-                        logo_url = logo_map[f"job_{jid}"]
-                    elif pid and f"project_{pid}" in logo_map:
-                        logo_url = logo_map[f"project_{pid}"]
-                    elif oid:
-                        key = f"{item_type}_{oid}"
-                        logo_url = logo_map.get(key)
-                    
-                    # Add the field as requested by Team Lead
-                    item['company_image'] = logo_url
+                # `matches` aliases the list inside `data` (or is `data` itself when the
+                # ML service returns a bare list). Slice-assign so the response actually
+                # reflects the filter -- rebinding would return the unfiltered original.
+                matches[:] = kept
 
             return Response(data)
         except requests.RequestException:

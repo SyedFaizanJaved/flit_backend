@@ -1,0 +1,41 @@
+# FLIT expiry scheduler
+# =====================
+# Closes jobs and projects whose deadline has passed, and notifies the ML service.
+#
+# Install (see .github/workflows/deploy-*.yml, which does this automatically):
+#     sudo cp deploy/flit-expiry-scheduler.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now flit-expiry-scheduler
+#
+# Inspect:
+#     systemctl status flit-expiry-scheduler
+#     journalctl -u flit-expiry-scheduler -n 100 --no-pager
+#
+# Exactly one instance must run per environment. The command sweeps shared rows and
+# calls the ML API per row, so a second copy means duplicate PATCHes.
+
+[Unit]
+Description=FLIT expiry scheduler (closes past-deadline jobs and projects)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/flit_backend
+ExecStart=/home/ubuntu/flit_backend/venv/bin/python manage.py run_expiry_scheduler
+
+# The command handles SIGTERM and finishes its current slice before exiting.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flit-expiry-scheduler
+
+[Install]
+WantedBy=multi-user.target
