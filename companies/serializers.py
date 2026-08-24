@@ -217,7 +217,15 @@ class CompanySerializer(serializers.ModelSerializer):
             employer.company = company
             employer.company_info_completed = True
             employer.save(update_fields=['company', 'company_info_completed', 'updated_at'])
-            
+
+            # Adopt anything this employer posted anonymously before setting up a
+            # company, so the anonymous state resolves itself instead of stranding
+            # postings that can never show a company again.
+            from jobs.models import Job
+            from projects.models import Project
+            Job.objects.filter(employer=user, company__isnull=True).update(company=company)
+            Project.objects.filter(employer=user, company__isnull=True).update(company=company)
+
             # Mark user profile as completed ONLY if all employer requirements are met
             if employer.is_profile_complete:
                 if not getattr(user, 'profile_completed', False):

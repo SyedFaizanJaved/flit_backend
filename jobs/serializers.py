@@ -30,8 +30,8 @@ class JobSerializer(serializers.ModelSerializer):
     Serializer for job postings
     """
     # Only expose flat skills list; keep languages nested
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
+    company_id = serializers.IntegerField(source='company.id', read_only=True, default=None)
     is_applied = serializers.SerializerMethodField()
     workStyle = serializers.CharField(source='get_workStyle_display', read_only=True)
     category = serializers.CharField(source='get_category_display', read_only=True)
@@ -107,8 +107,8 @@ class JobListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing jobs
     """
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
+    company_id = serializers.IntegerField(source='company.id', read_only=True, default=None)
     company_logo = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
     application_details = serializers.SerializerMethodField()
@@ -190,7 +190,7 @@ class JobListSerializer(serializers.ModelSerializer):
         """
         Get the company logo URL.
         """
-        return obj.company.logo.url if obj.company.logo else None
+        return obj.company.logo.url if obj.company and obj.company.logo else None
 
     def get_application_details(self, obj):
         """
@@ -292,19 +292,22 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'hasTemporaryOption','temporaryDuration', 'salaryRangeMin', 'salaryRangeMax',
             'salary_currency', 'benefits', 'applicationDeadline', 'timezone'
         )
+        # Required set is deliberately small: enough for the matching engine
+        # (title/description/category/skills) plus the salary range candidates
+        # filter on. Everything else falls back to its model default.
         extra_kwargs = {
             'title': {'required': True},
             'description': {'required': True},
-            'company': {'required': True},
-            'workStyle': {'required': True},
-            'required_skills': {'required': True},
+            'company': {'required': False, 'allow_null': True},
             'category': {'required': True},
-            'experienceLevel': {'required': True},
-            'employmentType': {'required': True},
             'salaryRangeMin': {'required': True, 'min_value': 0},
             'salaryRangeMax': {'required': True, 'min_value': 0},
-            'benefits': {'required': True},
-            'applicationDeadline': {'required': True},
+            'workStyle': {'required': False},
+            'required_skills': {'required': False},
+            'experienceLevel': {'required': False, 'allow_blank': True},
+            'employmentType': {'required': False, 'allow_blank': True},
+            'benefits': {'required': False},
+            'applicationDeadline': {'required': False, 'allow_null': True},
             'hasTemporaryOption': {'required': False},
             'status': {'required': False}
         }
@@ -317,6 +320,13 @@ class JobCreateSerializer(serializers.ModelSerializer):
             skills = list({*skills, *alias_required_skills})
         # Ensure employer is set from the authenticated user
         validated_data['employer'] = self.context['request'].user
+        # A posting with no company is deliberate ("post anonymously"), but only
+        # when the employer genuinely has none. Fall back to their linked company
+        # so a stale client that omits the field can't orphan a posting by mistake.
+        if not validated_data.get('company'):
+            employer = getattr(self.context['request'].user, 'employer_profile', None)
+            if employer and employer.company_id:
+                validated_data['company'] = employer.company
         # Persist flat skills list into model JSONField
         validated_data['skills'] = skills
         job = super().create(validated_data)
@@ -338,7 +348,7 @@ class JobUpdateSerializer(serializers.ModelSerializer):
     Serializer for updating jobs
     """
     timezone = TimeZoneSerializerField(required=False)
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
     skills = serializers.ListField(
         child=serializers.CharField(),
         required=False

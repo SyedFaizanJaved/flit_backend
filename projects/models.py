@@ -93,7 +93,8 @@ class Project(models.Model):
     # Basic Information
     title = models.CharField(max_length=200)
     description = models.TextField(max_length=2000, default='')
-    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='projects')
+    # Nullable: see the matching note on Job.company.
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='projects', blank=True, null=True)
     employer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='posted_projects')
     project_timezone = TimeZoneField(default='America/New_York', help_text="Timezone for this project posting")
     
@@ -224,7 +225,7 @@ class Project(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             from django.utils.text import slugify
-            self.slug = slugify(f"{self.title}-{self.company.company_name}")
+            self.slug = slugify(f"{self.title}-{self.company.company_name if self.company else 'anonymous'}")
         super().save(*args, **kwargs)
 
 

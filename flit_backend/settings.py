@@ -431,7 +431,9 @@ LOGGING = {
 
 # AI Related Variables
 
-FLIT_AI_URL=config('FLIT_AI_URL')
+# ponytail: strip trailing slash once here -- every f"{FLIT_AI_URL}/path" call site
+# otherwise builds a double slash, which the ML API 404s on.
+FLIT_AI_URL=config('FLIT_AI_URL').rstrip('/')
 
 
 # Reference Request Variable

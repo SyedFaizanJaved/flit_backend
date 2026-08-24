@@ -8,7 +8,46 @@ from projects.serializers import ProjectListSerializer
 from utils.timezone_helpers import convert_to_user_timezone, format_datetime_for_user
 
 
-class DiscoverTalentSerializer(serializers.ModelSerializer):
+class FlitStatusMixin:
+    """`flit_status` for the requesting employer: 'flitted', 'passed', or None.
+
+    Actions are fetched once per response and cached on the serializer, so a page
+    of N candidates costs one query rather than N. Unauthenticated callers (public
+    share links) get None.
+
+    ponytail: this used to be three near-identical copies across the candidate
+    serializers, and the one serving /api/candidates/public/<pk>/ had none at all —
+    which is why an already-flitted candidate rendered as un-flitted on their
+    profile page. One implementation, every serializer.
+
+    Ceiling: loads every action this employer has taken. unique_together(employer,
+    candidate_id) bounds it to one row per candidate acted on; narrow it to the
+    page's candidate ids if that ever gets large.
+    """
+
+    _FLIT_ACTION_LABELS = {'pass': 'flitted', 'reject': 'passed'}
+
+    @property
+    def _flit_actions(self):
+        if not hasattr(self, '_flit_actions_cache'):
+            # Late import to avoid a circular dependency.
+            from employers.models import CandidateAction
+            request = self.context.get('request')
+            if request and request.user.is_authenticated:
+                self._flit_actions_cache = dict(
+                    CandidateAction.objects
+                    .filter(employer__user=request.user)
+                    .values_list('candidate_id', 'action')
+                )
+            else:
+                self._flit_actions_cache = {}
+        return self._flit_actions_cache
+
+    def get_flit_status(self, obj):
+        return self._FLIT_ACTION_LABELS.get(self._flit_actions.get(str(obj.id)))
+
+
+class DiscoverTalentSerializer(FlitStatusMixin, serializers.ModelSerializer):
     """
     Serializer for discover_talent endpoint with minimal required fields
     """
@@ -137,42 +176,6 @@ class DiscoverTalentSerializer(serializers.ModelSerializer):
         # Return seniority level in the same format as the detailed view
         return obj.seniority_level if hasattr(obj, 'seniority_level') else None
 
-    @property
-    def _flit_actions(self):
-        """{candidate_id: action} for the requesting employer, fetched once per response.
-
-        ponytail: this used to run Employer.objects.get() plus a CandidateAction
-        lookup per row — 48 of the 50 queries on a 24-row discover-talent page, and
-        the employer lookup returned the same row every time. Employer.user is a
-        OneToOneField, so filtering on employer__user is equivalent to the old .get().
-
-        Ceiling: loads every action this employer has taken. unique_together(employer,
-        candidate_id) bounds it to one row per candidate acted on; narrow it to the
-        page's candidate ids if that ever gets large.
-        """
-        if not hasattr(self, '_flit_actions_cache'):
-            # Use late import to avoid circular dependency
-            from employers.models import CandidateAction
-            request = self.context.get('request')
-            if request and request.user.is_authenticated:
-                self._flit_actions_cache = dict(
-                    CandidateAction.objects
-                    .filter(employer__user=request.user)
-                    .values_list('candidate_id', 'action')
-                )
-            else:
-                self._flit_actions_cache = {}
-        return self._flit_actions_cache
-
-    def get_flit_status(self, obj):
-        """Check the status of employer actions for this candidate."""
-        action = self._flit_actions.get(str(obj.id))
-        if action == 'pass':
-            return 'flitted'
-        elif action == 'reject':
-            return 'passed'
-        return None
-
 class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
     """
     Serializer for reference request responses (used in candidate profile)
@@ -188,7 +191,7 @@ class ReferenceRequestResponseSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-class CandidateSerializer(serializers.ModelSerializer):
+class CandidateSerializer(FlitStatusMixin, serializers.ModelSerializer):
     full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     profile_completed = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
@@ -451,28 +454,6 @@ class CandidateSerializer(serializers.ModelSerializer):
         return obj.passion_projects
     
 
-    def get_flit_status(self, obj):
-        """Check the status of employer actions for this candidate."""
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            try:
-                # Use late import to avoid circular dependency
-                from employers.models import Employer, CandidateAction
-                employer = Employer.objects.get(user=request.user)
-                action_obj = CandidateAction.objects.filter(
-                    employer=employer, 
-                    candidate_id=str(obj.id)
-                ).first()
-                
-                if action_obj:
-                    if action_obj.action == 'pass':
-                        return 'flitted'
-                    elif action_obj.action == 'reject':
-                        return 'passed'
-            except (Employer.DoesNotExist, Exception):
-                pass
-        return None
-
     def get_user_timezone(self, obj):
         """Get timezone from related User model."""
         if obj.user and hasattr(obj.user, 'user_timezone') and obj.user.user_timezone:
@@ -611,7 +592,7 @@ class CandidateSerializer(serializers.ModelSerializer):
         return str(n)
 
 
-class PublicCandidateProfileSerializer(serializers.ModelSerializer):
+class PublicCandidateProfileSerializer(FlitStatusMixin, serializers.ModelSerializer):
     """Public-safe, allowlist serializer for shareable profiles. No auth context required."""
 
     profile_image = serializers.SerializerMethodField()
@@ -624,6 +605,7 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
     min_salary = serializers.SerializerMethodField()
     max_salary = serializers.SerializerMethodField()
     salary_currency = serializers.SerializerMethodField()
+    flit_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Candidate
@@ -635,6 +617,7 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
             "video_transcription",
             "education", "experience", "achievements", "profile_views",
             "min_salary", "max_salary", "salary_currency", "public_share_token",
+            "flit_status",
         ]
 
     def _file_url(self, file_field):
@@ -716,7 +699,7 @@ class PublicCandidateProfileSerializer(serializers.ModelSerializer):
         return obj.salary_currency if self._salary_visible(obj) else None
 
 
-class CandidateListSerializer(serializers.ModelSerializer):
+class CandidateListSerializer(FlitStatusMixin, serializers.ModelSerializer):
     id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.ReadOnlyField()
     profile_completed = serializers.SerializerMethodField()
@@ -739,28 +722,6 @@ class CandidateListSerializer(serializers.ModelSerializer):
             return bool(getattr(obj, 'is_profile_complete', False))
         except Exception:
             return False
-
-    def get_flit_status(self, obj):
-        """Check the status of employer actions for this candidate."""
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            try:
-                # Use late import to avoid circular dependency
-                from employers.models import Employer, CandidateAction
-                employer = Employer.objects.get(user=request.user)
-                action_obj = CandidateAction.objects.filter(
-                    employer=employer, 
-                    candidate_id=str(obj.id)
-                ).first()
-                
-                if action_obj:
-                    if action_obj.action == 'pass':
-                        return 'flitted'
-                    elif action_obj.action == 'reject':
-                        return 'passed'
-            except (Employer.DoesNotExist, Exception):
-                pass
-        return None
 
     def get_profile_views_display(self, obj):
         try:

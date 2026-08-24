@@ -30,8 +30,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     Serializer for project postings
     """
     required_skills = ProjectSkillSerializer(many=True, read_only=True)
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
+    company_id = serializers.IntegerField(source='company.id', read_only=True, default=None)
     is_applied = serializers.SerializerMethodField()
     category = serializers.CharField(source='get_category_display', read_only=True)
     paymentType = serializers.CharField(source='get_paymentType_display', read_only=True)
@@ -89,8 +89,8 @@ class ProjectListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing projects
     """
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
-    company_id = serializers.IntegerField(source='company.id', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
+    company_id = serializers.IntegerField(source='company.id', read_only=True, default=None)
     company_logo = serializers.SerializerMethodField()
     skills = serializers.SerializerMethodField()
     is_applied = serializers.SerializerMethodField()
@@ -136,7 +136,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
         """
         Get the company logo URL.
         """
-        return obj.company.logo.url if obj.company.logo else None    
+        return obj.company.logo.url if obj.company and obj.company.logo else None    
 
     def get_is_applied(self, obj):
         """
@@ -280,15 +280,17 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
             'work_style', 'collaboration', 'application_deadline', 'max_applicants',
             'hasTemporaryOption', 'temporaryDuration', 'project_timezone'
         )
+        # Mirrors JobCreateSerializer: title/description/category/skills for the
+        # matching engine, plus the payment fields. The rest default.
         extra_kwargs = {
             'title': {'required': True},
             'description': {'required': True},
-            'company': {'required': True},
+            'company': {'required': False, 'allow_null': True},
             'category': {'required': True},
             'paymentType': {'required': True},
             'paymentAmount': {'required': True, 'min_value': 0},
-            'estimatedHours': {'required': True},
-            'deadline': {'required': True},
+            'estimatedHours': {'required': False, 'allow_blank': True},
+            'deadline': {'required': False},
             'status': {'required': False},
             'work_style': {'required': False},
             'collaboration': {'required': False},
@@ -306,6 +308,13 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         
         # Ensure employer is set from the authenticated user
         validated_data['employer'] = self.context['request'].user
+        # A posting with no company is deliberate ("post anonymously"), but only
+        # when the employer genuinely has none. Fall back to their linked company
+        # so a stale client that omits the field can't orphan a posting by mistake.
+        if not validated_data.get('company'):
+            employer = getattr(self.context['request'].user, 'employer_profile', None)
+            if employer and employer.company_id:
+                validated_data['company'] = employer.company
         # Persist flat skills list into model JSONField
         validated_data['skills'] = skills
         project = super().create(validated_data)
@@ -326,7 +335,7 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
     Serializer for updating projects
     """
     project_timezone = TimeZoneSerializerField(required=False)
-    company_name = serializers.CharField(source='company.company_name', read_only=True)
+    company_name = serializers.CharField(source='company.company_name', read_only=True, default='Anonymous Company')
 
     class Meta:
         model = Project
@@ -344,8 +353,8 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
             'skills': {'required': True},
             'paymentType': {'required': True},
             'paymentAmount': {'required': True, 'min_value': 0},
-            'estimatedHours': {'required': True},
-            'deadline': {'required': True},
+            'estimatedHours': {'required': False, 'allow_blank': True},
+            'deadline': {'required': False},
             'status': {'choices': Project.STATUS_CHOICES},
         }
 
