@@ -40,6 +40,7 @@ jobs:
             source /home/ubuntu/flit_backend/venv/bin/activate &&
             pip install -r requirements.txt &&
             sudo systemctl restart gunicorn &&
-            sudo systemctl restart nginx
+            sudo systemctl reload nginx
             sudo systemctl restart daphne.service
+            sudo systemctl restart flit-job-scheduler.service
           '
