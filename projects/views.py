@@ -16,6 +16,7 @@ from rest_framework.viewsets import GenericViewSet
 from accounts.permissions import IsEmployer
 from utils.pagination import CustomPagination
 from utils.email_service import send_shortlist_notification, send_rejection_notification
+from utils.ml_client import delete_from_ml_index
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Project, ProjectSkill, ProjectMilestone
 from .serializers import (
@@ -52,7 +53,17 @@ class ProjectMLMixin:
         return self._call_ml_api(f"{settings.FLIT_AI_URL}/create_projects/{project.id}", project, is_create=True)
 
     def _call_ml_update_api(self, project):
-        return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_project_data/{project.id}", project, is_create=False)
+        # PATCH first, create on 404. Closing a posting now removes it from the ML
+        # index, so an employer who reopens or edits a closed one would otherwise be
+        # PATCHing a record that no longer exists -- it would never be re-indexed and
+        # could never be recommended again. Same fallback as the candidate sync in
+        # candidates/views.py.
+        return self._call_ml_api(
+            f"{settings.FLIT_AI_URL}/update_project_data/{project.id}",
+            project,
+            is_create=False,
+            create_url=f"{settings.FLIT_AI_URL}/create_projects/{project.id}",
+        )
 
     def _call_ml_metadata_api(self, project):
         """
@@ -60,7 +71,14 @@ class ProjectMLMixin:
         """
         return self._call_ml_api(f"{settings.FLIT_AI_URL}/update_project_metadata/{project.id}", project, is_create=False)
 
-    def _call_ml_api(self, url, project, is_create=True):
+    def _call_ml_delete_api(self, project):
+        """Drop the project from the ML vector store. Returns (ok, error).
+
+        See the matching note on JobMLMixin._call_ml_delete_api.
+        """
+        return delete_from_ml_index(f"/delete_projects/{project.id}")
+
+    def _call_ml_api(self, url, project, is_create=True, create_url=None):
         payload = self._get_ml_payload(project)
         method = requests.post if is_create else requests.patch
         max_retries = 2
@@ -75,6 +93,10 @@ class ProjectMLMixin:
                 time.sleep(1)
             except requests.exceptions.RequestException as e:
                 return False, None, [], f"ML API request failed: {str(e)}"
+
+        if ml_response.status_code == 404 and create_url:
+            # Not in the index (deleted on close). Put it back rather than failing.
+            return self._call_ml_api(create_url, project, is_create=True)
 
         if ml_response.status_code in (200, 201):
             try:
@@ -437,6 +459,20 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
             return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
         project.status = new_status
         project.save()
+
+        # Keep the ML index in step with the employer's choice. This action used to call
+        # ML not at all, so manually closed postings stayed indexed and went on being
+        # recommended -- the same staleness the deadline sweep fixes, through a different
+        # door. Re-index only when the posting is genuinely open: reactivating one whose
+        # deadline has already passed must not put it back in front of candidates.
+        # Best-effort; candidate reads filter on ProjectQuerySet.open() either way.
+        try:
+            if project.status == 'active' and not project.is_expired:
+                self._call_ml_update_api(project)
+            else:
+                self._call_ml_delete_api(project)
+        except Exception:
+            logger.exception("ML index sync failed after status change for project %s", project.id)
         return Response({'message': 'Project status updated successfully', 'project': ProjectSerializer(project).data}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='applications/(?P<application_id>[^/.]+)/shortlist')
