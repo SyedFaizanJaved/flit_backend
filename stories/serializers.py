@@ -40,6 +40,39 @@ class StorySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['user', 'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at']
 
+    CONTENT_FIELDS = {'text': 'text_content', 'image': 'image_content', 'video': 'video_content'}
+
+    def validate(self, data):
+        """
+        A story must carry the content its content_type promises. Without this a
+        failed media upload (or a client that skips the file) saved a row with a
+        null image_content/video_content, which rendered as a blank story.
+        """
+        content_type = data.get('content_type') or getattr(self.instance, 'content_type', None) or 'text'
+        field = self.CONTENT_FIELDS.get(content_type)
+        if not field:
+            return data
+
+        value = data.get(field, serializers.empty)
+        if value is serializers.empty:
+            value = getattr(self.instance, field, None)
+        if isinstance(value, str):
+            value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError({
+                field: f'{content_type.capitalize()} content is required for {content_type} stories.'
+            })
+
+        # The other two content fields must stay empty so content_type stays truthful.
+        for other_type, other_field in self.CONTENT_FIELDS.items():
+            if other_field != field and data.get(other_field):
+                raise serializers.ValidationError({
+                    other_field: f'Only {content_type} content should be provided for {content_type} stories.'
+                })
+
+        return data
+
     def get_user(self, obj):
         """
         Custom user representation that includes role-specific profile image

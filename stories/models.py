@@ -144,13 +144,6 @@ class Story(models.Model):
         user_identifier = f"Employer {self.company.name}" if self.user_type == 'employer' and self.company else f"Candidate {self.candidate.user.email if self.candidate and hasattr(self.candidate, 'user') else 'Unknown'}"
         return f"Story by {user_identifier} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
     
-    def clean(self):
-        # Validate that either company or candidate is set based on user_type
-        if self.user_type == 'employer' and not self.company:
-            raise ValidationError("Company is required for employer stories")
-        if self.user_type == 'candidate' and not self.candidate:
-            raise ValidationError("Candidate is required for candidate stories")
-    
     def save(self, *args, **kwargs):
         # Ensure user_type is set before any validation
         if not self.user_type and self.user:
