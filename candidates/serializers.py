@@ -610,7 +610,11 @@ class PublicCandidateProfileSerializer(FlitStatusMixin, serializers.ModelSeriali
     class Meta:
         model = Candidate
         fields = [
-            "id", "full_name", "title", "bio", "location", "seniority_level",
+            # `user` is what the Message button keys a conversation by -- threads are
+            # always addressed by User id, never the Candidate profile id (see
+            # FLIT_Frontend/src/lib/messages.ts). Without it the profile page sent
+            # candidateUserId=undefined and the message modal never opened.
+            "id", "user", "full_name", "title", "bio", "location", "seniority_level",
             "work_style", "availability_type", "is_available",
             "skills", "superpowers", "preferred_roles", "passion_projects",
             "portfolio_links", "profile_image", "resume_url", "video_intro_url",
