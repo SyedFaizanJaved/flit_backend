@@ -82,14 +82,21 @@ ASGI_APPLICATION = 'flit_backend.asgi.application'
 # Redis & Channel Layer Configuration
 REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [REDIS_URL],
+# ponytail: in-memory layer for single-process local dev (no Redis to install);
+# set USE_REDIS_CHANNEL_LAYER=True once you run more than one worker.
+if config('USE_REDIS_CHANNEL_LAYER', default=not DEBUG, cast=bool):
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [REDIS_URL],
+            },
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
 
 # A cross-worker cache is opt-in via CACHE_URL, so local dev needs no Redis.
 # Set it in production (e.g. CACHE_URL=$REDIS_URL) so the background upload status
