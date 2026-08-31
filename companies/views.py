@@ -1,12 +1,19 @@
+import io
+from urllib.parse import urlparse
+
+import requests
 from rest_framework import viewsets, mixins, status, permissions
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 import django.db
+from utils.remote_file import MAX_BYTES
+from .company_mapper import to_form_values
 from .models import Company, CompanyImage, CompanyMilestone
 from .serializers import (
     CompanySerializer,
@@ -22,6 +29,10 @@ import logging
 logger = logging.getLogger("exceptions")
 
 User = get_user_model()
+
+# Scraping several pages and running them through an LLM is slower than parsing one CV,
+# so this sits above candidates' RESUME_PARSE_TIMEOUT rather than matching it.
+COMPANY_EXTRACT_TIMEOUT = 180
 
 
 # Custom Permission: Sirf company ka creator hi update/delete kar sake
@@ -126,6 +137,94 @@ class CompanyViewSet(
         instance = self.get_queryset().get(pk=company.pk)
         full_serializer = CompanySerializer(instance, context={'request': request})
         return Response(full_serializer.data, status=status.HTTP_201_CREATED)
+
+    # ================= COMPANY PROFILE EXTRACT (WIZARD PREFILL) =================
+    @action(detail=False, methods=['post'], url_path='extract-profile')
+    def extract_profile(self, request):
+        """Read a company's website and/or document so the employer wizard opens pre-filled.
+
+        POST /api/companies/extract-profile/
+            multipart  company_url=<https://acme.com> and/or company_file=<file>
+            or JSON    {"company_url": "https://acme.com"}
+
+        The employer mirror of /candidates/parse-resume/. Best-effort by design: anything
+        the service cannot read comes back as 422 and the wizard simply opens empty. It
+        must never be able to block someone from creating a company.
+
+        Nothing is persisted -- there is no Company row yet at this point in the flow, so
+        the caller holds the values until the employer submits the form.
+        """
+        company_url = str(request.data.get('company_url') or '').strip()
+        upload = request.FILES.get('company_file')
+
+        if not company_url and not upload:
+            return Response({'error': 'Provide company_url or company_file.'}, status=400)
+
+        if company_url:
+            # ponytail: scheme/host check only. This URL is fetched by the ML service, not
+            # from inside our VPC, so utils.remote_file's address guard would be guarding
+            # the wrong network -- and it rejects http://, which plenty of company sites
+            # still are. Swap it in here if this endpoint ever fetches the page itself.
+            if '://' not in company_url:
+                company_url = f'https://{company_url}'
+            parsed = urlparse(company_url)
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+                return Response({'error': 'Enter a valid website URL.'}, status=400)
+
+        files = None
+        if upload:
+            content = upload.read()
+            if len(content) > MAX_BYTES:
+                return Response({'error': 'That file is larger than 10MB.'}, status=400)
+            files = {'company_file': (
+                upload.name,
+                io.BytesIO(content),
+                upload.content_type or 'application/octet-stream',
+            )}
+
+        def unreadable(reason):
+            logger.warning(
+                "company extract failed user=%s url=%s file=%s: %s",
+                request.user.id, company_url or None, bool(upload), reason,
+            )
+            return Response(
+                {'error': "We couldn't read that. You can fill the form in manually."},
+                status=422,
+            )
+
+        try:
+            # ponytail: no retry. The candidate parser retries a 5xx once because it
+            # answers in seconds; here a second attempt is another full scrape on top of
+            # a wait the employer is already sitting through.
+            response = requests.post(
+                f"{settings.FLIT_AI_URL}/extract_company_profile",
+                params={'company_url': company_url} if company_url else None,
+                files=files,
+                timeout=COMPANY_EXTRACT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as e:
+            return unreadable(f"request failed: {e}")
+
+        if response.status_code != 200:
+            return unreadable(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        try:
+            result = response.json()
+        except ValueError:
+            return unreadable("invalid JSON")
+
+        if not result.get('success'):
+            return unreadable("service reported no usable data")
+
+        data = result.get('data') or {}
+        # `form_values` is what the wizard consumes; the rest is returned so the client can
+        # show anything the mapper had no field for (company_summary, which pages were read).
+        return Response({
+            'form_values': to_form_values(data),
+            'company_data': data,
+            'company_summary': result.get('company_summary'),
+            'metadata': result.get('metadata'),
+        })
 
     @action(detail=False, methods=['get'], url_path='my-companies')
     def my_companies(self, request):

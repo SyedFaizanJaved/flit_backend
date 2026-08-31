@@ -463,14 +463,21 @@ class EmployerViewSet(viewsets.ViewSet):
         ).select_related('candidate').order_by('-start_time')[:2]
 
         # 4. Posting (Latest 2 each)
+        # Reuses job_qs/project_qs rather than re-filtering on `employer=user`. Those two
+        # are already company-scoped for the stats above, and the `my-jobs` / `my-projects`
+        # tabs scope the same way -- filtering by employer here surfaced postings the tabs
+        # will not show. An employer who creates a second company gets `employer.company`
+        # re-pointed at it while their existing postings keep the old company, so the
+        # dashboard listed those strays (all long since auto-closed) beside a Postings tab
+        # that was correctly empty.
         # ponytail: company + the application-count annotation the list serializers
         # already look for, so each posting stops costing its own handful of queries.
-        latest_jobs = Job.objects.filter(employer=user).select_related('company').annotate(
+        latest_jobs = job_qs.select_related('company').annotate(
             active_application_count=Count(
                 'applications', filter=Q(applications__is_withdrawn=False)
             )
         ).order_by('-created_at')[:2]
-        latest_projects = Project.objects.filter(employer=user).select_related('company').annotate(
+        latest_projects = project_qs.select_related('company').annotate(
             active_application_count=Count(
                 'applications', filter=Q(applications__is_withdrawn=False)
             )

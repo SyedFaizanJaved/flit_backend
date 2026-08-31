@@ -7,6 +7,7 @@ import time
 import threading
 import requests
 from django.conf import settings
+from django.core.exceptions import FieldDoesNotExist
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.cache import cache
@@ -21,6 +22,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import PermissionDenied, NotFound
 from utils.pagination import CustomPagination
+from utils.remote_file import MAX_BYTES, RemoteFileError, fetch_remote_file
+from candidates.resume_mapper import to_form_values
 from utils.file_validators import (
     resume_upload_path, video_upload_path, image_upload_path, document_upload_path
 )
@@ -61,6 +64,10 @@ exception_logger = logging.getLogger("exceptions")
 # Mirrors REQUEST_TIMEOUT in accounts/social.py. The resume-parse and video-analysis
 # uploads keep their own longer explicit timeouts.
 ML_REQUEST_TIMEOUT = 30
+
+# CV parsing runs an LLM over a multi-page document, so it is slow by nature and gets
+# its own budget rather than the general ML timeout.
+RESUME_PARSE_TIMEOUT = 120
 
 
 def _ml_match_ref(item):
@@ -407,6 +414,57 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 
 
 # ==================== MAIN CANDIDATE VIEWSET ====================
+
+def parse_resume_bytes(filename, content, content_type):
+    """POST a CV to the ML parser. Returns (ok, data, error).
+
+    One call site for both the profile-save background thread and the standalone
+    parse-resume endpoint, so the two can never drift on timeout or payload shape.
+    Never raises: a CV that will not parse must not break profile creation.
+    """
+    # /extract_resume, not /parse_cv. Both accept the same multipart `resume_file`, but
+    # /parse_cv returns prose blobs ({"description": "Senior Engineer at Acme from..."})
+    # which cannot populate a form, while /extract_resume returns discrete fields --
+    # company_name, position, start_date, degree, achievements. Verified against the
+    # service's own /openapi.json.
+    url = f"{settings.FLIT_AI_URL}/extract_resume"
+    response = None
+    for attempt in range(2):
+        try:
+            response = requests.post(
+                url,
+                files={'resume_file': (filename, io.BytesIO(content), content_type)},
+                timeout=RESUME_PARSE_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as e:
+            if attempt:
+                return False, None, f"parse request failed: {e}"
+            continue
+        # One retry for a server-side blip. 4xx is not retried: the service answers
+        # those in ~1.2s without doing any work, so a second attempt would just be
+        # more load on something already refusing.
+        if response.status_code < 500 or attempt:
+            break
+
+    if response is None:
+        return False, None, "parse request failed"
+
+    if response.status_code != 200:
+        return False, None, (
+            f"parse returned HTTP {response.status_code}: {response.text[:200]}"
+        )
+
+    try:
+        result = response.json()
+    except ValueError:
+        return False, None, "parse returned invalid JSON"
+
+    if not result.get('success'):
+        return False, None, "parser could not read the document"
+
+    return True, result.get('data') or {}, None
+
+
 # ========================= BACKGROUND FILE + ML PROCESSOR =========================
 
 def _process_files_and_ml_in_background(
@@ -510,30 +568,15 @@ def _process_files_and_ml_in_background(
 
         # ---------- STEP 2: ML Resume Parse ----------
         if resume_info:
-            try:
-                files_ml = {
-                    'resume_file': (
-                        resume_info['name'],
-                        io.BytesIO(resume_info['bytes']),
-                        resume_info['content_type'],
-                    )
-                }
-                parse_url = f"{settings.FLIT_AI_URL}/parse_cv"
-                resp = requests.post(parse_url, files=files_ml, timeout=120)
-                if resp.status_code == 200:
-                    result = resp.json()
-                    if result.get('success'):
-                        Candidate.objects.filter(id=candidate_id).update(
-                            resume_data=result.get('data', {})
-                        )
-                        logger.info(f"[BG] Resume parsed successfully for candidate {candidate_id}")
-                    else:
-                        logger.warning(f"[BG] Resume parse returned success=False for candidate {candidate_id}")
-                else:
-                    logger.error(f"[BG] Resume parsing failed with status {resp.status_code} for candidate {candidate_id}")
-            except Exception as e:
-                errors.append(f"Resume parse: {e}")
-                logger.error(f"[BG] Resume parsing exception for candidate {candidate_id}: {e}", exc_info=True)
+            ok, data, error = parse_resume_bytes(
+                resume_info['name'], resume_info['bytes'], resume_info['content_type']
+            )
+            if ok:
+                Candidate.objects.filter(id=candidate_id).update(resume_data=data)
+                logger.info(f"[BG] Resume parsed successfully for candidate {candidate_id}")
+            else:
+                errors.append(f"Resume parse: {error}")
+                logger.error(f"[BG] Resume parsing failed for candidate {candidate_id}: {error}")
 
         # ---------- STEP 3: ML Video Analysis ----------
         if video_info:
@@ -905,9 +948,47 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
             except (KeyError, zoneinfo.ZoneInfoNotFoundError):
                 logger.warning(f"Invalid timezone value: {tz_value}")
 
-        def _payload_for_model(item, exclude=('id', 'pk', 'created_at', 'updated_at', 'candidate')):
-            """Build kwargs for create/update from payload, excluding meta keys."""
-            return {k: v for k, v in item.items() if k not in exclude}
+        def _payload_for_model(item, model=None, exclude=('id', 'pk', 'created_at', 'updated_at', 'candidate')):
+            """Build kwargs for create/update from payload, excluding meta keys.
+
+            Also clamps values to what the column can actually hold. These rows go in via
+            `Model.objects.create(**payload)` straight from the request body -- no
+            serializer, so Django runs no max_length or choices validation and an
+            over-long or off-list value surfaces as a 500 DataError from Postgres instead
+            of a 400. That is how a CV-parsed grade of "A+" took down profile creation:
+            `candidate_education.grade` is varchar(1) with an A-F list.
+
+            Driven off the model's own field definitions rather than a hand-written list,
+            so it keeps working when a field's max_length or choices change.
+            """
+            payload = {k: v for k, v in item.items() if k not in exclude}
+            if model is None:
+                return payload
+
+            cleaned = {}
+            for name, value in payload.items():
+                try:
+                    field = model._meta.get_field(name)
+                except FieldDoesNotExist:
+                    # Unknown key would raise TypeError inside create() anyway.
+                    continue
+
+                if isinstance(value, str) and value:
+                    choices = getattr(field, 'choices', None)
+                    if choices:
+                        allowed = {str(c) for c, _ in choices}
+                        if value not in allowed:
+                            # 'b' for the grade 'B' is a typo, not a different answer.
+                            value = next(
+                                (a for a in allowed if a.lower() == value.lower()),
+                                None if field.null else '',
+                            )
+                    max_length = getattr(field, 'max_length', None)
+                    if isinstance(value, str) and max_length and len(value) > max_length:
+                        value = value[:max_length].rstrip()
+
+                cleaned[name] = value
+            return cleaned
 
         with transaction.atomic():
             candidate.save(update_fields=list(set(updated_fields + ['updated_at'])))
@@ -927,7 +1008,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if not (edu_data and edu_data.get('institution') and edu_data.get('start_date')):
                             continue
                         item_id = edu_data.get('id') or edu_data.get('pk')
-                        payload = _payload_for_model(edu_data)
+                        payload = _payload_for_model(edu_data, Education)
                         existing = Education.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
                         if existing:
                             for k, v in payload.items():
@@ -958,7 +1039,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                         if not (exp_data and exp_data.get('company_name') and exp_data.get('position') and exp_data.get('start_date')):
                             continue
                         item_id = exp_data.get('id') or exp_data.get('pk')
-                        payload = _payload_for_model(exp_data)
+                        payload = _payload_for_model(exp_data, Experience)
                         existing = Experience.objects.filter(candidate=candidate, id=item_id).first() if item_id else None
                         if existing:
                             for k, v in payload.items():
@@ -1069,7 +1150,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             logger.info(f"Assigning generic image {generic_image_index} to achievement {index}")
                             generic_image_index += 1
                         
-                        payload = _payload_for_model(achievement_data)
+                        payload = _payload_for_model(achievement_data, Achievement)
                         
                         try:
                             if item_id:
@@ -1179,6 +1260,66 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         response_data = CandidateSerializer(candidate, context={'request': request}).data
         response_data['processing_status'] = 'processing' if has_file_uploads else 'idle'
         return Response(response_data)
+
+    # ====================== RESUME PARSE (PROFILE PREFILL) ======================
+    @action(detail=False, methods=['post'], url_path='parse-resume')
+    def parse_resume(self, request):
+        """Parse a CV so the profile wizard can open pre-filled.
+
+        POST /candidates/parse-resume/
+            multipart  resume_file=<file>
+            or JSON    {"resume_url": "https://..."}
+
+        Returns the parsed payload plus the CV stored against the candidate, so they
+        never upload it a second time at the Media step. Parsing is best-effort: a CV we
+        cannot read returns 422 and the wizard simply opens empty. It must never be able
+        to block someone from creating a profile.
+        """
+        candidate = self.get_candidate()
+
+        upload = request.FILES.get('resume_file')
+        resume_url = request.data.get('resume_url')
+
+        if upload:
+            filename = upload.name
+            content = upload.read()
+            content_type = upload.content_type or 'application/octet-stream'
+            if len(content) > MAX_BYTES:
+                return Response({'error': 'That file is larger than 10MB.'}, status=400)
+        elif resume_url:
+            try:
+                filename, content, content_type = fetch_remote_file(resume_url)
+            except RemoteFileError as e:
+                return Response({'error': str(e)}, status=400)
+        else:
+            return Response({'error': 'Provide resume_file or resume_url.'}, status=400)
+
+        ok, data, error = parse_resume_bytes(filename, content, content_type)
+        if not ok:
+            logger.warning("Resume parse failed for candidate %s: %s", candidate.id, error)
+            return Response(
+                {'error': "We couldn't read that CV. You can fill the form in manually."},
+                status=422,
+            )
+
+        # Store the CV itself as well as the parse. Uploading here and again at the Media
+        # step would be the same file twice, and `resume_url` is what the profile reads.
+        updates = {'resume_data': data}
+        try:
+            path = resume_upload_path(candidate, filename)
+            default_storage.save(path, ContentFile(content))
+            updates['resume_url'] = path
+            updates['portfolio_completed'] = True
+        except Exception:
+            # The parse is the point; losing the file copy is survivable and the Media
+            # step can still take it later.
+            logger.exception("Resume storage failed for candidate %s", candidate.id)
+
+        Candidate.objects.filter(id=candidate.id).update(**updates, updated_at=timezone.now())
+
+        # `form_values` is what the wizard consumes; `resume_data` is returned too so the
+        # client can show anything the mapper had no field for.
+        return Response({'form_values': to_form_values(data), 'resume_data': data})
 
     # ====================== PROCESSING STATUS POLLING ======================
     @action(detail=False, methods=['get'], url_path='processing-status')
