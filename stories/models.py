@@ -15,6 +15,33 @@ def story_media_upload_path(instance, filename):
     return f'stories/{instance.user.id}/{int(timezone.now().timestamp())}/{filename}'
 
 
+def story_author_type(user):
+    """Whether `user` posts stories as an 'employer' or a 'candidate' (None if neither).
+
+    Prefers User.role. The presence of an employer_profile is not proof of intent:
+    /api/employers/profile/ get_or_create()s an Employer row for anyone who loads it,
+    so candidates who once opened that endpoint acquired one and were then told their
+    stories needed a company. Falls back to profile presence for roles that are
+    neither (admin), preserving the previous behaviour for them.
+
+    Single definition so Story.clean() and StoryViewSet.perform_create() cannot
+    disagree about who is posting.
+    """
+    has_employer = hasattr(user, 'employer_profile')
+    has_candidate = hasattr(user, 'candidate_profile')
+    role = getattr(user, 'role', None)
+
+    if role == 'employer' and has_employer:
+        return 'employer'
+    if role == 'candidate' and has_candidate:
+        return 'candidate'
+    if has_employer and not has_candidate:
+        return 'employer'
+    if has_candidate:
+        return 'candidate'
+    return None
+
+
 class Story(models.Model):
     """
     Model to represent stories shared by users
@@ -62,15 +89,14 @@ class Story(models.Model):
         """
         from django.core.exceptions import ValidationError
         
-        # Always set user_type based on user's profile first
+        # Always set user_type based on user's role first
         if self.user:
-            if hasattr(self.user, 'employer_profile'):
-                self.user_type = 'employer'
+            self.user_type = story_author_type(self.user)
+            if self.user_type == 'employer':
                 # Set company if not already set
                 if not self.company_id and self.user.employer_profile.company:
                     self.company = self.user.employer_profile.company
-            elif hasattr(self.user, 'candidate_profile'):
-                self.user_type = 'candidate'
+            elif self.user_type == 'candidate':
                 # Set candidate if not already set
                 if not self.candidate_id:
                     self.candidate = self.user.candidate_profile

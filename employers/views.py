@@ -427,12 +427,15 @@ class EmployerViewSet(viewsets.ViewSet):
         # LEFT JOINs would otherwise multiply each other's rows.
         project_stats = project_qs.aggregate(
             total=Count('id'),
-            active=Count('id', filter=Q(status='active')),
+            # Count through open() rather than status='active' so a past-deadline
+            # posting stops being counted as Active the moment it expires, without
+            # waiting for close_expired_projects. Same rule the lists and badges use.
+            active=Count('id', filter=Q(pk__in=Project.objects.open().values('pk'))),
             completed=Count('id', filter=Q(status='completed')),
         )
         job_stats = job_qs.aggregate(
             total=Count('id'),
-            active=Count('id', filter=Q(status='active')),
+            active=Count('id', filter=Q(pk__in=Job.objects.open().values('pk'))),
             completed=Count('id', filter=Q(status='completed')),
         )
         application_stats = User.objects.filter(pk=user.pk).aggregate(

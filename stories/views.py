@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from utils.pagination import CustomPagination
 
-from .models import Story, Like, Comment, SavedItem,SavedStory
+from .models import Story, Like, Comment, SavedItem,SavedStory, story_author_type
 from .serializers import (
     StorySerializer, CommentSerializer, SavedItemSerializer,
     CompanySerializer, ProjectSerializer, JobSerializer, CandidateSerializer
@@ -52,13 +52,15 @@ class StoryListCreateView(generics.ListCreateAPIView):
         company_id = None
         candidate_id = None
 
-        if hasattr(user, 'employer_profile'):
-            user_type = 'employer'
+        # story_author_type(), not hasattr(employer_profile): a stray Employer row --
+        # /api/employers/profile/ creates one for anyone who loads it -- was classifying
+        # candidates as employers and rejecting their stories for having no company.
+        user_type = story_author_type(user)
+        if user_type == 'employer':
             company_id = self.request.data.get('company') or (
                 user.employer_profile.company.id if user.employer_profile.company else None
             )
-        elif hasattr(user, 'candidate_profile'):
-            user_type = 'candidate'
+        elif user_type == 'candidate':
             candidate_id = self.request.data.get('candidate') or user.candidate_profile.id
         else:
             logger.warning(f"User {user.id} attempted to create story without proper profile")

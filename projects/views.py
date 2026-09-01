@@ -302,7 +302,10 @@ class ProjectViewSet(ProjectMLMixin, viewsets.ModelViewSet):
         if company:
             company_projects = Project.objects.filter(company=company)
             total_projects_count = company_projects.count()
-            active_projects_count = company_projects.filter(status='active').count()
+            # open(), not status='active' — see the matching note in jobs/views.py.
+            active_projects_count = company_projects.filter(
+                pk__in=Project.objects.open().values('pk')
+            ).count()
 
         page = self.paginate_queryset(queryset)
         serializer = ProjectListSerializer(

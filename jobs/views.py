@@ -293,7 +293,12 @@ class JobViewSet(JobMLMixin, viewsets.ModelViewSet):
         if company:
             company_jobs = Job.objects.filter(company=company)
             total_jobs_count = company_jobs.count()
-            active_jobs_count = company_jobs.filter(status='active').count()
+            # open(), not status='active' — a past-deadline job is already Closed
+            # everywhere else, so counting it as active made the tab header disagree
+            # with the badge on the row.
+            active_jobs_count = company_jobs.filter(
+                pk__in=Job.objects.open().values('pk')
+            ).count()
 
         page = self.paginate_queryset(queryset)
         serializer = JobListSerializer(
