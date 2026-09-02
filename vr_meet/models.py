@@ -2,6 +2,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from datetime import timedelta
 import random
 import string
 
@@ -107,6 +108,22 @@ class MeetingRoom(models.Model):
             diff = self.end_time - self.start_time
             return int(diff.total_seconds()//60)
         return None
+
+    # How long Join stays live after the scheduled start. Deliberately ignores end_time:
+    # the scheduling modal never sends one, and rows that do carry one (calendar sync)
+    # were keeping Join active well past the half hour.
+    JOIN_WINDOW = timedelta(minutes=30)
+
+    @property
+    def is_expired(self) -> bool:
+        """The join window has closed.
+
+        Single definition: the interview cards each recomputed this locally, in five
+        places, and nothing kept them agreeing with each other.
+        """
+        if not self.start_time:
+            return False
+        return timezone.now() > self.start_time + self.JOIN_WINDOW
 
     @property
     def opportunity_type(self):

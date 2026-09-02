@@ -3,6 +3,7 @@ from .models import MeetingRoom, Offer
 from django.contrib.auth import get_user_model
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -36,6 +37,10 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
 
     # Show offer status if an offer exists for this meeting
     offer_status = serializers.SerializerMethodField()
+
+    # Whether the slot has passed. Read from the model so the cards stop each
+    # recomputing it from start_time/end_time and drifting apart.
+    is_expired = serializers.ReadOnlyField()
 
 
     def to_representation(self, instance):
@@ -71,6 +76,7 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
         read_only_fields = (
             'created_at', 'id', 'meet_link', 'employer',
             'meeting_date', 'employer_company', 'opportunity_type', 'offer_status', 'logo',
+            'is_expired',
         )
     
     def get_logo(self, obj):
@@ -143,6 +149,16 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
         end_time = data.get('end_time')
         if start_time and end_time and end_time <= start_time:
             raise serializers.ValidationError("End time must be greater than start time")
+
+        # An interview scheduled into the past is already over the moment it is created:
+        # it showed up as pending with a live Join button. Only rejected when the time is
+        # actually being set or changed, so editing other fields on a past meeting -- or
+        # rescheduling one -- is not blocked by its own stored value.
+        if start_time and start_time < timezone.now():
+            if self.instance is None or self.instance.start_time != start_time:
+                raise serializers.ValidationError({
+                    'start_time': 'Interview cannot be scheduled in the past.'
+                })
             
         # hosts email validation
         host_emails = data.get('host_email', []) or []

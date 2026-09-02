@@ -15,7 +15,9 @@ dependency to produce something the consumer can derive itself.
 """
 
 import re
-from datetime import date
+from datetime import date, datetime
+
+from dateutil import parser as dateutil_parser
 
 # Mirrors the INDUSTRY dropdown in pages/employer/create-profile.tsx.
 INDUSTRY_CHOICES = {
@@ -121,7 +123,11 @@ def _tags(value):
 def _date(value):
     """Any year-ish value -> the 'YYYY-MM-DD' the wizard's date picker holds, or None.
 
-    `founded_year` comes back as a full date, a bare year, or a sentence containing one.
+    `founded_year` comes back in whatever shape the site printed it: a full date, a month
+    and year, a bare year, or a sentence containing one. Whatever precision is present is
+    kept and the rest defaults to January 1st -- 'June 2015' prefills as 2015-06-01
+    instead of throwing the month away.
+
     Years outside 1800..this year are dropped rather than passed on: the form rejects
     them, so prefilling one hands the employer an error they did not make.
     """
@@ -134,10 +140,26 @@ def _date(value):
     year = int(match.group(1))
     if year < MIN_YEAR or year > date.today().year:
         return None
-    full = re.match(r'^\s*(\d{4})-(\d{2})-(\d{2})', text)
-    if full and full.group(1) == match.group(1):
-        return full.group(0).strip()
-    return '%d-01-01' % year
+
+    # dateutil is already a pinned dependency and already reads every form a site might
+    # print -- '2015-06-12', '2015-06', 'June 2015', '12 June 2015', 'June 12, 2015',
+    # '06/2015'. `default` supplies whatever the text omits; `fuzzy` lets it ignore the
+    # prose around the date. Ambiguous all-numeric forms like 06/07/2015 are read
+    # month-first, which is dateutil's default.
+    year_only = date(year, 1, 1).isoformat()
+    try:
+        parsed = dateutil_parser.parse(
+            text, default=datetime(year, 1, 1), fuzzy=True
+        ).date()
+    except (ValueError, OverflowError):
+        return year_only
+
+    # The regex year is the one that passed the range check above. If the parse drifted
+    # to a different year, or produced a date that has not happened yet, keep the safe
+    # value rather than prefilling something the form will reject.
+    if parsed.year != year or parsed > date.today():
+        return year_only
+    return parsed.isoformat()
 
 
 def _industry(value):
@@ -306,8 +328,27 @@ def demo():
     assert 'workMode' not in to_form_values({'work_mode': 'whenever'})
     assert to_form_values({'work_mode': 'On-Site'})['workMode'] == 'onsite'
 
+    # Every shape a website prints a founding date in. Whatever precision is there is
+    # kept; what is missing defaults to January 1st.
+    founded = {
+        '2015-06-12': '2015-06-12',           # full ISO date
+        'Founded on 2015-06-12': '2015-06-12',  # ... inside a sentence
+        '12 June 2015': '2015-06-12',         # day month year
+        'June 12, 2015': '2015-06-12',        # month day year
+        '12/06/2015': '2015-12-06',           # all-numeric, read month-first
+        'June 2015': '2015-06-01',            # month and year
+        'Jun 2015': '2015-06-01',             # abbreviated month
+        '06/2015': '2015-06-01',              # numeric month and year
+        '2015-06': '2015-06-01',              # ISO year-month
+        '2015': '2015-01-01',                 # bare year
+        'Founded in 2011': '2011-01-01',      # year inside prose
+        'Established March 1993': '1993-03-01',
+    }
+    for raw, expected in founded.items():
+        got = to_form_values({'founded_year': raw}).get('foundedYear')
+        assert got == expected, '%r -> %r, expected %r' % (raw, got, expected)
+
     # Years the form itself rejects must not be prefilled.
-    assert to_form_values({'founded_year': 'Founded in 2011'})['foundedYear'] == '2011-01-01'
     assert 'foundedYear' not in to_form_values({'founded_year': '1650'})
     assert 'foundedYear' not in to_form_values({'founded_year': '2099-01-01'})
     assert 'foundedYear' not in to_form_values({'founded_year': 'established recently'})

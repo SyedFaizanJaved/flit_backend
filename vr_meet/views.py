@@ -232,7 +232,13 @@ class MeetingRoomListView(generics.ListAPIView):
             "invited": queryset.count(),
             # Subset of invited where interview time has been scheduled (start_time is set)
             "scheduled": queryset.filter(start_time__isnull=False).count(),
-            "expired": queryset.filter(start_time__lt=now).exclude(status__in=['ended', 'cancelled']).count(),
+            # start + JOIN_WINDOW, not start: this must mean exactly what the greyed-out
+            # Join button means (MeetingRoom.is_expired), or the card counts a meeting
+            # that is still joinable. Outcome is deliberately ignored -- a hired or
+            # rejected meeting whose window has closed is still expired.
+            "expired": queryset.filter(
+                start_time__lt=now - MeetingRoom.JOIN_WINDOW
+            ).exclude(status__in=['ended', 'cancelled']).count(),
             # Count as hired if there's any offer that is either sent (hired) or accepted
             "hired": queryset.filter(offers__status__in=['hired', 'accepted']).distinct().count(),
         }
