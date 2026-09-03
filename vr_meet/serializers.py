@@ -159,7 +159,32 @@ class MeetingRoomSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'start_time': 'Interview cannot be scheduled in the past.'
                 })
-            
+
+        # One candidate must not be bookable twice by the same employer at the same
+        # instant -- nothing stopped it before, so a double submit (or a second pass
+        # through the schedule modal) produced two identical cards side by side.
+        #
+        # Scoped to this employer's own rooms on purpose: another company's booking is
+        # not ours to reveal, and a candidate double-booked across two companies is a
+        # clash only they can see. Cancelled and ended rooms do not count -- rebooking
+        # a slot that was called off is exactly what an employer would expect to do.
+        candidate = data.get('candidate') or getattr(self.instance, 'candidate', None)
+        employer = getattr(self.context.get('request'), 'user', None)
+        if start_time and candidate and employer and employer.is_authenticated:
+            clash = MeetingRoom.objects.filter(
+                employer=employer,
+                candidate=candidate,
+                start_time=start_time,
+                is_deleted=False,
+            ).exclude(status__in=['ended', 'cancelled'])
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError({
+                    'start_time': 'This candidate already has an interview with you at '
+                                  'that date and time.'
+                })
+
         # hosts email validation
         host_emails = data.get('host_email', []) or []
         if isinstance(host_emails,str):
