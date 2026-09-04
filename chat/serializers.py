@@ -104,6 +104,7 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     company_name = serializers.SerializerMethodField()
     company_id = serializers.SerializerMethodField()
+    candidate_id = serializers.SerializerMethodField()
     industry = serializers.SerializerMethodField()
     logo = serializers.SerializerMethodField()
     last_message_time = serializers.DateTimeField(allow_null=True)
@@ -193,6 +194,12 @@ class EmployerCompanyConversationSummarySerializer(serializers.Serializer):
         except Exception as e:
             print(f"Error in get_company_id: {str(e)}")
             return None
+
+    def get_candidate_id(self, obj):
+        # Candidate *profile* pk, not the User id -- /candidates/public/<pk>/ looks up
+        # Candidate. Without this the candidate inbox linked to /candidate/profile/undefined.
+        candidate = self._get_candidate_profile(obj)
+        return candidate.id if candidate else None
     
     def get_industry(self, obj):
         try:

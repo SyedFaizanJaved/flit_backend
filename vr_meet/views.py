@@ -347,7 +347,15 @@ def connect_google(request):
             )
         flow.redirect_uri = settings.REDIRECT_URI
 
-        auth_url, state = flow.authorization_url(prompt='consent', login_hint="", state=str(user_id))
+        # 'consent' alone reuses whatever Google session is already active in the
+        # browser -- there was no way to connect a different Google account without
+        # first signing out of Google entirely. 'select_account' forces the account
+        # chooser every time, regardless of any cached session; 'consent' still runs
+        # after it so a returning user is asked to re-confirm calendar access rather
+        # than being silently re-authorized.
+        auth_url, state = flow.authorization_url(
+            prompt='select_account consent', login_hint="", state=str(user_id)
+        )
         
         return Response({"auth_url": auth_url})
         # return redirect(auth_url)

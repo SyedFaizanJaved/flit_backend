@@ -42,6 +42,7 @@ urlpatterns = [
     path('public/share/<uuid:token>/', views.PublicShareCandidateProfileView.as_view(), name='public-share-candidate-profile'),
     path('public/share/<uuid:token>/track-view/', views.PublicShareCandidateTrackView.as_view(), name='public-share-candidate-track-view'),
     path('public/<int:pk>/', views.PublicCandidateProfileView.as_view(), name='public-candidate-profile'),
+    path('public/by-user/<int:user_id>/', views.PublicCandidateProfileByUserView.as_view(), name='public-candidate-profile-by-user'),
     path('public/<int:pk>/track-view/', views.PublicCandidateProfileViewTrackView.as_view(), name='public-candidate-track-view'),
 
     path('', include(router.urls)),

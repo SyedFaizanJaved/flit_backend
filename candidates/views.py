@@ -251,6 +251,18 @@ class PublicCandidateProfileView(generics.RetrieveAPIView):
         ).select_related("user")
 
 
+class PublicCandidateProfileByUserView(PublicCandidateProfileView):
+    """The same profile, addressed by User id instead of Candidate pk.
+
+    Chat threads are keyed by User id everywhere in the app, so the message modal only
+    ever holds that -- never the Candidate pk the sibling view wants. A separate path
+    rather than one view guessing: the two id spaces overlap, and a wrong guess silently
+    serves somebody else's profile.
+    """
+    lookup_field = "user_id"
+    lookup_url_kwarg = "user_id"
+
+
 class PublicCandidateProfileViewTrackView(APIView):
     """Increments the public view counter for a shareable profile, by PK. Auth required."""
     permission_classes = [permissions.IsAuthenticated]
