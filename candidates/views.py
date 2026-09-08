@@ -22,8 +22,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import PermissionDenied, NotFound
 from utils.pagination import CustomPagination
-from utils.remote_file import MAX_BYTES, RemoteFileError, fetch_remote_file
-from candidates.resume_mapper import to_form_values
+from utils.remote_file import RemoteFileError, document_upload_error, fetch_remote_file
+from candidates.resume_mapper import to_form_values, profile_image_from_metadata
 from utils.file_validators import (
     resume_upload_path, video_upload_path, image_upload_path, document_upload_path
 )
@@ -428,7 +428,12 @@ class ReferenceRequestViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
 # ==================== MAIN CANDIDATE VIEWSET ====================
 
 def parse_resume_bytes(filename, content, content_type):
-    """POST a CV to the ML parser. Returns (ok, data, error).
+    """POST a CV to the ML parser. Returns (ok, data, profile_image, error).
+
+    `profile_image` is the candidate's photo cropped out of the CV as a data URI, or
+    None. It is deliberately kept out of `data`: `data` is what lands in
+    `Candidate.resume_data` and is echoed on every profile read, and a few hundred KB
+    of base64 riding along on each of those is a cost with no reader.
 
     One call site for both the profile-save background thread and the standalone
     parse-resume endpoint, so the two can never drift on timeout or payload shape.
@@ -450,7 +455,7 @@ def parse_resume_bytes(filename, content, content_type):
             )
         except requests.exceptions.RequestException as e:
             if attempt:
-                return False, None, f"parse request failed: {e}"
+                return False, None, None, f"parse request failed: {e}"
             continue
         # One retry for a server-side blip. 4xx is not retried: the service answers
         # those in ~1.2s without doing any work, so a second attempt would just be
@@ -459,22 +464,27 @@ def parse_resume_bytes(filename, content, content_type):
             break
 
     if response is None:
-        return False, None, "parse request failed"
+        return False, None, None, "parse request failed"
 
     if response.status_code != 200:
-        return False, None, (
+        return False, None, None, (
             f"parse returned HTTP {response.status_code}: {response.text[:200]}"
         )
 
     try:
         result = response.json()
     except ValueError:
-        return False, None, "parse returned invalid JSON"
+        return False, None, None, "parse returned invalid JSON"
 
     if not result.get('success'):
-        return False, None, "parser could not read the document"
+        return False, None, None, "parser could not read the document"
 
-    return True, result.get('data') or {}, None
+    return (
+        True,
+        result.get('data') or {},
+        profile_image_from_metadata(result.get('metadata')),
+        None,
+    )
 
 
 # ========================= BACKGROUND FILE + ML PROCESSOR =========================
@@ -580,7 +590,10 @@ def _process_files_and_ml_in_background(
 
         # ---------- STEP 2: ML Resume Parse ----------
         if resume_info:
-            ok, data, error = parse_resume_bytes(
+            # The photo is only offered through the parse-resume endpoint, where the
+            # candidate can see it before it becomes their picture. Overwriting a
+            # profile image from a background thread is not something to do silently.
+            ok, data, _photo, error = parse_resume_bytes(
                 resume_info['name'], resume_info['bytes'], resume_info['content_type']
             )
             if ok:
@@ -1293,11 +1306,14 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         resume_url = request.data.get('resume_url')
 
         if upload:
+            # Checked before reading: `upload.size` is known up front, so an oversized
+            # or wrong-typed file is refused without buffering it first.
+            error = document_upload_error(upload.name, upload.size, upload.content_type)
+            if error:
+                return Response({'error': error}, status=400)
             filename = upload.name
             content = upload.read()
             content_type = upload.content_type or 'application/octet-stream'
-            if len(content) > MAX_BYTES:
-                return Response({'error': 'That file is larger than 10MB.'}, status=400)
         elif resume_url:
             try:
                 filename, content, content_type = fetch_remote_file(resume_url)
@@ -1306,9 +1322,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         else:
             return Response({'error': 'Provide resume_file or resume_url.'}, status=400)
 
-        ok, data, error = parse_resume_bytes(filename, content, content_type)
+        ok, data, profile_image, error = parse_resume_bytes(filename, content, content_type)
         if not ok:
-            logger.warning("Resume parse failed for candidate %s: %s", candidate.id, error)
+            # What we sent, not just what came back. Without the name/type/size a
+            # "parse returned HTTP 400" in the log says nothing about which document
+            # failed, and the parser's own errors turn on exactly those three.
+            logger.warning(
+                "Resume parse failed for candidate %s (file=%r type=%s bytes=%d): %s",
+                candidate.id, filename, content_type, len(content), error,
+            )
             return Response(
                 {'error': "We couldn't read that CV. You can fill the form in manually."},
                 status=422,
@@ -1330,8 +1352,15 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
         Candidate.objects.filter(id=candidate.id).update(**updates, updated_at=timezone.now())
 
         # `form_values` is what the wizard consumes; `resume_data` is returned too so the
-        # client can show anything the mapper had no field for.
-        return Response({'form_values': to_form_values(data), 'resume_data': data})
+        # client can show anything the mapper had no field for. `profile_image` is a data
+        # URI (or None) -- a suggestion the candidate previews and can decline, so it is
+        # returned rather than saved here. It becomes their picture only if they accept
+        # it and the profile save uploads it like any other chosen file.
+        return Response({
+            'form_values': to_form_values(data),
+            'resume_data': data,
+            'profile_image': profile_image,
+        })
 
     # ====================== PROCESSING STATUS POLLING ======================
     @action(detail=False, methods=['get'], url_path='processing-status')

@@ -1,7 +1,10 @@
-"""Fetch a user-supplied URL safely enough to hand the bytes to an external service.
+"""What we accept as a CV / company document, and how we fetch one from a URL.
 
-Used by the resume-parse endpoint, where the candidate may paste a link to their CV
-instead of uploading a file. The URL comes from the browser, so this is an SSRF sink:
+`document_upload_error` is the size and type rule for direct uploads, shared by the
+resume-parse and company-extract endpoints.
+
+`fetch_remote_file` covers the other half: the candidate may paste a link to their CV
+instead of uploading it. That URL comes from the browser, so it is an SSRF sink --
 without the address check below, a candidate could point us at internal services or the
 EC2 instance metadata endpoint and have us fetch them from inside the VPC.
 """
@@ -16,12 +19,40 @@ MAX_BYTES = 10 * 1024 * 1024  # matches the 10MB cap the profile form enforces
 TIMEOUT_SECONDS = 20
 MAX_REDIRECTS = 3
 
-ALLOWED_CONTENT_TYPES = {
+# No .doc / application/msword. The parser service rejects legacy Word outright --
+# "Unsupported file type '.doc'. Allowed types: .pdf ... .docx ..." -- so accepting it
+# here only buys the user a long upload that is guaranteed to fail downstream.
+DOCUMENT_CONTENT_TYPES = frozenset({
     'application/pdf',
-    'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+})
+DOCUMENT_EXTENSIONS = ('.pdf', '.docx')
+
+ALLOWED_CONTENT_TYPES = DOCUMENT_CONTENT_TYPES | {
     'application/octet-stream',  # S3 and Drive serve CVs as this often enough to allow
 }
+
+
+def document_upload_error(filename, size, content_type):
+    """Why this uploaded CV / company document is unacceptable, or None.
+
+    The PDF/DOCX + 10MB rule both intake forms advertise, enforced server-side
+    because `accept=` on a file input is a picker filter, not a check -- drag-and-drop
+    and a switched file-type dropdown both walk straight past it, and nothing stops a
+    caller hitting the endpoint directly.
+
+    The extension decides. Browsers disagree on the MIME type for .doc/.docx and some
+    send an empty one or `application/octet-stream`, so the type is consulted only when
+    the name carries no extension we recognise -- and octet-stream is deliberately not
+    proof of anything here, unlike the remote-fetch path where it is all S3 gives us.
+    """
+    if size > MAX_BYTES:
+        return "That file is larger than 10MB."
+    if (filename or '').lower().endswith(DOCUMENT_EXTENSIONS):
+        return None
+    if content_type in DOCUMENT_CONTENT_TYPES:
+        return None
+    return "Only PDF and DOCX files can be uploaded."
 
 
 class RemoteFileError(Exception):
@@ -109,7 +140,31 @@ def fetch_remote_file(url):
 
 
 def demo():
-    """Self-check for the address guard -- the part with security consequences."""
+    """Self-check for the address guard and the upload rule."""
+    ok = (None,)
+    cases = [
+        # (filename, size, content_type) -> accepted?
+        (('cv.pdf', 1000, 'application/pdf'), True),
+        (('cv.PDF', 1000, 'application/pdf'), True),           # case-insensitive
+        (('cv.doc', 1000, 'application/msword'), False),  # parser rejects legacy Word
+        (('cv.docx', 1000, ''), True),                          # browser sent no type
+        (('cv.docx', 1000, 'application/octet-stream'), True),  # ... or a useless one
+        (('resume', 1000, 'application/pdf'), True),            # no extension, type says PDF
+        (('cv.exe', 1000, 'application/x-msdownload'), False),
+        (('cv.png', 1000, 'image/png'), False),
+        (('cv.pdf.exe', 1000, 'application/pdf'), True),        # type still vouches for it
+        (('resume', 1000, 'application/octet-stream'), False),  # nothing vouches for it
+        (('', 1000, ''), False),
+        ((None, 1000, None), False),
+        (('cv.pdf', MAX_BYTES + 1, 'application/pdf'), False),  # size beats type
+        (('cv.pdf', MAX_BYTES, 'application/pdf'), True),       # exactly at the cap
+    ]
+    for args, accepted in cases:
+        error = document_upload_error(*args)
+        assert (error is None) is accepted, (args, error)
+    assert 'larger than 10MB' in document_upload_error('cv.pdf', MAX_BYTES + 1, 'application/pdf')
+    assert 'PDF and DOCX' in document_upload_error('cv.exe', 10, 'application/x-msdownload')
+
     blocked = [
         'https://localhost/cv.pdf',
         'https://127.0.0.1/cv.pdf',

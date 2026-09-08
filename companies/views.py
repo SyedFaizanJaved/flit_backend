@@ -12,7 +12,7 @@ from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 import django.db
-from utils.remote_file import MAX_BYTES
+from utils.remote_file import document_upload_error
 from .company_mapper import to_form_values
 from .models import Company, CompanyImage, CompanyMilestone
 from .serializers import (
@@ -173,9 +173,12 @@ class CompanyViewSet(
 
         files = None
         if upload:
+            # Checked before reading: `upload.size` is known up front, so an oversized
+            # or wrong-typed file is refused without buffering it first.
+            error = document_upload_error(upload.name, upload.size, upload.content_type)
+            if error:
+                return Response({'error': error}, status=400)
             content = upload.read()
-            if len(content) > MAX_BYTES:
-                return Response({'error': 'That file is larger than 10MB.'}, status=400)
             files = {'company_file': (
                 upload.name,
                 io.BytesIO(content),
@@ -184,8 +187,10 @@ class CompanyViewSet(
 
         def unreadable(reason):
             logger.warning(
-                "company extract failed user=%s url=%s file=%s: %s",
-                request.user.id, company_url or None, bool(upload), reason,
+                "company extract failed user=%s url=%s file=%r type=%s bytes=%s: %s",
+                request.user.id, company_url or None,
+                getattr(upload, 'name', None), getattr(upload, 'content_type', None),
+                getattr(upload, 'size', None), reason,
             )
             return Response(
                 {'error': "We couldn't read that. You can fill the form in manually."},

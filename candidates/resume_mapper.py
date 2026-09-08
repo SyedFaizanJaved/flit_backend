@@ -14,6 +14,8 @@ not the model's, because the wizard is the consumer. Keys are omitted entirely w
 is no value, so the caller's "only fill what is empty" rule stays a simple presence check.
 """
 
+import re
+
 # Mirrors Education.DEGREE_CHOICES / DEGREE_LEVELS in the frontend.
 DEGREE_CHOICES = {
     'high_school', 'associate', 'bachelor', 'master', 'phd', 'certificate', 'diploma',
@@ -60,6 +62,40 @@ MAX_SELECTED_SKILLS = 12
 # unbounded institution name or job title fails the INSERT the same way a two-character
 # grade did, just less often and further from the cause.
 MAX_CHARFIELD = 200
+
+
+# `/extract_resume` returns the candidate's photo cropped out of the CV as a data URI
+# under `metadata.extracted_profile_image`. It is offered as the profile picture, so it
+# is held to the same types the profile-image upload accepts (ALLOWED_IMAGE_TYPES in the
+# frontend) -- a data URI naming anything else would be rejected at save time anyway.
+PROFILE_IMAGE_TYPES = {'png', 'jpeg', 'jpg', 'webp'}
+
+# Ceiling on the whole data URI string. A face crop is tens of KB; this is generous
+# enough to never reject a real one, and small enough that a runaway payload cannot
+# bloat the parse response or the browser holding it.
+MAX_PROFILE_IMAGE_CHARS = 5_000_000
+
+_DATA_URI = re.compile(r'^data:image/([a-z0-9.+-]+);base64,(.+)$', re.IGNORECASE | re.DOTALL)
+
+
+def profile_image_from_metadata(metadata):
+    """The CV's extracted photo as a data URI, or None.
+
+    Never raises and never returns something the profile-image upload would reject:
+    the caller hands this straight to the client to preview and re-upload, so a
+    malformed or oversized value has to become "no photo found", not a broken <img>
+    or a failed save two steps later.
+    """
+    value = (metadata or {}).get('extracted_profile_image') if isinstance(metadata, dict) else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > MAX_PROFILE_IMAGE_CHARS:
+        return None
+    match = _DATA_URI.match(value)
+    if not match or match.group(1).lower() not in PROFILE_IMAGE_TYPES:
+        return None
+    return value
 
 
 def _text(value, limit=MAX_CHARFIELD):
@@ -470,6 +506,36 @@ def demo():
     ], messy['skills']['available']
     assert [l['name'] for l in messy['portfolioLinks']] == ['LinkedIn', 'GitHub']
     assert messy['passionProjects'] == 'Supplement.AI, WeaveSync'
+
+    # metadata.extracted_profile_image: anything that would not survive the profile
+    # image upload has to come back as None, not reach the client as a broken <img>.
+    png = 'data:image/png;base64,iVBORw0KGgo='
+    assert profile_image_from_metadata({'extracted_profile_image': png}) == png
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'DATA:IMAGE/JPEG;base64,/9j/4AA='}
+    ), 'mime and scheme are case-insensitive'
+    assert profile_image_from_metadata({}) is None
+    assert profile_image_from_metadata(None) is None
+    assert profile_image_from_metadata('not a dict') is None
+    assert profile_image_from_metadata({'extracted_profile_image': None}) is None
+    assert profile_image_from_metadata({'extracted_profile_image': ''}) is None
+    assert profile_image_from_metadata({'extracted_profile_image': '   '}) is None
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'https://cdn/photo.png'}
+    ) is None, 'a URL is not a data URI -- the client expects to inline it'
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'data:image/svg+xml;base64,PHN2Zz4='}
+    ) is None, 'svg is not an accepted profile image type'
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'data:application/pdf;base64,JVBERi0='}
+    ) is None
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'data:image/png;base64,'}
+    ) is None, 'declared but empty payload'
+    assert profile_image_from_metadata(
+        {'extracted_profile_image': 'data:image/png;base64,' + 'A' * MAX_PROFILE_IMAGE_CHARS}
+    ) is None, 'over the size ceiling'
+    assert profile_image_from_metadata({'extracted_profile_image': 12345}) is None
 
     assert to_form_values(None) == {} and to_form_values({}) == {}
     print('resume_mapper OK')
