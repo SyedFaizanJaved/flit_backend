@@ -215,9 +215,9 @@ class CandidateSerializer(FlitStatusMixin, serializers.ModelSerializer):
     # Formatted fields
     title = serializers.SerializerMethodField()
     location = serializers.SerializerMethodField()
-    work_style = serializers.CharField(source='get_work_style_display', read_only=True)
-    availability_type = serializers.CharField(source='get_availability_type_display', read_only=True)
-    seniority_level = serializers.CharField(source='get_seniority_level_display', read_only=True)
+    work_style = serializers.CharField(read_only=True)
+    availability_type = serializers.CharField(read_only=True)
+    seniority_level = serializers.CharField(read_only=True)
     
     def _parse_json_field(self, value):
         if isinstance(value, str):

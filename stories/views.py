@@ -28,6 +28,14 @@ from candidates.models import Candidate
 # Logger setup
 logger = logging.getLogger('stories')
 
+# A "storyline" is the set of a user's stories still visible in the feed: active
+# (not soft-deleted) and posted within the last STORY_WINDOW_HOURS. Limits are
+# enforced against that same set, so a post that has expired or been deleted
+# frees up its slot.
+STORY_WINDOW_HOURS = 24
+STORY_TYPE_LIMITS = {'text': 5, 'image': 5, 'video': 3}
+STORY_TOTAL_LIMIT = 10
+
 
 # =============================
 # STORY VIEWS
@@ -77,6 +85,20 @@ class StoryListCreateView(generics.ListCreateAPIView):
                 'candidate': 'Candidate profile is required for candidate stories'
             })
 
+        content_type = serializer.validated_data.get('content_type', 'text')
+        window_start = timezone.now() - timedelta(hours=STORY_WINDOW_HOURS)
+        active_stories = Story.objects.filter(user=user, is_active=True, created_at__gte=window_start)
+
+        type_limit = STORY_TYPE_LIMITS.get(content_type)
+        if type_limit is not None and active_stories.filter(content_type=content_type).count() >= type_limit:
+            raise serializers.ValidationError({
+                'content_type': f'You can only have {type_limit} {content_type} posts in your storyline. Delete one to add another.'
+            })
+        if active_stories.count() >= STORY_TOTAL_LIMIT:
+            raise serializers.ValidationError({
+                'non_field_errors': f'Your storyline is full ({STORY_TOTAL_LIMIT} posts max). Delete one to add another.'
+            })
+
         data = {'user': user, 'user_type': user_type}
         if user_type == 'employer':
             data['company_id'] = company_id
@@ -89,8 +111,8 @@ class StoryListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         user = self.request.user
         queryset = Story.objects.filter(is_active=True)
-        twenty_four_hours_ago = timezone.now() - timedelta(hours=24)
-        queryset = queryset.filter(created_at__gte=twenty_four_hours_ago)
+        window_start = timezone.now() - timedelta(hours=STORY_WINDOW_HOURS)
+        queryset = queryset.filter(created_at__gte=window_start)
 
         # Optional filter by user_type via query param (e.g., ?user_type=candidate)
         user_type = self.request.query_params.get('user_type')

@@ -861,6 +861,16 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 candidate.intro_video_description = {}
                 updated_fields.extend(['video_intro_url', 'video_transcription', 'intro_video_description'])
 
+        # Profile image deletion with no replacement (keep synchronous — it's just a DB
+        # field clear + S3 delete). A replacement upload carries this same flag but is
+        # handled below by the background job instead, which deletes the old file itself
+        # as part of uploading the new one.
+        if data.get('remove_old_profile_image') == 'true' and 'profile_image' not in files:
+            if candidate.profile_image:
+                delete_old_file(candidate.profile_image)
+                candidate.profile_image = None
+                updated_fields.append('profile_image')
+
         # ---- Capture file bytes into memory (instant) — actual S3 upload deferred to background ----
         bg_resume_info = None
         bg_video_info = None
@@ -941,6 +951,13 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                             value = float(value) if value and '.' in str(value) else int(value) if value else None
                         except:
                             value = None
+                        # PositiveIntegerField overflows into a 500 DataError past ~2.1B;
+                        # 7 digits matches the frontend's cap and is a sane salary anyway.
+                        if value is not None and not (0 <= value <= 9_999_999):
+                            return Response(
+                                {field: 'Please enter a valid salary amount (up to 7 digits).'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
                     setattr(candidate, field, value)
                     updated_fields.append(field)
 
