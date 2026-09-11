@@ -392,3 +392,18 @@ class SavedStory(models.Model):
     
     def __str__(self):
         return f"{self.user.email} saved story {self.story.id}"
+
+
+class StoryView(models.Model):
+    """
+    A user has opened a story. Drives the seen/unseen state of the story tiles.
+    """
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='story_views')
+    story = models.ForeignKey('Story', on_delete=models.CASCADE, related_name='views')
+    viewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['user', 'story']
+
+    def __str__(self):
+        return f"{self.user.email} viewed story {self.story_id}"

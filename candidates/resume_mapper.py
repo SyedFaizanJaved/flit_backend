@@ -16,6 +16,8 @@ is no value, so the caller's "only fill what is empty" rule stays a simple prese
 
 import re
 
+from utils.location import location_text
+
 # Mirrors Education.DEGREE_CHOICES / DEGREE_LEVELS in the frontend.
 DEGREE_CHOICES = {
     'high_school', 'associate', 'bachelor', 'master', 'phd', 'certificate', 'diploma',
@@ -165,7 +167,7 @@ def _map_experience(entries):
             # wrong for contractors and freelancers, and a wrong prefilled value gets
             # scrolled past where an empty required field does not.
             'employment_type': employment_type or '',
-            'location': _text(entry.get('location')) or '',
+            'location': location_text(entry.get('location'), MAX_CHARFIELD) or '',
             'startDate': _text(entry.get('start_date')) or '',
             'endDate': _text(entry.get('end_date')) or '',
             'isCurrent': bool(entry.get('is_current')),
@@ -331,7 +333,7 @@ def to_form_values(resume_data):
     ))
 
     if _is_structured(data):
-        put('location', _text(data.get('location')))
+        put('location', location_text(data.get('location'), MAX_CHARFIELD))
         skills = [s for s in (data.get('skills') or []) if _text(s)]
         put('portfolioLinks', [
             {'name': _text(l.get('name')) or 'Link', 'url': _text(l.get('url'))}
@@ -377,7 +379,7 @@ def demo():
         'full_name': 'SYED FAIZAN JAVED',
         'title': 'Full-Stack Software Engineer',
         'bio': 'Full-Stack Software Engineer with 2+ years...',
-        'location': 'Lahore, Pakistan',
+        'location': {'city': 'Lahore', 'region': 'Punjab', 'country': 'Pakistan'},
         'seniority_level': 'junior',
         'skills': [f'skill{i}' for i in range(29)],
         'portfolio_links': [{'name': 'GitHub', 'url': 'https://github.com/x'},
@@ -399,17 +401,26 @@ def demo():
         ],
         'experience': [
             {'company_name': 'NeuroOceans. Ai', 'position': 'Associate Software Engineer',
-             'start_date': '2024-08-01', 'is_current': True, 'location': 'Lahore, Pakistan',
+             'start_date': '2024-08-01', 'is_current': True,
+             'location': {'city': None, 'region': 'Punjab', 'country': 'Pakistan'},
              'achievements': ['Shipped SaaS'], 'skills_used': ['React.js']},
             {'company_name': 'Stackup', 'position': 'Frontend Intern',
-             'employment_type': 'internship', 'start_date': '2023-10-01'},
+             'employment_type': 'internship', 'start_date': '2023-10-01',
+             'location': {'city': 'Remote', 'region': 'Remote', 'country': 'Remote'}},
+            {'company_name': 'NoPlace', 'position': 'Dev', 'location': None},
         ],
     }
     v = to_form_values(structured)
     assert v['fullName'] == 'SYED FAIZAN JAVED'
     assert v['title'] == 'Full-Stack Software Engineer'
     assert v['seniorityLevel'] == 'junior'
-    assert v['location'] == 'Lahore, Pakistan'
+    # /extract_resume returns location as {city, region, country}; the form and the
+    # CharField both hold one string.
+    assert v['location'] == 'Lahore, Punjab, Pakistan', v['location']
+    assert [e['location'] for e in v['experience']] == ['Punjab, Pakistan', 'Remote', '']
+    assert 'location' not in to_form_values({'title': 'x', 'location': None})
+    assert to_form_values({'title': 'x', 'location': 'Lahore, Pakistan'})['location'] == \
+        'Lahore, Pakistan', 'resume_data stored before the object shape is still a string'
 
     assert len(v['skills']['available']) == 29, 'all skills offered'
     assert len(v['skills']['selected']) == 12, 'only MAX preselected'
@@ -452,7 +463,7 @@ def demo():
     over = to_form_values({'title': 'x', 'full_name': long_name,
                            'education': [{'institution': long_name, 'field_of_study': long_name}],
                            'experience': [{'company_name': long_name, 'position': long_name,
-                                           'location': long_name}],
+                                           'location': {'city': long_name}}],
                            'achievements': [{'title': long_name, 'issuer': long_name,
                                              'date_achieved': '2020-01-01'}]})
     assert len(over['fullName']) == 200

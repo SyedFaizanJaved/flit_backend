@@ -31,14 +31,15 @@ class StorySerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.BooleanField(read_only=True)
     is_saved = serializers.BooleanField(read_only=True)
+    is_viewed = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Story
         fields = [
             'id', 'user', 'user_type', 'content_type', 'text_content', 'image_content', 'video_content',
-            'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at', 'company', 'candidate'
+            'like_count', 'comment_count', 'is_liked', 'is_saved', 'is_viewed', 'created_at', 'company', 'candidate'
         ]
-        read_only_fields = ['user', 'like_count', 'comment_count', 'is_liked', 'is_saved', 'created_at']
+        read_only_fields = ['user', 'like_count', 'comment_count', 'is_liked', 'is_saved', 'is_viewed', 'created_at']
 
     CONTENT_FIELDS = {'text': 'text_content', 'image': 'image_content', 'video': 'video_content'}
 

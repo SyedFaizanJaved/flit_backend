@@ -1,6 +1,42 @@
 import os
 import uuid
 import re
+from io import BytesIO
+
+import pillow_heif
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image, ImageOps
+
+# Teach Pillow (and so every Django/DRF ImageField) to read HEIC/HEIF — the default
+# format for Mac/iPhone photos. Without it they fail as "Upload a valid image".
+pillow_heif.register_heif_opener()
+
+# Formats every browser renders in an <img> (MPO = iPhone multi-picture JPEG). Anything
+# else Pillow can read — HEIC/HEIF, TIFF, JPEG 2000, ICNS, ICO... — gets re-encoded.
+BROWSER_VIEWABLE_FORMATS = {'JPEG', 'MPO', 'PNG', 'GIF', 'WEBP', 'AVIF', 'BMP'}
+
+
+def to_web_image(file_obj):
+    """
+    Re-encode an already-validated image the browser can't display (HEIC/HEIF, TIFF,
+    JPEG 2000, ICNS...) as JPEG, or PNG when it has transparency. Browser-viewable
+    formats are returned untouched.
+    """
+    file_obj.seek(0)
+    with Image.open(file_obj) as img:
+        if img.format in BROWSER_VIEWABLE_FORMATS:
+            file_obj.seek(0)
+            return file_obj
+        img = ImageOps.exif_transpose(img)
+        buf = BytesIO()
+        if img.mode in ('RGBA', 'LA') or 'transparency' in img.info:
+            img.save(buf, format='PNG')
+            ext, content_type = '.png', 'image/png'
+        else:
+            img.convert('RGB').save(buf, format='JPEG', quality=90)
+            ext, content_type = '.jpg', 'image/jpeg'
+    name = os.path.splitext(file_obj.name)[0] + ext
+    return SimpleUploadedFile(name, buf.getvalue(), content_type=content_type)
 
 
 def sanitize_filename(file_obj, max_length=50):

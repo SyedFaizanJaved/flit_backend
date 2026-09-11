@@ -8,16 +8,19 @@ Output keys are the *frontend form's* names (`companyName`, `foundedYear`, `perk
 the model's, because the wizard is the consumer. Keys are omitted entirely when there is
 no value, so the caller's "only fill what is empty" rule stays a simple presence check.
 
-`location` comes back as the one string the scrape produced ("Irving, TX, USA"). The form
-holds ISO country/state codes, and turning names into codes needs the geo dataset the
-frontend already ships (`country-state-city`) -- doing it here would mean a new backend
-dependency to produce something the consumer can derive itself.
+`location` arrives as {city, region, country} and is flattened to the one string
+Company.location stores ("Irving, TX, USA"). The form holds ISO country/state codes, and
+turning names into codes needs the geo dataset the frontend already ships
+(`country-state-city`) -- doing it here would mean a new backend dependency to produce
+something the consumer can derive itself.
 """
 
 import re
 from datetime import date, datetime
 
 from dateutil import parser as dateutil_parser
+
+from utils.location import location_text
 
 # Mirrors the INDUSTRY dropdown in pages/employer/create-profile.tsx.
 INDUSTRY_CHOICES = {
@@ -271,7 +274,7 @@ def to_form_values(company_data):
     put('size', _size(data.get('size')))
     put('website', _text(data.get('website'), MAX_URL))
     put('logo', _text(data.get('logo'), MAX_URL))
-    put('location', _text(data.get('location'), MAX_LOCATION))
+    put('location', location_text(data.get('location'), MAX_LOCATION))
     put('foundedYear', _date(data.get('founded_year')))
     put('values', _tags(data.get('values')))
     put('culture', _tags(data.get('culture')))
@@ -290,7 +293,7 @@ def demo():
         'description': 'Nextbridge is an IT company specializing in software and AI.',
         'industry': 'Technology', 'size': None, 'website': 'https://nextbridge.com',
         'logo': 'https://nextbridge.com/wp-content/uploads/2025/07/favicon.ico',
-        'location': 'Irving, TX, USA',
+        'location': {'city': 'Irving', 'region': 'TX', 'country': 'USA'},
         'values': ['Change the Future', 'Save Time, Lead the World',
                    'Commitment to excellence'],
         'culture': None, 'benefits': None, 'founded_year': '1993-01-01', 'work_mode': None,
@@ -305,6 +308,9 @@ def demo():
     assert v['industry'] == 'Technology'
     assert v['foundedYear'] == '1993-01-01'
     assert v['location'] == 'Irving, TX, USA'
+    assert to_form_values({'location': {'city': None, 'region': 'Sindh', 'country': 'Pakistan'}}) \
+        == {'location': 'Sindh, Pakistan'}, 'partial object keeps what is known'
+    assert 'location' not in to_form_values({'location': None})
     # A value containing a comma must survive: the list is already split, so it is not
     # re-split on its own punctuation.
     assert v['values'] == ['Change the Future', 'Save Time, Lead the World',
@@ -374,7 +380,7 @@ def demo():
 
     # Every capped target: a scraped page can exceed all of them.
     long = 'X' * 3000
-    over = to_form_values({'company_name': long, 'description': long, 'location': long,
+    over = to_form_values({'company_name': long, 'description': long, 'location': {'city': long},
                            'milestones': [{'title': long, 'year': '2010',
                                            'description': long}]})
     assert len(over['companyName']) == MAX_NAME

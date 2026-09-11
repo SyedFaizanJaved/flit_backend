@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from utils.pagination import CustomPagination
 
-from .models import Story, Like, Comment, SavedItem,SavedStory, story_author_type
+from .models import Story, Like, Comment, SavedItem,SavedStory, StoryView, story_author_type
 from .serializers import (
     StorySerializer, CommentSerializer, SavedItemSerializer,
     CompanySerializer, ProjectSerializer, JobSerializer, CandidateSerializer
@@ -147,6 +147,9 @@ class StoryListCreateView(generics.ListCreateAPIView):
             ),
             is_saved=Exists(
                 SavedStory.objects.filter(story_id=OuterRef('pk'), user=user)
+            ),
+            is_viewed=Exists(
+                StoryView.objects.filter(story_id=OuterRef('pk'), user=user)
             )
         ).order_by('-created_at')
 
@@ -184,6 +187,16 @@ class LikeStoryView(APIView):
             story.likes.add(request.user)
             logger.info(f"User {request.user.id} liked story {story_id}")
             return Response({"status": "liked"}, status=status.HTTP_201_CREATED)
+
+
+class MarkStoryViewedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, story_id):
+        story = get_object_or_404(Story, id=story_id, is_active=True)
+        # Idempotent: re-watching a story is not a new view.
+        StoryView.objects.get_or_create(user=request.user, story=story)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CommentCreateView(generics.CreateAPIView):

@@ -11,6 +11,7 @@ urlpatterns = [
     path('<int:story_id>/comments/', views.CommentListView.as_view(), name='comment-list'),
     path('<int:story_id>/comments/create/', views.CommentCreateView.as_view(), name='comment-create'),
     path('<int:story_id>/save/', views.SaveStoryView.as_view(), name='save-story'),
+    path('<int:story_id>/view/', views.MarkStoryViewedView.as_view(), name='view-story'),
     path('saved/', views.SavedStoriesListView.as_view(), name='saved-stories'),
 
     # User stories

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import Company, CompanyImage, CompanyMilestone
 from django.conf import settings
 from employers.models import Employer
-from utils.file_validators import sanitize_filename
+from utils.file_validators import sanitize_filename, to_web_image
 import json
 import logging
 import os
@@ -32,11 +32,12 @@ def _validate_gallery_images(images, existing_count):
 
 class SanitizedImageField(serializers.ImageField):
     """
-    Custom ImageField that sanitizes the filename before validation.
+    Custom ImageField that sanitizes the filename before validation and stores
+    Mac formats (HEIC/HEIF, TIFF) as browser-viewable JPEG/PNG.
     """
     def to_internal_value(self, data):
         data = sanitize_filename(data)
-        return super().to_internal_value(data)
+        return to_web_image(super().to_internal_value(data))
 
 
 class CompanyImageSerializer(serializers.ModelSerializer):
