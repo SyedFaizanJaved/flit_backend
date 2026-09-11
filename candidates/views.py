@@ -69,6 +69,10 @@ ML_REQUEST_TIMEOUT = 30
 # its own budget rather than the general ML timeout.
 RESUME_PARSE_TIMEOUT = 120
 
+# Returned when a CV can't be parsed. The frontend shows the same text
+# (CV_UNREADABLE_ERROR in src/lib/documentUpload.ts) -- change both together.
+CV_UNREADABLE_ERROR = "We couldn't read this document. Please upload a valid CV or fill in the form manually."
+
 
 def _ml_match_ref(item):
     """Resolve one ai_matching row to ('job'|'project', id), or None if it has no id.
@@ -1349,7 +1353,7 @@ class CandidateViewSet(CandidateAccessMixin, viewsets.ModelViewSet):
                 candidate.id, filename, content_type, len(content), error,
             )
             return Response(
-                {'error': "We couldn't read that CV. You can fill the form in manually."},
+                {'error': CV_UNREADABLE_ERROR},
                 status=422,
             )
 
