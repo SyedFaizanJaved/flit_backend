@@ -713,9 +713,19 @@ def get_flitpass_data(request, company_id):
             
             s3_base = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/"
             
+            # What this employer already did with each candidate, so the UI can show
+            # Flitted/Passed instead of offering the same choice again.
+            employer = getattr(request.user, 'employer_profile', None)
+            action_map = dict(
+                CandidateAction.objects.filter(
+                    employer=employer, candidate_id__in=unique_ids
+                ).values_list('candidate_id', 'action')
+            ) if employer else {}
+
             # Update each item with the actual URL from DB or fallback construction
             for item, cid in items_to_update:
                 cid_str = str(cid)
+                item['employer_action'] = action_map.get(cid_str)
                 if cid_str in image_url_map:
                     item['profile_image'] = image_url_map[cid_str]
                 elif 'profile_image' in item and item['profile_image'] and not str(item['profile_image']).startswith('http'):
