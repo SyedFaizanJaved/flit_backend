@@ -290,8 +290,19 @@ AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY")
 AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_KEY")
 AWS_STORAGE_BUCKET_NAME = config("S3_BUCKET_NAME")
 AWS_S3_REGION_NAME = config("AWS_REGION")
-AWS_S3_SIGNATURE_NAME = 's3v4'
-AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+# Regional endpoint + virtual addressing keeps the host media has always been served
+# from: <bucket>.s3.<region>.amazonaws.com
+AWS_S3_ENDPOINT_URL = f"https://s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+AWS_S3_ADDRESSING_STYLE = 'virtual'
+_S3_PUBLIC_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+
+# Media is private: every FileField.url is a pre-signed link that expires. No global
+# AWS_S3_CUSTOM_DOMAIN on purpose — django-storages skips signing when one is set.
+AWS_QUERYSTRING_AUTH = True
+# Seconds a media link stays valid. A page left open longer than this shows broken
+# images until it refetches; raise it if that bites (hard max 604800 = 7 days).
+AWS_QUERYSTRING_EXPIRE = config("S3_URL_EXPIRE_SECONDS", default=3600, cast=int)
 
 AWS_S3_FILE_OVERWRITE = True
 AWS_DEFAULT_ACL = None
@@ -307,6 +318,8 @@ STORAGES = {
     "staticfiles": {
         "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
         "LOCATION": "staticfiles",
+        # Static assets stay public and unsigned (CSS/JS must be cacheable).
+        "OPTIONS": {"custom_domain": _S3_PUBLIC_DOMAIN, "querystring_auth": False},
     }
 }
 

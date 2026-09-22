@@ -1,3 +1,4 @@
+from flit_backend.media_urls import media_url
 import logging
 import requests
 from django.contrib.auth import get_user_model
@@ -711,8 +712,6 @@ def get_flitpass_data(request, company_id):
                     except Exception:
                         pass
             
-            s3_base = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/"
-            
             # What this employer already did with each candidate, so the UI can show
             # Flitted/Passed instead of offering the same choice again.
             employer = getattr(request.user, 'employer_profile', None)
@@ -729,7 +728,7 @@ def get_flitpass_data(request, company_id):
                 if cid_str in image_url_map:
                     item['profile_image'] = image_url_map[cid_str]
                 elif 'profile_image' in item and item['profile_image'] and not str(item['profile_image']).startswith('http'):
-                    item['profile_image'] = s3_base + str(item['profile_image']).lstrip('/')
+                    item['profile_image'] = media_url(item['profile_image'])
         
         # Return the processed response
         return Response(data)

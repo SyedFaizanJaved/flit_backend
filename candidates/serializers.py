@@ -1,3 +1,4 @@
+from flit_backend.media_urls import media_url
 import json
 import logging
 from rest_framework import serializers
@@ -320,7 +321,8 @@ class CandidateSerializer(FlitStatusMixin, serializers.ModelSerializer):
             
             # If it's already a full URL, return it as is
             if url.startswith(('http://', 'https://')):
-                return url
+                # Re-sign: a saved bucket link may carry an expired signature.
+                return media_url(url)
             
             # Try to get the URL using Django's storage system first
             if hasattr(file_field, 'url'):
@@ -355,7 +357,7 @@ class CandidateSerializer(FlitStatusMixin, serializers.ModelSerializer):
             # If it's a path, construct the full URL
             if hasattr(file_field.storage, 'bucket_name'):
                 # For S3 storage
-                full_url = f"https://{file_field.storage.bucket_name}.s3.{file_field.storage.region_name}.amazonaws.com/{url.lstrip('/')}"
+                full_url = media_url(url)
             else:
                 # For other storage backends, use the storage's url method
                 full_url = file_field.storage.url(url)

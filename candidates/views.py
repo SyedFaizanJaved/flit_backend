@@ -621,7 +621,7 @@ def _process_files_and_ml_in_background(
                 video_url = ''
                 if build_absolute_uri_base and video_s3_path:
                     try:
-                        video_url = f"{build_absolute_uri_base}{default_storage.url(video_s3_path)}"
+                        video_url = default_storage.url(video_s3_path)
                     except Exception:
                         video_url = video_s3_path or ''
 
@@ -656,12 +656,12 @@ def _process_files_and_ml_in_background(
                 # Refresh URLs in payload if we just uploaded new files
                 if resume_s3_path:
                     try:
-                        ml_payload['resume_url'] = f"{build_absolute_uri_base}{default_storage.url(resume_s3_path)}" if build_absolute_uri_base else resume_s3_path
+                        ml_payload['resume_url'] = default_storage.url(resume_s3_path) if build_absolute_uri_base else resume_s3_path
                     except Exception:
                         ml_payload['resume_url'] = resume_s3_path or ''
                 if video_s3_path:
                     try:
-                        ml_payload['video_intro_url'] = f"{build_absolute_uri_base}{default_storage.url(video_s3_path)}" if build_absolute_uri_base else video_s3_path
+                        ml_payload['video_intro_url'] = default_storage.url(video_s3_path) if build_absolute_uri_base else video_s3_path
                     except Exception:
                         ml_payload['video_intro_url'] = video_s3_path or ''
 
