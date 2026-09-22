@@ -5,6 +5,7 @@ section headings, contact line, experience/education with right-aligned dates,
 and two-column skills.
 """
 import logging
+from html import escape
 from io import BytesIO
 from datetime import datetime
 
@@ -179,23 +180,25 @@ def generate_pdf_from_cv_data(cv_data):
         contact_parts = []
         loc = (cv_data.get('location') or '').strip()
         if loc:
-            contact_parts.append(loc)
+            contact_parts.append(escape(loc))
         phone = (cv_data.get('phone') or '').strip()
         if phone:
-            contact_parts.append(phone)
+            contact_parts.append(escape(phone))
         email = (cv_data.get('email') or '').strip()
         if email:
-            contact_parts.append(email)
+            contact_parts.append(f'<link href="{escape("mailto:" + email, quote=True)}">{escape(email)}</link>')
         
         online = cv_data.get('online_profiles') or {}
         for platform, link in online.items():
-            link = str(link).strip()
+            link = str(link or '').strip()
             if link:
-                if platform.lower() == 'linkedin' and not link.startswith('http'):
+                if platform.lower() == 'linkedin' and not link.lower().startswith(('http://', 'https://')):
                     link = f"linkedin.com/in/{link}" if 'linkedin.com' not in link else link
-                elif platform.lower() == 'github' and not link.startswith('http'):
+                elif platform.lower() == 'github' and not link.lower().startswith(('http://', 'https://')):
                     link = f"github.com/{link}" if 'github.com' not in link else link
-                contact_parts.append(link)
+                # PDF viewers need absolute URLs; keep the displayed text unchanged.
+                href = link if link.lower().startswith(('http://', 'https://')) else f"https://{link.lstrip('/')}"
+                contact_parts.append(f'<link href="{escape(href, quote=True)}">{escape(link)}</link>')
 
         if contact_parts:
             story.append(Paragraph(' &bull; '.join(contact_parts), contact_style))
